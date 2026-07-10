@@ -1,4 +1,5 @@
 const fs = require('node:fs/promises');
+const os = require('node:os');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const {
@@ -61,12 +62,37 @@ function normalizeSessionName(value) {
   return value.trim();
 }
 
+function defaultPreferencesFilePath({
+  platform = process.platform,
+  home = os.homedir(),
+  env = process.env,
+} = {}) {
+  const override = typeof env.TMUX_DESK_PREFERENCES_FILE === 'string'
+    ? env.TMUX_DESK_PREFERENCES_FILE.trim()
+    : '';
+  if (override) return path.resolve(override);
+  if (platform === 'darwin') {
+    return path.join(home, 'Library', 'Application Support', 'tmux-desk', 'preferences.json');
+  }
+  if (platform === 'win32') {
+    const appData = typeof env.APPDATA === 'string' && env.APPDATA.trim()
+      ? env.APPDATA
+      : path.win32.join(home, 'AppData', 'Roaming');
+    return path.win32.join(appData, 'tmux-desk', 'preferences.json');
+  }
+  const configHome = typeof env.XDG_CONFIG_HOME === 'string' && env.XDG_CONFIG_HOME.trim()
+    ? env.XDG_CONFIG_HOME
+    : path.join(home, '.config');
+  return path.join(configHome, 'tmux-desk', 'preferences.json');
+}
+
 class PreferencesStore {
   constructor({ filePath, fsImpl, createId } = {}) {
     if (typeof filePath !== 'string' || !filePath) throw new Error('偏好文件路径无效');
     this.filePath = filePath;
     this.fs = fsImpl || fs;
     this.createId = createId || randomUUID;
+    this.writeQueue = Promise.resolve();
   }
 
   async load() {
@@ -82,7 +108,22 @@ class PreferencesStore {
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
       throw new Error('偏好设置无效');
     }
-    const next = normalizePreferences({ ...(await this.load()), ...patch });
+    return this.update(() => patch);
+  }
+
+  update(createPatch) {
+    const operation = this.writeQueue.then(async () => {
+      const current = await this.load();
+      const patch = await createPatch(current);
+      const next = normalizePreferences({ ...current, ...patch });
+      await this.writeNormalized(next);
+      return next;
+    });
+    this.writeQueue = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  async writeNormalized(next) {
     const temporaryPath = `${this.filePath}.tmp`;
     await this.fs.mkdir(path.dirname(this.filePath), { recursive: true });
     try {
@@ -92,38 +133,38 @@ class PreferencesStore {
       try { await this.fs.unlink(temporaryPath); } catch {}
       throw error;
     }
-    return next;
   }
 
   async toggleFavorite(name) {
     const normalizedName = normalizeSessionName(name);
-    const current = await this.load();
-    const favorites = current.favorites.includes(normalizedName)
-      ? current.favorites.filter((item) => item !== normalizedName)
-      : [...current.favorites, normalizedName];
-    return this.save({ favorites });
+    return this.update((current) => ({
+      favorites: current.favorites.includes(normalizedName)
+        ? current.favorites.filter((item) => item !== normalizedName)
+        : [...current.favorites, normalizedName],
+    }));
   }
 
   async renameSessionReferences(oldName, newName) {
     const oldValue = normalizeSessionName(oldName);
     const newValue = normalizeSessionName(newName);
-    const current = await this.load();
-    const favorites = normalizeFavorites(current.favorites.map((item) => (
-      item === oldValue ? newValue : item
-    )));
-    const sessionTags = { ...current.sessionTags };
-    if (oldValue !== newValue) {
-      const merged = [...new Set([
-        ...(sessionTags[newValue] || []),
-        ...(sessionTags[oldValue] || []),
-      ])];
-      delete sessionTags[oldValue];
-      if (merged.length) sessionTags[newValue] = merged;
-    }
-    return this.save({
-      favorites,
-      sessionTags,
-      lastSession: current.lastSession === oldValue ? newValue : current.lastSession,
+    return this.update((current) => {
+      const favorites = normalizeFavorites(current.favorites.map((item) => (
+        item === oldValue ? newValue : item
+      )));
+      const sessionTags = { ...current.sessionTags };
+      if (oldValue !== newValue) {
+        const merged = [...new Set([
+          ...(sessionTags[newValue] || []),
+          ...(sessionTags[oldValue] || []),
+        ])];
+        delete sessionTags[oldValue];
+        if (merged.length) sessionTags[newValue] = merged;
+      }
+      return {
+        favorites,
+        sessionTags,
+        lastSession: current.lastSession === oldValue ? newValue : current.lastSession,
+      };
     });
   }
 
@@ -133,70 +174,76 @@ class PreferencesStore {
 
   async createTag(value) {
     const name = normalizeTagName(value);
-    const current = await this.load();
-    this.assertUniqueTagName(current.tags, name);
-    const id = normalizeTagId(`tag-${this.createId()}`);
-    if (current.tags.some((tag) => tag.id === id)) throw new Error('Tag 编号冲突');
-    const tag = { id, name, color: TAG_COLORS[current.tags.length % TAG_COLORS.length] };
-    return this.save({ tags: [...current.tags, tag] });
+    return this.update((current) => {
+      this.assertUniqueTagName(current.tags, name);
+      const id = normalizeTagId(`tag-${this.createId()}`);
+      if (current.tags.some((tag) => tag.id === id)) throw new Error('Tag 编号冲突');
+      const tag = { id, name, color: TAG_COLORS[current.tags.length % TAG_COLORS.length] };
+      return { tags: [...current.tags, tag] };
+    });
   }
 
   async renameTag(id, value) {
     const tagId = normalizeTagId(id);
     const name = normalizeTagName(value);
-    const current = await this.load();
-    if (!current.tags.some((tag) => tag.id === tagId)) throw new Error('Tag 不存在');
-    this.assertUniqueTagName(current.tags, name, tagId);
-    return this.save({
-      tags: current.tags.map((tag) => (tag.id === tagId ? { ...tag, name } : tag)),
+    return this.update((current) => {
+      if (!current.tags.some((tag) => tag.id === tagId)) throw new Error('Tag 不存在');
+      this.assertUniqueTagName(current.tags, name, tagId);
+      return {
+        tags: current.tags.map((tag) => (tag.id === tagId ? { ...tag, name } : tag)),
+      };
     });
   }
 
   async deleteTag(id) {
     const tagId = normalizeTagId(id);
-    const current = await this.load();
-    if (!current.tags.some((tag) => tag.id === tagId)) throw new Error('Tag 不存在');
-    const sessionTags = {};
-    for (const [name, ids] of Object.entries(current.sessionTags)) {
-      const remaining = ids.filter((item) => item !== tagId);
-      if (remaining.length) sessionTags[name] = remaining;
-    }
-    return this.save({
-      tags: current.tags.filter((tag) => tag.id !== tagId),
-      sessionTags,
+    return this.update((current) => {
+      if (!current.tags.some((tag) => tag.id === tagId)) throw new Error('Tag 不存在');
+      const sessionTags = {};
+      for (const [name, ids] of Object.entries(current.sessionTags)) {
+        const remaining = ids.filter((item) => item !== tagId);
+        if (remaining.length) sessionTags[name] = remaining;
+      }
+      return {
+        tags: current.tags.filter((tag) => tag.id !== tagId),
+        sessionTags,
+      };
     });
   }
 
   async setSessionTags(name, ids) {
     const sessionName = normalizeSessionName(name);
     if (!Array.isArray(ids)) throw new Error('Tag 列表无效');
-    const current = await this.load();
-    const available = new Set(current.tags.map((tag) => tag.id));
     const tagIds = [...new Set(ids.map(normalizeTagId))];
-    if (tagIds.some((id) => !available.has(id))) throw new Error('Tag 不存在');
-    const sessionTags = { ...current.sessionTags };
-    if (tagIds.length) sessionTags[sessionName] = tagIds;
-    else delete sessionTags[sessionName];
-    return this.save({ sessionTags });
+    return this.update((current) => {
+      const available = new Set(current.tags.map((tag) => tag.id));
+      if (tagIds.some((id) => !available.has(id))) throw new Error('Tag 不存在');
+      const sessionTags = { ...current.sessionTags };
+      if (tagIds.length) sessionTags[sessionName] = tagIds;
+      else delete sessionTags[sessionName];
+      return { sessionTags };
+    });
   }
 
   async copySessionTags(sourceName, targetName) {
     const source = normalizeSessionName(sourceName);
     const target = normalizeSessionName(targetName);
-    const current = await this.load();
-    const sessionTags = { ...current.sessionTags };
-    const sourceTags = current.sessionTags[source] || [];
-    if (sourceTags.length) sessionTags[target] = [...sourceTags];
-    else delete sessionTags[target];
-    return this.save({ sessionTags });
+    return this.update((current) => {
+      const sessionTags = { ...current.sessionTags };
+      const sourceTags = current.sessionTags[source] || [];
+      if (sourceTags.length) sessionTags[target] = [...sourceTags];
+      else delete sessionTags[target];
+      return { sessionTags };
+    });
   }
 
   async removeSessionTags(name) {
     const sessionName = normalizeSessionName(name);
-    const current = await this.load();
-    const sessionTags = { ...current.sessionTags };
-    delete sessionTags[sessionName];
-    return this.save({ sessionTags });
+    return this.update((current) => {
+      const sessionTags = { ...current.sessionTags };
+      delete sessionTags[sessionName];
+      return { sessionTags };
+    });
   }
 
   assertUniqueTagName(tags, name, exceptId = null) {
@@ -210,5 +257,6 @@ class PreferencesStore {
 module.exports = {
   DEFAULT_PREFERENCES,
   PreferencesStore,
+  defaultPreferencesFilePath,
   normalizePreferences,
 };

@@ -4,7 +4,11 @@ const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const test = require('node:test');
 
-const { PreferencesStore, DEFAULT_PREFERENCES } = require('../src/main/preferences-store');
+const {
+  PreferencesStore,
+  DEFAULT_PREFERENCES,
+  defaultPreferencesFilePath,
+} = require('../src/main/preferences-store');
 
 async function withStore(run, options = {}) {
   const root = await mkdtemp(join(tmpdir(), 'tmux-desk-preferences-'));
@@ -121,4 +125,67 @@ test('renaming a session merges tag references already stored on the target name
     preferences = await store.renameSessionReferences('api', 'backend');
     assert.deepEqual(preferences.sessionTags, { backend: [second.id, first.id] });
   }, { createId: () => ids.shift() });
+});
+
+test('default preference path matches Electron userData across supported platforms', () => {
+  assert.equal(defaultPreferencesFilePath({
+    platform: 'darwin',
+    home: '/Users/me',
+    env: {},
+  }), '/Users/me/Library/Application Support/tmux-desk/preferences.json');
+  assert.equal(defaultPreferencesFilePath({
+    platform: 'linux',
+    home: '/home/me',
+    env: {},
+  }), '/home/me/.config/tmux-desk/preferences.json');
+  assert.equal(defaultPreferencesFilePath({
+    platform: 'win32',
+    home: 'C:\\Users\\me',
+    env: { APPDATA: 'D:\\Profiles\\me\\AppData\\Roaming' },
+  }), 'D:\\Profiles\\me\\AppData\\Roaming\\tmux-desk\\preferences.json');
+  assert.equal(defaultPreferencesFilePath({
+    platform: 'darwin',
+    home: '/Users/me',
+    env: { TMUX_DESK_PREFERENCES_FILE: '/tmp/shared-tmux-desk.json' },
+  }), '/tmp/shared-tmux-desk.json');
+});
+
+test('concurrent tag mutations on one store preserve updates from multiple devices', async () => {
+  let activeWrites = 0;
+  let maximumWrites = 0;
+  const delayedFs = {
+    readFile,
+    mkdir,
+    rename: require('node:fs/promises').rename,
+    unlink: require('node:fs/promises').unlink,
+    writeFile: async (...args) => {
+      activeWrites += 1;
+      maximumWrites = Math.max(maximumWrites, activeWrites);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      try {
+        return await writeFile(...args);
+      } finally {
+        activeWrites -= 1;
+      }
+    },
+  };
+  const ids = ['one', 'two'];
+  await withStore(async (store) => {
+    let preferences = await store.createTag('DMS');
+    const first = preferences.tags[0];
+    preferences = await store.createTag('K8S');
+    const second = preferences.tags[1];
+    maximumWrites = 0;
+
+    await Promise.all([
+      store.setSessionTags('api', [first.id]),
+      store.setSessionTags('worker', [second.id]),
+    ]);
+
+    assert.equal(maximumWrites, 1);
+    assert.deepEqual((await store.load()).sessionTags, {
+      api: [first.id],
+      worker: [second.id],
+    });
+  }, { createId: () => ids.shift(), fsImpl: delayedFs });
 });
