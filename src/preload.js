@@ -1,0 +1,41 @@
+const { contextBridge, ipcRenderer } = require('electron');
+
+function on(channel, listener) {
+  const wrapped = (_event, payload) => listener(payload);
+  ipcRenderer.on(channel, wrapped);
+  return () => ipcRenderer.removeListener(channel, wrapped);
+}
+
+contextBridge.exposeInMainWorld('tmuxDesk', Object.freeze({
+  getSystemStatus: () => ipcRenderer.invoke('system:get-status'),
+  chooseDirectory: () => ipcRenderer.invoke('system:choose-directory'),
+  listSessions: () => ipcRenderer.invoke('sessions:list'),
+  getSessionDetail: (target) => ipcRenderer.invoke('sessions:detail', target),
+  createSession: (input) => ipcRenderer.invoke('sessions:create', input),
+  duplicateSession: (input) => ipcRenderer.invoke('sessions:duplicate', input),
+  renameSession: (input) => ipcRenderer.invoke('sessions:rename', input),
+  killSession: (input) => ipcRenderer.invoke('sessions:kill', input),
+  toggleFavorite: (name) => ipcRenderer.invoke('sessions:toggle-favorite', name),
+  setSessionTags: (input) => ipcRenderer.invoke('sessions:set-tags', input),
+  createTag: (name) => ipcRenderer.invoke('tags:create', name),
+  renameTag: (input) => ipcRenderer.invoke('tags:rename', input),
+  deleteTag: (id) => ipcRenderer.invoke('tags:delete', id),
+  selectWindow: (target) => ipcRenderer.invoke('windows:select', target),
+  selectPane: (target) => ipcRenderer.invoke('panes:select', target),
+  getPreferences: () => ipcRenderer.invoke('preferences:get'),
+  savePreferences: (patch) => ipcRenderer.invoke('preferences:save', patch),
+  listFiles: (dirPath) => ipcRenderer.invoke('files:list', dirPath),
+  openFile: (filePath) => ipcRenderer.invoke('files:open', filePath),
+  openFileWith: (filePath) => ipcRenderer.invoke('files:open-with', filePath),
+  revealFile: (filePath) => ipcRenderer.invoke('files:reveal', filePath),
+  attachTerminal: (payload) => ipcRenderer.invoke('terminal:attach', payload),
+  writeTerminal: (payload) => ipcRenderer.invoke('terminal:write', payload),
+  resizeTerminal: (payload) => ipcRenderer.invoke('terminal:resize', payload),
+  detachTerminal: () => ipcRenderer.invoke('terminal:detach'),
+  webStatus: () => ipcRenderer.invoke('web:status'),
+  webStart: () => ipcRenderer.invoke('web:start'),
+  webStop: () => ipcRenderer.invoke('web:stop'),
+  onTerminalData: (listener) => on('terminal:data', listener),
+  onTerminalExit: (listener) => on('terminal:exit', listener),
+  onAppCommand: (listener) => on('app:command', listener),
+}));

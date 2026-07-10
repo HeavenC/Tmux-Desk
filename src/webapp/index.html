@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#111417">
+  <title>Tmux Desk</title>
+  <link rel="stylesheet" href="./assets/xterm.css">
+  <link rel="stylesheet" href="./assets/styles.css">
+</head>
+<body>
+  <div id="app">
+
+    <section id="view-list" class="view">
+      <header class="topbar">
+        <h1 class="topbar-title">Tmux Desk</h1>
+        <button id="refresh-btn" class="icon-btn" aria-label="刷新" type="button">&#x21bb;</button>
+      </header>
+      <div id="list-content" class="list-content">
+        <ul id="session-list" class="session-list"></ul>
+        <div id="list-empty" class="state-message" hidden>
+          <p>暂无 tmux 会话</p>
+        </div>
+        <div id="list-loading" class="state-message">
+          <p>加载中&hellip;</p>
+        </div>
+        <div id="list-error" class="state-message" hidden>
+          <p id="list-error-text">加载失败</p>
+          <button id="list-retry-btn" class="btn" type="button">重试</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-terminal" class="view" hidden>
+      <div id="disconnect-banner" class="banner" hidden>
+        <span>连接已断开</span>
+        <button id="reconnect-btn" class="btn btn-sm" type="button">重连</button>
+      </div>
+      <header class="term-topbar">
+        <button id="back-btn" class="icon-btn" aria-label="返回" type="button">&#x2039;</button>
+        <span id="term-title" class="term-title"></span>
+        <span class="term-topbar-spacer"></span>
+      </header>
+      <div id="window-chips" class="window-chips"></div>
+      <div id="terminal-container" class="terminal-container"></div>
+      <div id="toolbar" class="toolbar">
+        <button class="key-btn" data-key="esc" type="button">Esc</button>
+        <button class="key-btn" data-key="tab" type="button">Tab</button>
+        <button id="ctrl-btn" class="key-btn" data-key="ctrl" type="button">Ctrl</button>
+        <button class="key-btn" data-key="prefix" type="button">&#x2303;B</button>
+        <button class="key-btn" data-key="left" type="button">&#x2190;</button>
+        <button class="key-btn" data-key="down" type="button">&#x2193;</button>
+        <button class="key-btn" data-key="up" type="button">&#x2191;</button>
+        <button class="key-btn" data-key="right" type="button">&#x2192;</button>
+      </div>
+    </section>
+
+    <div id="toast" class="toast" hidden></div>
+
+  </div>
+  <script src="./assets/app.js"></script>
+</body>
+</html>

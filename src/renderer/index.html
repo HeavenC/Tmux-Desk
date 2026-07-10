@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tmux Desk</title>
+  <link rel="stylesheet" href="xterm.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell" id="appShell">
+    <div class="drag-region" aria-hidden="true"></div>
+    <nav class="activity-rail" aria-label="主导航">
+      <div class="app-mark" title="Tmux Desk"><span>&gt;_</span></div>
+      <div class="rail-divider" aria-hidden="true"></div>
+      <button class="rail-button active" data-view="all" aria-label="全部会话" title="全部会话"></button>
+      <button class="rail-button" data-view="favorites" aria-label="收藏会话" title="收藏会话"></button>
+      <button class="rail-button" id="mobileAccessButton" aria-label="手机访问" title="手机访问"></button>
+      <div class="tag-rail no-drag" id="tagRail" role="list" aria-label="会话 Tag"></div>
+      <button class="rail-button rail-add-tag no-drag" id="newTagButton" aria-label="新建 Tag" title="新建 Tag"></button>
+      <div class="rail-spacer"></div>
+      <button class="rail-button" id="themeButton" aria-label="切换主题" title="切换主题"></button>
+      <button class="rail-button" id="settingsButton" aria-label="设置" title="设置"></button>
+    </nav>
+
+    <aside class="session-sidebar">
+      <header class="sidebar-header no-drag">
+        <div><h1>会话</h1><p id="sessionSummary">正在读取本机 tmux…</p></div>
+        <div class="header-actions">
+          <button class="icon-button" id="refreshButton" aria-label="刷新会话" title="刷新会话"></button>
+          <button class="icon-button primary-soft" id="newSessionButton" aria-label="新建会话" title="新建会话"></button>
+        </div>
+      </header>
+      <div class="search-box no-drag">
+        <span id="searchIcon"></span>
+        <input id="sessionSearch" type="search" placeholder="搜索会话" autocomplete="off" spellcheck="false">
+        <kbd>⌘F</kbd>
+      </div>
+      <div class="session-scroll no-drag" id="sessionList" aria-live="polite"></div>
+      <footer class="sidebar-footer no-drag">
+        <span class="status-dot" id="tmuxStatusDot"></span>
+        <span id="tmuxStatusText">检测 tmux…</span>
+      </footer>
+    </aside>
+
+    <main class="workspace">
+      <header class="workspace-header no-drag">
+        <div class="session-heading">
+          <div class="session-title-row">
+            <h2 id="activeSessionName">Tmux Desk</h2>
+            <span class="attached-badge hidden" id="attachedBadge">已连接</span>
+            <span class="view-badge hidden" id="workspaceViewBadge"></span>
+          </div>
+          <p id="activeSessionPath">选择一个本机会话开始工作</p>
+        </div>
+        <div class="workspace-actions">
+          <label class="pane-picker hidden" id="panePickerWrap">
+            <span id="panePickerIcon"></span>
+            <select id="panePicker" aria-label="选择面板"></select>
+          </label>
+          <button class="icon-button" id="filesToggleButton" aria-label="文件浏览器" title="文件浏览器 ⌘B"></button>
+          <button class="icon-button" id="sessionMenuButton" aria-label="会话操作" title="会话操作"></button>
+        </div>
+      </header>
+
+      <div class="session-tabs no-drag" id="sessionTabs" role="tablist" aria-label="会话页签"></div>
+      <section class="terminal-stage" id="terminalStage">
+        <div class="terminal-surface hidden" id="terminalSurface">
+          <div id="terminalMount" aria-label="终端"></div>
+          <div class="terminal-reconnect hidden" id="terminalReconnect">
+            <span>连接已结束</span><button id="reconnectButton">重新连接</button>
+          </div>
+        </div>
+        <div class="empty-state" id="emptyState">
+          <div class="empty-illustration"><span>&gt;_</span></div>
+          <h2 id="emptyTitle">你的 tmux 工作台</h2>
+          <p id="emptyMessage">从左侧选择一个会话，或新建会话开始工作。</p>
+          <div class="empty-actions" id="emptyActions">
+            <button class="button primary" id="emptyNewButton">新建会话</button>
+            <button class="button hidden" id="emptyInstallButton">复制安装命令</button>
+            <button class="button" id="emptyRefreshButton">刷新列表</button>
+            <button class="button hidden" id="emptyAllButton">返回全部</button>
+          </div>
+        </div>
+      </section>
+      <footer class="workspace-status no-drag">
+        <span id="workspaceStatus">纯本地 · 终端内容不会离开这台 Mac</span>
+        <button id="commandHint"><kbd>⌘K</kbd> 命令面板</button>
+      </footer>
+    </main>
+
+    <aside class="file-browser hidden no-drag" id="fileBrowser" aria-label="文件浏览器">
+      <header class="file-browser-header">
+        <span class="fb-title">文件</span>
+        <div class="fb-actions">
+          <button class="icon-button" id="fbRevealButton" aria-label="在访达中显示" title="在访达中显示"></button>
+          <button class="icon-button" id="fbRefreshButton" aria-label="刷新" title="刷新"></button>
+          <button class="icon-button" id="fbCollapseButton" aria-label="收起" title="收起"></button>
+        </div>
+      </header>
+      <div class="fb-path" id="fbPath" title=""></div>
+      <div class="fb-tree" id="fbTree" aria-live="polite"></div>
+    </aside>
+  </div>
+
+  <div class="popover hidden no-drag" id="themePopover" role="menu"></div>
+  <div class="context-menu hidden no-drag" id="contextMenu" role="menu"></div>
+  <div class="toast-stack no-drag" id="toastStack" aria-live="polite"></div>
+
+  <div class="modal-backdrop hidden no-drag" id="sessionModal">
+    <form class="modal" id="sessionForm">
+      <header><div><h2>新建 tmux 会话</h2><p>创建后会立即在这里连接。</p></div><button type="button" class="icon-button modal-close" aria-label="关闭"></button></header>
+      <label class="field"><span>会话名称</span><input id="sessionNameInput" maxlength="80" required placeholder="例如 payments-api" autocomplete="off" spellcheck="false"></label>
+      <label class="field"><span>工作目录</span><div class="input-action"><input id="sessionCwdInput" required placeholder="/Users/you/projects/app" spellcheck="false"><button type="button" id="chooseDirectoryButton">选择…</button></div></label>
+      <label class="field"><span>启动命令 <em>可选</em></span><input id="startupCommandInput" maxlength="4096" placeholder="例如 npm run dev" spellcheck="false"></label>
+      <footer><button type="button" class="button modal-cancel">取消</button><button type="submit" class="button primary">创建并连接</button></footer>
+    </form>
+  </div>
+
+  <div class="modal-backdrop hidden no-drag" id="duplicateModal">
+    <form class="modal compact" id="duplicateForm">
+      <header><div><h2>复制会话</h2><p id="duplicateMessage">按现有会话的窗口与目录创建一个副本，原会话保持不变。</p></div><button type="button" class="icon-button modal-close" aria-label="关闭"></button></header>
+      <label class="field"><span>新会话名称</span><input id="duplicateInput" maxlength="80" required autocomplete="off" spellcheck="false"></label>
+      <footer><button type="button" class="button modal-cancel">取消</button><button type="submit" class="button primary">创建副本</button></footer>
+    </form>
+  </div>
+
+  <div class="modal-backdrop hidden no-drag" id="apiModal">
+    <div class="modal api-modal">
+      <header><div><h2>给 AI Agent 的会话导入指南</h2><p>复制这段 Markdown 交给 Claude Code 等 Agent，它就能按其工作目录把会话建进来。</p></div><button type="button" class="icon-button modal-close" aria-label="关闭"></button></header>
+      <pre class="api-markdown" id="apiMarkdown"></pre>
+      <footer><button type="button" class="button modal-cancel">关闭</button><button type="button" class="button primary" id="apiCopyButton">复制 Markdown</button></footer>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden no-drag" id="mobileAccessModal">
+    <div class="modal mobile-access-modal">
+      <header><div><h2>手机访问</h2><p>手机与 Mac 连接同一 Tailscale 或局域网，扫码即可在手机上操作全部 tmux 会话。</p></div><button type="button" class="icon-button modal-close" aria-label="关闭"></button></header>
+      <div id="mobileAccessBody"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden no-drag" id="renameModal">
+    <form class="modal compact" id="renameForm">
+      <header><div><h2>重命名会话</h2><p>tmux 中的会话名称会同步更新。</p></div><button type="button" class="icon-button modal-close" aria-label="关闭"></button></header>
+      <label class="field"><span>新名称</span><input id="renameInput" maxlength="80" required autocomplete="off" spellcheck="false"></label>
+      <footer><button type="button" class="button modal-cancel">取消</button><button type="submit" class="button primary">保存</button></footer>
+    </form>
+  </div>
+
+  <div class="modal-backdrop hidden no-drag" id="killModal">
+    <div class="modal compact danger-modal">
+      <header><div><h2>关闭 tmux 会话？</h2><p id="killMessage">此操作会终止会话中的所有进程。</p></div></header>
+      <footer><button class="button modal-cancel">取消</button><button class="button danger" id="confirmKillButton">关闭会话</button></footer>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden no-drag" id="settingsModal">
+    <div class="modal settings-modal">
+      <header><div><h2>设置</h2><p>所有偏好仅保存在这台 Mac。</p></div><button type="button" class="icon-button modal-close" aria-label="关闭"></button></header>
+      <section><h3>外观</h3><div class="theme-cards" id="themeCards"></div></section>
+      <section>
+        <div class="settings-section-heading"><h3>Tag</h3><button type="button" class="button" id="settingsNewTagButton">新建 Tag</button></div>
+        <div class="tag-settings-list" id="tagSettingsList"></div>
+      </section>
+      <section class="settings-info"><h3>本地环境</h3><dl><div><dt>tmux</dt><dd id="settingsTmuxVersion">检测中</dd></div><div><dt>数据</dt><dd>~/Library/Application Support/Tmux Desk</dd></div><div><dt>网络</dt><dd>不连接任何远程服务</dd></div></dl></section>
+      <footer><button class="button primary modal-cancel">完成</button></footer>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden no-drag" id="tagEditorModal">
+    <form class="modal compact" id="tagEditorForm">
+      <header><div><h2 id="tagEditorTitle">新建 Tag</h2><p>Tag 仅保存在这台 Mac。</p></div><button type="button" class="icon-button modal-close" aria-label="关闭"></button></header>
+      <label class="field"><span>名称</span><input id="tagNameInput" maxlength="40" required autocomplete="off" spellcheck="false" placeholder="例如 DMS 渠道"></label>
+      <footer><button type="button" class="button modal-cancel">取消</button><button type="submit" class="button primary">保存</button></footer>
+    </form>
+  </div>
+
+  <div class="modal-backdrop hidden no-drag" id="sessionTagsModal">
+    <form class="modal compact" id="sessionTagsForm">
+      <header><div><h2>管理 Tag</h2><p id="sessionTagsMessage"></p></div><button type="button" class="icon-button modal-close" aria-label="关闭"></button></header>
+      <div class="tag-check-list" id="sessionTagsList"></div>
+      <footer><button type="button" class="button modal-cancel">取消</button><button type="submit" class="button primary">保存</button></footer>
+    </form>
+  </div>
+
+  <div class="modal-backdrop hidden no-drag" id="tagDeleteModal">
+    <div class="modal compact danger-modal">
+      <header><div><h2>删除 Tag？</h2><p id="tagDeleteMessage">只会删除 Tag 和分类关系，不会关闭 tmux 会话。</p></div></header>
+      <footer><button class="button modal-cancel">取消</button><button class="button danger" id="confirmTagDeleteButton">删除 Tag</button></footer>
+    </div>
+  </div>
+
+  <div class="palette-backdrop hidden no-drag" id="commandPalette">
+    <div class="command-dialog">
+      <div class="command-input"><span id="commandSearchIcon"></span><input id="commandInput" placeholder="输入命令或搜索…" autocomplete="off" spellcheck="false"><kbd>Esc</kbd></div>
+      <div class="command-results" id="commandResults" role="listbox"></div>
+      <footer><span><kbd>↑</kbd><kbd>↓</kbd> 选择</span><span><kbd>↵</kbd> 执行</span></footer>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
