@@ -68,6 +68,7 @@ test('mobile page exposes touch-first tag workspaces and one window picker', asy
   for (const id of [
     'workspace-filters', 'session-tags-modal', 'session-tags-form',
     'session-tags-list', 'session-tags-cancel', 'window-picker',
+    'theme-btn-list', 'theme-btn-term',
   ]) {
     assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
   }
@@ -82,6 +83,7 @@ test('mobile page exposes touch-first tag workspaces and one window picker', asy
   assert.match(css, /\.session-tag-button[^{]*\{[^}]*min-(?:height|width):\s*44px/s);
   assert.match(css, /padding-bottom:[^;]*safe-area-inset-bottom/s);
   assert.match(css, /\.sheet-panel\s*\{/);
+  assert.match(css, /:root\[data-theme="light"\]\s*\{/);
 });
 
 test('mobile controller consumes shared tag data and preserves terminal controls', async () => {
@@ -97,4 +99,8 @@ test('mobile controller consumes shared tag data and preserves terminal controls
   assert.doesNotMatch(app, /renderWindowChips|window-chips|window-chip/);
   assert.match(app, /window\.visualViewport/);
   assert.match(app, /onViewportChange\(\)/);
+  assert.match(app, /function setupTouchScroll\(/);
+  assert.match(app, /setupTouchScroll\(\)/);
+  assert.match(app, /document\.querySelectorAll\(['"]\.theme-btn['"]\)[\s\S]*addEventListener\(['"]click['"],\s*toggleTheme\)/);
+  assert.match(app, /applyTheme\(storedTheme\(\)\)/);
 });

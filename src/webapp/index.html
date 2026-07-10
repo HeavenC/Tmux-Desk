@@ -17,7 +17,10 @@
     <section id="view-list" class="view">
       <header class="topbar">
         <h1 class="topbar-title">Tmux Desk</h1>
-        <button id="refresh-btn" class="icon-btn" aria-label="刷新" type="button">&#x21bb;</button>
+        <div class="topbar-actions">
+          <button id="theme-btn-list" class="icon-btn theme-btn" aria-label="切换主题" type="button">&#x263E;</button>
+          <button id="refresh-btn" class="icon-btn" aria-label="刷新" type="button">&#x21bb;</button>
+        </div>
       </header>
       <nav id="workspace-filters" class="workspace-filters" aria-label="会话工作区"></nav>
       <div id="list-content" class="list-content">
@@ -43,6 +46,7 @@
       <header class="term-topbar">
         <button id="back-btn" class="icon-btn" aria-label="返回" type="button">&#x2039;</button>
         <span id="term-title" class="term-title"></span>
+        <button id="theme-btn-term" class="icon-btn theme-btn" aria-label="切换主题" type="button">&#x263E;</button>
         <select id="window-picker" class="window-picker" aria-label="tmux 窗口" hidden></select>
       </header>
       <div id="terminal-container" class="terminal-container"></div>

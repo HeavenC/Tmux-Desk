@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtemp, rm } = require('node:fs/promises');
+const { mkdtemp, readFile, rm } = require('node:fs/promises');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const test = require('node:test');
@@ -116,4 +116,9 @@ test('web API projects shared tags and validates mobile session assignments', as
     await handle?.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('web terminal attach inherits the tmux service socket', async () => {
+  const source = await readFile(join(__dirname, '..', 'src', 'server', 'web-server.js'), 'utf8');
+  assert.match(source, /new TerminalManager\(\{[\s\S]*?socketName:\s*service\.socketName,[\s\S]*?sendEvent:/);
 });

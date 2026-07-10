@@ -4,12 +4,24 @@ const { liveCountForView, mobileSessionsForView } = require('./mobile-session-mo
 
 const LIST_REFRESH_MS = 15000;
 const PING_INTERVAL_MS = 25000;
-const TERMINAL_THEME = {
-  background: '#111417',
-  foreground: '#d8dde7',
-  cursor: '#8bb8ff',
-  cursorAccent: '#111417',
-  selectionBackground: '#31588a99',
+const THEME_KEY = 'tmux-desk-web-theme';
+const THEME_META_COLORS = { light: '#f2f4f7', dark: '#15191d' };
+const TOUCH_SCROLL_SLOP = 8;
+const TERMINAL_THEMES = {
+  light: {
+    background: '#fbfbfc', foreground: '#20242c', cursor: '#1769e0', cursorAccent: '#ffffff',
+    selectionBackground: '#b9d4ff99', black: '#20242c', red: '#c9343f', green: '#177245',
+    yellow: '#8a6200', blue: '#1769e0', magenta: '#8750ad', cyan: '#087f8c', white: '#e8ebef',
+    brightBlack: '#6f7785', brightRed: '#d84b56', brightGreen: '#268657', brightYellow: '#a77700',
+    brightBlue: '#3281ee', brightMagenta: '#9b67be', brightCyan: '#1594a1', brightWhite: '#ffffff',
+  },
+  dark: {
+    background: '#111318', foreground: '#d8dde7', cursor: '#8bb8ff', cursorAccent: '#111318',
+    selectionBackground: '#31588a99', black: '#20242d', red: '#f06a74', green: '#68d391',
+    yellow: '#e7b75d', blue: '#74a9f5', magenta: '#c495e8', cyan: '#67c6d2', white: '#d8dde7',
+    brightBlack: '#727b8c', brightRed: '#ff7c86', brightGreen: '#7ae3a3', brightYellow: '#f4c76f',
+    brightBlue: '#8bb8ff', brightMagenta: '#d5a8f3', brightCyan: '#7dd8e3', brightWhite: '#ffffff',
+  },
 };
 
 const state = {
@@ -27,6 +39,7 @@ const state = {
   listRefreshTimer: null,
   ctrlActive: false,
   manualClose: false,
+  theme: 'light',
   term: null,
   fitAddon: null,
 };
@@ -68,6 +81,29 @@ function showView(name) {
   state.currentView = name;
   el('view-list').hidden = name !== 'list';
   el('view-terminal').hidden = name !== 'terminal';
+}
+
+function storedTheme() {
+  try {
+    const value = localStorage.getItem(THEME_KEY);
+    return value === 'dark' || value === 'light' ? value : 'light';
+  } catch {
+    return 'light';
+  }
+}
+
+function applyTheme(theme) {
+  state.theme = theme === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = state.theme;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', THEME_META_COLORS[state.theme]);
+  const icon = state.theme === 'dark' ? '☀︎' : '☾';
+  document.querySelectorAll('.theme-btn').forEach((button) => { button.textContent = icon; });
+  if (state.term) state.term.options.theme = TERMINAL_THEMES[state.theme];
+  try { localStorage.setItem(THEME_KEY, state.theme); } catch {}
+}
+
+function toggleTheme() {
+  applyTheme(state.theme === 'dark' ? 'light' : 'dark');
 }
 
 function normalizePreferenceProjection(value) {
@@ -365,7 +401,7 @@ function ensureTerminalCreated() {
     fontFamily: 'Menlo, Monaco, monospace',
     cursorBlink: true,
     scrollback: 3000,
-    theme: TERMINAL_THEME,
+    theme: TERMINAL_THEMES[state.theme],
   });
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
@@ -557,22 +593,73 @@ const TOOLBAR_SEQUENCES = {
   right: '\x1b[C',
 };
 
+function runToolbarKey(key) {
+  if (key === 'ctrl') {
+    setCtrlActive(!state.ctrlActive);
+  } else {
+    sendWsInput(TOOLBAR_SEQUENCES[key]);
+  }
+  state.term?.focus();
+}
+
 function setupToolbar() {
-  const buttons = document.querySelectorAll('.key-btn');
-  buttons.forEach((button) => {
+  document.querySelectorAll('.key-btn').forEach((button) => {
     const key = button.dataset.key;
-    const preventFocusLoss = (event) => event.preventDefault();
-    button.addEventListener('mousedown', preventFocusLoss);
-    button.addEventListener('touchstart', preventFocusLoss, { passive: false });
-    button.addEventListener('click', () => {
-      if (key === 'ctrl') {
-        setCtrlActive(!state.ctrlActive);
-      } else {
-        sendWsInput(TOOLBAR_SEQUENCES[key]);
-      }
-      state.term.focus();
+    button.addEventListener('mousedown', (event) => event.preventDefault());
+    button.addEventListener('touchstart', (event) => event.preventDefault(), { passive: false });
+    // iOS：touchstart 已 preventDefault，不会再合成 click，动作在 touchend 执行
+    button.addEventListener('touchend', (event) => {
+      event.preventDefault();
+      runToolbarKey(key);
     });
+    button.addEventListener('click', () => runToolbarKey(key));
   });
+}
+
+function sendScrollLine(up, clientX, clientY, rect) {
+  const term = state.term;
+  if (term.modes.mouseTrackingMode !== 'none') {
+    const col = Math.min(term.cols, Math.max(1, Math.floor(((clientX - rect.left) / rect.width) * term.cols) + 1));
+    const row = Math.min(term.rows, Math.max(1, Math.floor(((clientY - rect.top) / rect.height) * term.rows) + 1));
+    sendWsInput(`\x1b[<${up ? 64 : 65};${col};${row}M`);
+  } else {
+    term.scrollLines(up ? -1 : 1);
+  }
+}
+
+function setupTouchScroll() {
+  const container = el('terminal-container');
+  let startX = 0;
+  let startY = 0;
+  let lastY = 0;
+  let scrolling = false;
+  container.addEventListener('touchstart', (event) => {
+    if (event.touches.length !== 1) return;
+    startX = event.touches[0].clientX;
+    startY = event.touches[0].clientY;
+    lastY = startY;
+    scrolling = false;
+  }, { passive: true });
+  container.addEventListener('touchmove', (event) => {
+    if (!state.term || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    if (!scrolling) {
+      if (Math.abs(touch.clientY - startY) < TOUCH_SCROLL_SLOP
+        && Math.abs(touch.clientX - startX) < TOUCH_SCROLL_SLOP) return;
+      scrolling = true;
+      lastY = touch.clientY;
+    }
+    event.preventDefault();
+    const rect = container.getBoundingClientRect();
+    const rowHeight = rect.height / Math.max(1, state.term.rows);
+    const lines = Math.trunc((touch.clientY - lastY) / rowHeight);
+    if (!lines) return;
+    lastY += lines * rowHeight;
+    // 手指下拉（lines > 0）= 内容向上滚 = wheel up
+    for (let i = 0; i < Math.abs(lines); i += 1) {
+      sendScrollLine(lines > 0, touch.clientX, touch.clientY, rect);
+    }
+  }, { passive: false });
 }
 
 function setupViewportHandling() {
@@ -600,6 +687,7 @@ function setupViewportHandling() {
 
 function setupStaticHandlers() {
   el('refresh-btn').addEventListener('click', loadSessions);
+  document.querySelectorAll('.theme-btn').forEach((button) => button.addEventListener('click', toggleTheme));
   el('list-retry-btn').addEventListener('click', loadSessions);
   el('back-btn').addEventListener('click', backToList);
   el('reconnect-btn').addEventListener('click', () => {
@@ -621,8 +709,10 @@ function setupStaticHandlers() {
 
 function bootstrap() {
   state.token = getToken();
+  applyTheme(storedTheme());
   setupStaticHandlers();
   setupToolbar();
+  setupTouchScroll();
   setupViewportHandling();
   renderWorkspaceFilters();
   if (!state.token) {

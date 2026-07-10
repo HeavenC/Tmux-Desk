@@ -297,6 +297,7 @@ function startWebServer({
       groupedId = await createGroupedSession(sourceId);
       manager = new TerminalManager({
         tmuxPath,
+        socketName: service.socketName,
         sendEvent: (channel, payload) => {
           if (channel === 'terminal:data') wsSend(ws, { type: 'data', data: payload.data });
           if (channel === 'terminal:exit') {
