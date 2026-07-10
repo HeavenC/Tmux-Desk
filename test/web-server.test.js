@@ -82,6 +82,10 @@ test('web API projects shared tags and validates mobile session assignments', as
     assert.deepEqual(killed, ['$9']);
     assert.deepEqual(tmuxCalls[0], ['set-option', '-g', 'aggressive-resize', 'on']);
 
+    const webAsset = await fetch(`${base}/assets/styles.css`);
+    assert.equal(webAsset.status, 200);
+    assert.equal(webAsset.headers.get('cache-control'), 'no-store');
+
     const saved = await responseJson(`${base}/api/session-tags?token=test-token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

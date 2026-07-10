@@ -1,12 +1,13 @@
 # Tmux Desk
 
-Tmux Desk 是一个纯本地的 macOS tmux 桌面管理器。它采用类似 Codex 的工作台布局，把本机 tmux 会话、窗口、pane 和真实终端集中到一个桌面窗口中。
+Tmux Desk 是一个本地优先的 macOS tmux 桌面管理器。它采用类似 Codex 的工作台布局，把本机 tmux 会话、窗口、pane 和真实终端集中到一个桌面窗口中，并可按需开启手机 Web 接入。
 
 ## 功能
 
 - 查看、搜索、创建、连接、收藏、重命名和关闭本机 tmux 会话
 - 为一个会话分配多个本地 **Tag**，并从左侧功能栏按 Tag 进入独立工作区
 - Tag 与收藏工作区会收起中间会话栏，把同组会话聚合成一排浏览器式页签；同一 Tag 内不会重复
+- “全部”视图的会话侧栏可拖动调宽，双击分隔条恢复默认；Tag/收藏紧凑视图仍会完整收起它
 - **复制会话**（类似 `git checkout -b`）：按现有会话的窗口与目录派生一个副本，原会话保持不变
 - **右侧文件浏览器**（`⌘B` 收起/展开）：按当前会话目录浏览文件树，支持默认应用打开、“打开方式…”选择其他 App、在访达中显示、复制路径
 - 工作区右上角面板菜单快速定位 pane，`⌘1…9` 继续切换当前会话的 tmux window
@@ -14,7 +15,7 @@ Tmux Desk 是一个纯本地的 macOS tmux 桌面管理器。它采用类似 Cod
 - `⌘K` 命令面板与常用 macOS 快捷键
 - 亮色、暗色和跟随系统主题；首次启动默认亮色
 - 外部 Terminal 中创建或关闭会话后自动刷新
-- 不含登录、联网、遥测、云同步或插件
+- 不含登录、遥测、云同步或插件；手机 Web 服务默认关闭，仅在用户主动启动后监听网络
 
 ## 使用 Tag
 
@@ -66,8 +67,14 @@ npm run serve:web     # 构建手机页面并启动，默认端口 8790
 启动后会打印各网卡的访问 URL（含随机 token，持久化在 `~/.config/tmux-desk/web-token`）。手机打开 `http://<Tailscale IP>:8790/?token=<token>`，可加到主屏幕当 App 用。命令行已启动时，App 内入口会识别为「由外部进程启动」并直接展示二维码。
 
 - 会话列表 → 点击进入全屏终端（xterm.js），底部有 Esc / Tab / Ctrl（粘滞）/ ⌃B / 方向键辅助键
+- 列表顶部可在“全部 / 收藏 / 各 Tag”之间横向切换；同一 Tag 内按会话名去重，会话卡展示多个 Tag，并可从手机底部面板修改关联
+- 手机页支持独立亮/暗主题（本设备持久化）、终端触摸滚屏、刘海安全区、横竖屏和虚拟键盘动态高度
+- 终端顶部只保留一个 tmux window 选择器，不再叠加 `2: claude / 3: server` 式第二排页签
 - 手机 attach 的是**会话组派生会话**（`_web_*`），与桌面端内容同步但当前窗口、尺寸互不干扰；断开自动清理
-- 环境变量：`TMUX_DESK_WEB_PORT`、`TMUX_DESK_WEB_HOST`、`TMUX_DESK_WEB_TOKEN`
+- 桌面内启动的 Web 服务直接复用桌面偏好存储；命令行守护进程默认读取同一个平台目录，可用 `TMUX_DESK_PREFERENCES_FILE` 显式覆盖
+- 环境变量：`TMUX_DESK_WEB_PORT`、`TMUX_DESK_WEB_HOST`、`TMUX_DESK_WEB_TOKEN`、`TMUX_DESK_PREFERENCES_FILE`
+
+Web 服务使用 URL 中的随机 token 鉴权，但自身不提供 TLS。建议只通过 Tailscale 使用；局域网 URL 只适合可信 Wi-Fi，**不要把 8790 端口直接暴露到公网**。带 token 的完整 URL 等同访问凭据，不要转发给无关人员。
 
 ## 测试
 
@@ -146,10 +153,10 @@ CSC_IDENTITY_AUTO_DISCOVERY=false npm run package:mac:universal # Universal
 
 ## 本地数据与隐私
 
-终端输入、输出和 tmux 会话数据不会被记录或发送。主题、收藏、Tag、会话关联、上次会话和窗口尺寸保存在：
+桌面模式不会把终端输入、输出或 tmux 会话数据发送到网络。主动启用手机 Web 服务后，终端数据会在这台 Mac 与持有 token 的访问设备之间实时传输，但不会落盘；传输加密由 Tailscale 等外层网络负责。主题、收藏、Tag、会话关联、上次会话、侧栏宽度和窗口尺寸保存在：
 
 ```text
-~/Library/Application Support/Tmux Desk/preferences.json
+~/Library/Application Support/tmux-desk/preferences.json
 ```
 
 应用的渲染进程没有 Node.js 权限，只能通过白名单 IPC 调用 tmux 与终端操作；控制命令使用 `execFile` 参数数组，不拼接 shell 命令。

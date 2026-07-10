@@ -235,7 +235,9 @@ function startWebServer({
         return res.end();
       }
       if (url.pathname.startsWith('/assets/')) {
-        return serveStatic(res, path.join(STATIC_ROOT, 'assets', path.basename(url.pathname)), true);
+        // Asset filenames are stable across releases, so caching can pair a new
+        // HTML/API shape with stale JS after an app upgrade.
+        return serveStatic(res, path.join(STATIC_ROOT, 'assets', path.basename(url.pathname)), false);
       }
       if (!tokenMatches(url.searchParams.get('token'))) {
         return sendError(res, 401, '缺少或错误的访问令牌');
