@@ -10,6 +10,7 @@ test('renderer exposes tag navigation, management dialogs, and one session tab r
   for (const id of [
     'appShell', 'tagRail', 'newTagButton', 'sessionTabs', 'tagEditorModal', 'tagEditorForm',
     'sessionTagsModal', 'sessionTagsForm', 'tagDeleteModal', 'tagSettingsList', 'settingsNewTagButton',
+    'sidebarResizer',
   ]) {
     assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
   }
@@ -23,6 +24,10 @@ test('compact views hide the middle sidebar and collapse an empty session tab ro
   assert.match(css, /\.app-shell\.compact-view\s+\.session-sidebar\s*\{[^}]*display:\s*none/s);
   assert.match(css, /\.session-tabs:empty\s*\{[^}]*min-height:\s*0/s);
   assert.match(css, /\.tag-rail\s*\{/);
+  assert.match(css, /\.app-shell\.compact-view\s+\.sidebar-resizer\s*\{[^}]*display:\s*none/s);
+  assert.match(css, /--session-sidebar-width:\s*284px/);
+  assert.match(css, /grid-template-columns:\s*62px\s+var\(--session-sidebar-width\)\s+0\s+minmax\(0,\s*1fr\)\s+auto/);
+  assert.match(css, /@media\s*\(max-width:\s*1050px\)[\s\S]*grid-template-columns:\s*56px\s+var\(--session-sidebar-width\)/);
 });
 
 test('renderer controller uses explicit all, favorites, and tag workspace state', async () => {
@@ -34,6 +39,8 @@ test('renderer controller uses explicit all, favorites, and tag workspace state'
   assert.doesNotMatch(app, /favoritesOnly/);
   assert.doesNotMatch(app, /windowTabs/);
   assert.doesNotMatch(app, /setAttribute\(['"]role['"],\s*['"]listitem['"]\)/);
+  assert.match(app, /style\.setProperty\(['"]--session-sidebar-width['"]/);
+  assert.doesNotMatch(app, /style\.gridTemplateColumns/);
 });
 
 test('tag icon has its own artwork rather than falling back to the info icon', () => {

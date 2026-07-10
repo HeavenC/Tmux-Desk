@@ -12,7 +12,7 @@ const refs = {};
 const state = {
   systemStatus: { installed: false, path: null, version: null },
   preferences: {
-    theme: 'light', favorites: [], tags: [], sessionTags: {}, lastSession: null, windowBounds: null,
+    theme: 'light', favorites: [], tags: [], sessionTags: {}, lastSession: null, windowBounds: null, sidebarWidth: null,
   },
   sessions: [],
   selectedSessionId: null,
@@ -48,6 +48,7 @@ function cacheElements() {
     'sessionTagsModal', 'sessionTagsForm', 'sessionTagsMessage', 'sessionTagsList',
     'tagDeleteModal', 'tagDeleteMessage', 'confirmTagDeleteButton',
     'filesToggleButton', 'fileBrowser', 'fbTree', 'fbPath', 'fbRevealButton', 'fbRefreshButton', 'fbCollapseButton',
+    'sidebarResizer',
   ]) refs[id] = document.getElementById(id);
 }
 
@@ -120,6 +121,54 @@ function toast(message, type = 'info') {
 
 function shortenPath(value) {
   return String(value || '').replace(/^\/Users\/[^/]+(?=\/|$)/, '~');
+}
+
+const SIDEBAR_WIDTH_MIN = 200;
+const SIDEBAR_WIDTH_MAX = 420;
+
+function clampSidebarWidth(value) {
+  return Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, Math.round(value)));
+}
+
+// Change only the sidebar track. Compact-view and narrow-window rules keep
+// ownership of the remaining grid columns, including the responsive rail.
+function applySidebarWidth() {
+  const stored = state.preferences.sidebarWidth;
+  const custom = Number.isFinite(stored) ? clampSidebarWidth(stored) : null;
+  if (custom === null) refs.appShell.style.removeProperty('--session-sidebar-width');
+  else refs.appShell.style.setProperty('--session-sidebar-width', `${custom}px`);
+}
+
+function bindSidebarResizer() {
+  refs.sidebarResizer.addEventListener('mousedown', (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = $('.session-sidebar').getBoundingClientRect().width;
+    let width = clampSidebarWidth(startWidth);
+    refs.sidebarResizer.classList.add('dragging');
+    document.body.classList.add('sidebar-resizing');
+    const onMove = (moveEvent) => {
+      width = clampSidebarWidth(startWidth + moveEvent.clientX - startX);
+      refs.appShell.style.setProperty('--session-sidebar-width', `${width}px`);
+    };
+    const onUp = async () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      refs.sidebarResizer.classList.remove('dragging');
+      document.body.classList.remove('sidebar-resizing');
+      try { state.preferences = await api.savePreferences({ sidebarWidth: width }); }
+      catch (error) { toast(friendlyError(error), 'error'); }
+      applySidebarWidth();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
+  refs.sidebarResizer.addEventListener('dblclick', async () => {
+    try { state.preferences = await api.savePreferences({ sidebarWidth: null }); }
+    catch (error) { toast(friendlyError(error), 'error'); }
+    applySidebarWidth();
+  });
 }
 
 function applyCurrentTheme() {
@@ -608,6 +657,7 @@ async function setView(view) {
   }
   state.view = nextView;
   refs.appShell.classList.toggle('compact-view', nextView.kind !== 'all');
+  applySidebarWidth();
   closeFloatingMenus();
   renderTagRail();
   renderSessionList();
@@ -1261,6 +1311,7 @@ function bindEvents() {
   });
 
   refs.filesToggleButton.addEventListener('click', toggleFileBrowser);
+  bindSidebarResizer();
   refs.fbCollapseButton.addEventListener('click', () => setFileBrowserOpen(false));
   refs.fbRefreshButton.addEventListener('click', () => syncFileBrowser(true));
   refs.fbRevealButton.addEventListener('click', async () => {
@@ -1479,6 +1530,7 @@ async function initialize() {
   try {
     state.preferences = await api.getPreferences();
     applyCurrentTheme();
+    applySidebarWidth();
     await refreshSessions({ initial: true });
     pollTimer = setInterval(() => { if (!document.hidden) refreshSessions(); }, 2000);
   } catch (error) {
