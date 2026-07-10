@@ -126,7 +126,7 @@ function validateWindowBounds(value) {
 
 function validatePreferencesPatch(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('偏好设置无效');
-  const allowed = new Set(['theme', 'lastSession', 'windowBounds']);
+  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new Error('偏好字段无效');
   }
@@ -140,6 +140,12 @@ function validatePreferencesPatch(value) {
     else result.lastSession = validateSessionName(value.lastSession);
   }
   if ('windowBounds' in value) result.windowBounds = validateWindowBounds(value.windowBounds);
+  if ('sidebarWidth' in value) {
+    if (value.sidebarWidth !== null && (!Number.isFinite(value.sidebarWidth) || value.sidebarWidth < 100 || value.sidebarWidth > 1000)) {
+      throw new Error('侧栏宽度无效');
+    }
+    result.sidebarWidth = value.sidebarWidth === null ? null : Math.round(value.sidebarWidth);
+  }
   return result;
 }
 

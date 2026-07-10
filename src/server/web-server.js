@@ -8,6 +8,12 @@ const { promisify } = require('node:util');
 
 const { WebSocketServer } = require('ws');
 
+const { validateSessionTags } = require('../main/ipc');
+const {
+  PreferencesStore,
+  defaultPreferencesFilePath,
+  normalizePreferences,
+} = require('../main/preferences-store');
 const { TerminalManager } = require('../main/terminal-manager');
 const { TmuxService } = require('../main/tmux-service');
 
@@ -79,10 +85,29 @@ async function listAccessUrls({ port = DEFAULT_PORT, token } = {}) {
   return urls;
 }
 
-function startWebServer({ port = DEFAULT_PORT, host = '0.0.0.0', token, log = () => {} } = {}) {
+function publicPreferences(value) {
+  const preferences = normalizePreferences(value);
+  return {
+    tags: preferences.tags,
+    favorites: preferences.favorites,
+    sessionTags: preferences.sessionTags,
+  };
+}
+
+function startWebServer({
+  port = DEFAULT_PORT,
+  host = '0.0.0.0',
+  token,
+  log = () => {},
+  service: providedService,
+  preferencesStore: providedPreferencesStore,
+} = {}) {
   if (!token) token = loadToken();
 
-  const service = new TmuxService();
+  const service = providedService || new TmuxService();
+  const preferencesStore = providedPreferencesStore || new PreferencesStore({
+    filePath: defaultPreferencesFilePath(),
+  });
   const liveGrouped = new Set();
   let groupedCounter = 1;
 
@@ -145,6 +170,9 @@ function startWebServer({ port = DEFAULT_PORT, host = '0.0.0.0', token, log = ()
 
   async function cleanupStaleWebSessions() {
     try {
+      // Size windows by the clients actually viewing them, so a 48-column phone
+      // reading window A doesn't shrink the desktop's window B in the same group.
+      try { await service.run(['set-option', '-g', 'aggressive-resize', 'on']); } catch { /* best-effort */ }
       const sessions = await service.listSessions();
       for (const session of sessions) {
         if (!session.name.startsWith(WEB_SESSION_PREFIX)) continue;
@@ -153,10 +181,33 @@ function startWebServer({ port = DEFAULT_PORT, host = '0.0.0.0', token, log = ()
     } catch { /* no tmux server yet — nothing to clean */ }
   }
 
+  async function listPublicSessions() {
+    return (await service.listSessions()).filter((session) => !session.name.startsWith(WEB_SESSION_PREFIX));
+  }
+
   async function handleApi(req, res, url) {
     if (req.method === 'GET' && url.pathname === '/api/sessions') {
-      const sessions = (await service.listSessions()).filter((session) => !session.name.startsWith(WEB_SESSION_PREFIX));
-      return sendJson(res, 200, { ok: true, sessions });
+      const [sessions, preferences] = await Promise.all([
+        listPublicSessions(),
+        preferencesStore.load(),
+      ]);
+      return sendJson(res, 200, {
+        ok: true,
+        sessions,
+        preferences: publicPreferences(preferences),
+      });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/session-tags') {
+      const { sessionName, tagIds } = validateSessionTags(await readJsonBody(req));
+      const sessions = await listPublicSessions();
+      if (!sessions.some((session) => session.name === sessionName)) {
+        return sendError(res, 404, '会话不存在');
+      }
+      const preferences = await preferencesStore.setSessionTags(sessionName, tagIds);
+      return sendJson(res, 200, {
+        ok: true,
+        preferences: publicPreferences(preferences),
+      });
     }
     if (req.method === 'GET' && url.pathname === '/api/session-detail') {
       const detail = await service.getSessionDetail(url.searchParams.get('session'));
@@ -305,7 +356,13 @@ function startWebServer({ port = DEFAULT_PORT, host = '0.0.0.0', token, log = ()
     server.once('error', reject);
     server.listen(port, host, () => {
       server.removeListener('error', reject);
-      resolve({ port, host, token, close });
+      const address = server.address();
+      resolve({
+        port: address && typeof address === 'object' ? address.port : port,
+        host,
+        token,
+        close,
+      });
     });
   }));
 }
@@ -329,6 +386,7 @@ module.exports = {
   WEB_SESSION_PREFIX,
   loadToken,
   listAccessUrls,
+  publicPreferences,
   startWebServer,
   probeExternalServer,
 };

@@ -38,7 +38,17 @@ test('malformed and invalid preferences fall back to normalized defaults', async
     }), 'utf8');
     assert.deepEqual(await store.load(), {
       theme: 'light', favorites: ['api'], tags: [], sessionTags: {}, lastSession: null, windowBounds: null,
+      sidebarWidth: null,
     });
+  });
+});
+
+test('sidebar width is rounded and clamped to the supported desktop range', async () => {
+  await withStore(async (store) => {
+    assert.equal((await store.save({ sidebarWidth: 279.6 })).sidebarWidth, 280);
+    assert.equal((await store.save({ sidebarWidth: 80 })).sidebarWidth, 200);
+    assert.equal((await store.save({ sidebarWidth: 500 })).sidebarWidth, 420);
+    assert.equal((await store.save({ sidebarWidth: null })).sidebarWidth, null);
   });
 });
 

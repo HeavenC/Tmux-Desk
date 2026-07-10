@@ -129,7 +129,7 @@ async function bootstrap() {
     tmuxPath: tmuxPath || 'tmux',
     sendEvent: sendToRenderer,
   });
-  webControl = createWebControl();
+  webControl = createWebControl({ preferencesStore });
   registerIpc({
     ipcMain,
     tmuxService,

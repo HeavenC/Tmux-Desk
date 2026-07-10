@@ -5,7 +5,10 @@ const {
 // Controls the in-process mobile web server. A daemon started from the CLI
 // (`npm run serve:web`) may already own the port — treat it as "running
 // (external)" and surface its URLs instead of failing to bind.
-function createWebControl({ port = Number(process.env.TMUX_DESK_WEB_PORT) || DEFAULT_PORT } = {}) {
+function createWebControl({
+  port = Number(process.env.TMUX_DESK_WEB_PORT) || DEFAULT_PORT,
+  preferencesStore,
+} = {}) {
   let handle = null;
 
   async function describe(running, external) {
@@ -27,7 +30,7 @@ function createWebControl({ port = Number(process.env.TMUX_DESK_WEB_PORT) || DEF
     if (!handle) {
       const token = loadToken();
       if (await probeExternalServer({ port, token })) return describe(true, true);
-      handle = await startWebServer({ port, token });
+      handle = await startWebServer({ port, token, preferencesStore });
     }
     return describe(true, false);
   }

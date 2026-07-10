@@ -43,13 +43,16 @@ test('terminal IPC payload validates ids, dimensions, and bounded strings', () =
 
 test('preference patches allow only local UI preference fields', () => {
   assert.deepEqual(validatePreferencesPatch({
-    theme: 'system', lastSession: 'api', windowBounds: { x: 1, y: 2, width: 1200, height: 800 },
+    theme: 'system', lastSession: 'api', windowBounds: { x: 1, y: 2, width: 1200, height: 800 }, sidebarWidth: 279.6,
   }), {
-    theme: 'system', lastSession: 'api', windowBounds: { x: 1, y: 2, width: 1200, height: 800 },
+    theme: 'system', lastSession: 'api', windowBounds: { x: 1, y: 2, width: 1200, height: 800 }, sidebarWidth: 280,
   });
+  assert.deepEqual(validatePreferencesPatch({ sidebarWidth: null }), { sidebarWidth: null });
   assert.throws(() => validatePreferencesPatch({ theme: 'sepia' }), /主题/);
   assert.throws(() => validatePreferencesPatch({ token: 'secret' }), /偏好字段/);
   assert.throws(() => validatePreferencesPatch({ windowBounds: { width: 2 } }), /窗口尺寸/);
+  assert.throws(() => validatePreferencesPatch({ sidebarWidth: 50 }), /侧栏宽度/);
+  assert.throws(() => validatePreferencesPatch({ sidebarWidth: 1001 }), /侧栏宽度/);
 });
 
 test('tag mutations validate names, ids, and deduplicated session associations', () => {

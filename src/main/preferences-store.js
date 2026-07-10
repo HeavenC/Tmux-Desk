@@ -17,7 +17,9 @@ const DEFAULT_PREFERENCES = Object.freeze({
   sessionTags: {},
   lastSession: null,
   windowBounds: null,
+  sidebarWidth: null,
 });
+const SIDEBAR_WIDTH_RANGE = Object.freeze({ min: 200, max: 420 });
 
 const VALID_THEMES = new Set(['light', 'dark', 'system']);
 
@@ -43,6 +45,11 @@ function normalizeBounds(value) {
   return Object.fromEntries(keys.map((key) => [key, Math.round(value[key])]));
 }
 
+function normalizeSidebarWidth(value) {
+  if (!Number.isFinite(value)) return null;
+  return Math.round(Math.min(SIDEBAR_WIDTH_RANGE.max, Math.max(SIDEBAR_WIDTH_RANGE.min, value)));
+}
+
 function normalizePreferences(value = {}) {
   const tags = normalizeTags(value.tags);
   return {
@@ -54,6 +61,7 @@ function normalizePreferences(value = {}) {
       ? value.lastSession.trim()
       : null,
     windowBounds: normalizeBounds(value.windowBounds),
+    sidebarWidth: normalizeSidebarWidth(value.sidebarWidth),
   };
 }
 
