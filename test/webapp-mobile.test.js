@@ -1,4 +1,6 @@
 const assert = require('node:assert/strict');
+const { readFile } = require('node:fs/promises');
+const { join } = require('node:path');
 const test = require('node:test');
 
 const {
@@ -23,6 +25,7 @@ const preferences = {
     worker: ['tag-a', 'tag-b'],
   },
 };
+const webappDir = join(__dirname, '..', 'src', 'webapp');
 
 test('mobile all view keeps the newest copy of each session without mutating input', () => {
   const before = structuredClone(sessions);
@@ -55,4 +58,43 @@ test('mobile selector tolerates malformed payloads and unknown views', () => {
   assert.deepEqual(mobileSessionsForView(sessions, preferences, { kind: 'tag' }), []);
   assert.deepEqual(mobileSessionsForView(sessions, preferences, { kind: 'unknown' }), []);
   assert.equal(liveCountForView(null, null, { kind: 'all' }), 0);
+});
+
+test('mobile page exposes touch-first tag workspaces and one window picker', async () => {
+  const [html, css] = await Promise.all([
+    readFile(join(webappDir, 'index.html'), 'utf8'),
+    readFile(join(webappDir, 'styles.css'), 'utf8'),
+  ]);
+  for (const id of [
+    'workspace-filters', 'session-tags-modal', 'session-tags-form',
+    'session-tags-list', 'session-tags-cancel', 'window-picker',
+  ]) {
+    assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
+  }
+  assert.match(html, /id="workspace-filters"[^>]+aria-label="会话工作区"/);
+  assert.match(html, /id="session-tags-modal"[^>]+role="dialog"[^>]+aria-modal="true"/);
+  assert.match(html, /id="window-picker"[^>]+aria-label="tmux 窗口"/);
+  assert.doesNotMatch(html + css, /window-chips|window-chip/);
+  assert.doesNotMatch(html, /user-scalable=no|maximum-scale=1/);
+
+  assert.match(css, /height:\s*100dvh/);
+  assert.match(css, /\.workspace-filter[^{]*\{[^}]*min-height:\s*44px/s);
+  assert.match(css, /\.session-tag-button[^{]*\{[^}]*min-(?:height|width):\s*44px/s);
+  assert.match(css, /padding-bottom:[^;]*safe-area-inset-bottom/s);
+  assert.match(css, /\.sheet-panel\s*\{/);
+});
+
+test('mobile controller consumes shared tag data and preserves terminal controls', async () => {
+  const app = await readFile(join(webappDir, 'app.js'), 'utf8');
+  assert.match(app, /require\(['"]\.\/mobile-session-model['"]\)/);
+  assert.match(app, /listView:\s*\{\s*kind:\s*'all'\s*\}/);
+  assert.match(app, /function renderWorkspaceFilters\(/);
+  assert.match(app, /function openSessionTagsModal\(/);
+  assert.match(app, /apiUrl\(['"]\/api\/session-tags['"]\)/);
+  assert.match(app, /event\.stopPropagation\(\)/);
+  assert.match(app, /if \(event\.target !== li\) return;/);
+  assert.match(app, /function renderWindowPicker\(/);
+  assert.doesNotMatch(app, /renderWindowChips|window-chips|window-chip/);
+  assert.match(app, /window\.visualViewport/);
+  assert.match(app, /onViewportChange\(\)/);
 });

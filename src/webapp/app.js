@@ -1,5 +1,6 @@
 const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
+const { liveCountForView, mobileSessionsForView } = require('./mobile-session-model');
 
 const LIST_REFRESH_MS = 15000;
 const PING_INTERVAL_MS = 25000;
@@ -14,6 +15,9 @@ const TERMINAL_THEME = {
 const state = {
   token: '',
   currentView: 'list',
+  sessions: [],
+  preferences: { tags: [], favorites: [], sessionTags: {} },
+  listView: { kind: 'all' },
   currentSession: null,
   grouped: null,
   windows: [],
@@ -66,6 +70,46 @@ function showView(name) {
   el('view-terminal').hidden = name !== 'terminal';
 }
 
+function normalizePreferenceProjection(value) {
+  const preferences = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  return {
+    tags: Array.isArray(preferences.tags) ? preferences.tags.filter((tag) => (
+      tag && typeof tag.id === 'string' && typeof tag.name === 'string' && typeof tag.color === 'string'
+    )) : [],
+    favorites: Array.isArray(preferences.favorites)
+      ? preferences.favorites.filter((name) => typeof name === 'string')
+      : [],
+    sessionTags: preferences.sessionTags
+      && typeof preferences.sessionTags === 'object'
+      && !Array.isArray(preferences.sessionTags)
+      ? preferences.sessionTags
+      : {},
+  };
+}
+
+function sameListView(left, right) {
+  return left?.kind === right?.kind && left?.tagId === right?.tagId;
+}
+
+function ensureListView() {
+  if (state.listView.kind !== 'tag') return;
+  if (!state.preferences.tags.some((tag) => tag.id === state.listView.tagId)) {
+    state.listView = { kind: 'all' };
+  }
+}
+
+function currentListSessions() {
+  return mobileSessionsForView(state.sessions, state.preferences, state.listView);
+}
+
+function currentListLabel() {
+  if (state.listView.kind === 'favorites') return '收藏';
+  if (state.listView.kind === 'tag') {
+    return state.preferences.tags.find((tag) => tag.id === state.listView.tagId)?.name || 'Tag';
+  }
+  return '全部';
+}
+
 function startOfDay(date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
@@ -91,7 +135,70 @@ function setListState({ loading = false, error = null, sessions = null }) {
   el('list-error').hidden = error === null;
   if (error !== null) el('list-error-text').textContent = error;
   el('list-empty').hidden = sessions === null || sessions.length > 0;
-  if (sessions !== null) renderSessionList(sessions);
+  if (sessions !== null) {
+    const emptyText = el('list-empty').querySelector('p');
+    emptyText.textContent = state.listView.kind === 'all'
+      ? '暂无 tmux 会话'
+      : `${currentListLabel()}中暂无会话`;
+    renderSessionList(sessions);
+  }
+}
+
+function createWorkspaceFilter(view, label, count, tag = null) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `workspace-filter${sameListView(view, state.listView) ? ' active' : ''}`;
+  button.setAttribute('aria-pressed', String(sameListView(view, state.listView)));
+  button.title = `${label}（${count}）`;
+  if (tag) {
+    button.dataset.tagColor = tag.color;
+    const dot = document.createElement('span');
+    dot.className = 'tag-color-dot';
+    dot.setAttribute('aria-hidden', 'true');
+    button.appendChild(dot);
+  }
+  const text = document.createElement('span');
+  text.className = 'workspace-filter-label';
+  text.textContent = label;
+  const badge = document.createElement('span');
+  badge.className = 'workspace-filter-count';
+  badge.textContent = String(count);
+  button.append(text, badge);
+  button.addEventListener('click', () => {
+    state.listView = view;
+    renderWorkspaceFilters();
+    setListState({ loading: false, error: null, sessions: currentListSessions() });
+  });
+  return button;
+}
+
+function renderWorkspaceFilters() {
+  ensureListView();
+  const filters = el('workspace-filters');
+  const views = [
+    { view: { kind: 'all' }, label: '全部' },
+    { view: { kind: 'favorites' }, label: '收藏' },
+    ...state.preferences.tags.map((tag) => ({
+      view: { kind: 'tag', tagId: tag.id },
+      label: tag.name,
+      tag,
+    })),
+  ];
+  filters.replaceChildren(...views.map(({ view, label, tag }) => createWorkspaceFilter(
+    view,
+    label,
+    liveCountForView(state.sessions, state.preferences, view),
+    tag,
+  )));
+  filters.querySelector('.workspace-filter.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+function tagsForSession(sessionName) {
+  const ids = Array.isArray(state.preferences.sessionTags[sessionName])
+    ? state.preferences.sessionTags[sessionName]
+    : [];
+  const selected = new Set(ids);
+  return state.preferences.tags.filter((tag) => selected.has(tag.id));
 }
 
 function renderSessionList(sessions) {
@@ -116,10 +223,43 @@ function renderSessionList(sessions) {
 
     const meta = document.createElement('div');
     meta.className = 'session-meta';
-    meta.textContent = `${session.path || ''} · ${formatRelativeTime(session.activity)}`;
+    meta.textContent = [session.path || '', formatRelativeTime(session.activity)].filter(Boolean).join(' · ');
 
-    li.append(head, sub, meta);
+    const footer = document.createElement('div');
+    footer.className = 'session-card-footer';
+    const tagList = document.createElement('div');
+    tagList.className = 'session-tags';
+    tagList.setAttribute('aria-label', '已关联 Tag');
+    for (const tag of tagsForSession(session.name)) {
+      const pill = document.createElement('span');
+      pill.className = 'session-tag-pill';
+      pill.dataset.tagColor = tag.color;
+      pill.textContent = tag.name;
+      pill.title = tag.name;
+      tagList.appendChild(pill);
+    }
+    const manageTags = document.createElement('button');
+    manageTags.type = 'button';
+    manageTags.className = 'session-tag-button';
+    manageTags.textContent = 'Tag';
+    manageTags.setAttribute('aria-label', `管理 ${session.name} 的 Tag`);
+    manageTags.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openSessionTagsModal(session);
+    });
+    footer.append(tagList, manageTags);
+
+    li.append(head, sub, meta, footer);
     li.addEventListener('click', () => openSession(session));
+    li.tabIndex = 0;
+    li.setAttribute('role', 'button');
+    li.addEventListener('keydown', (event) => {
+      if (event.target !== li) return;
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openSession(session);
+      }
+    });
     list.appendChild(li);
   }
 }
@@ -128,9 +268,86 @@ async function loadSessions() {
   setListState({ loading: true, error: null });
   try {
     const body = await fetchJson(apiUrl('/api/sessions'));
-    setListState({ loading: false, error: null, sessions: body.sessions || [] });
+    state.sessions = Array.isArray(body.sessions) ? body.sessions : [];
+    state.preferences = normalizePreferenceProjection(body.preferences);
+    ensureListView();
+    renderWorkspaceFilters();
+    setListState({ loading: false, error: null, sessions: currentListSessions() });
   } catch (err) {
     setListState({ loading: false, error: err.message || '加载失败' });
+  }
+}
+
+function closeSessionTagsModal() {
+  const modal = el('session-tags-modal');
+  modal.hidden = true;
+  el('session-tags-form').removeAttribute('data-session-name');
+}
+
+function openSessionTagsModal(session) {
+  const form = el('session-tags-form');
+  const list = el('session-tags-list');
+  const selectedIds = new Set(Array.isArray(state.preferences.sessionTags[session.name])
+    ? state.preferences.sessionTags[session.name]
+    : []);
+  form.dataset.sessionName = session.name;
+  el('session-tags-message').textContent = session.name;
+  list.replaceChildren();
+  for (const tag of state.preferences.tags) {
+    const row = document.createElement('label');
+    row.className = 'tag-check-row';
+    row.dataset.tagColor = tag.color;
+    const dot = document.createElement('span');
+    dot.className = 'tag-color-dot';
+    dot.setAttribute('aria-hidden', 'true');
+    const name = document.createElement('span');
+    name.textContent = tag.name;
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.name = 'tagId';
+    checkbox.value = tag.id;
+    checkbox.checked = selectedIds.has(tag.id);
+    row.append(dot, name, checkbox);
+    list.appendChild(row);
+  }
+  if (!state.preferences.tags.length) {
+    const empty = document.createElement('p');
+    empty.className = 'tag-check-empty';
+    empty.textContent = '还没有 Tag，请先在 Mac 桌面端创建。';
+    list.appendChild(empty);
+  }
+  el('session-tags-save').disabled = !state.preferences.tags.length;
+  el('session-tags-modal').hidden = false;
+  requestAnimationFrame(() => list.querySelector('input')?.focus());
+}
+
+async function saveSessionTags(event) {
+  event.preventDefault();
+  const form = el('session-tags-form');
+  const sessionName = form.dataset.sessionName;
+  if (!sessionName) return;
+  const saveButton = el('session-tags-save');
+  const checkedTagIds = [...form.querySelectorAll('input[name="tagId"]:checked')]
+    .map((input) => input.value);
+  saveButton.disabled = true;
+  saveButton.textContent = '保存中…';
+  try {
+    const body = await fetchJson(apiUrl('/api/session-tags'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionName, tagIds: checkedTagIds }),
+    });
+    state.preferences = normalizePreferenceProjection(body.preferences);
+    ensureListView();
+    renderWorkspaceFilters();
+    setListState({ loading: false, error: null, sessions: currentListSessions() });
+    closeSessionTagsModal();
+    showToast('Tag 已保存');
+  } catch (error) {
+    showToast(error.message || 'Tag 保存失败');
+  } finally {
+    saveButton.textContent = '保存';
+    saveButton.disabled = !state.preferences.tags.length;
   }
 }
 
@@ -268,29 +485,29 @@ async function loadWindows(sessionId) {
   try {
     const body = await fetchJson(apiUrl('/api/session-detail', { session: sessionId }));
     state.windows = (body.windows || []).slice().sort((a, b) => a.index - b.index);
-    renderWindowChips();
+    renderWindowPicker();
   } catch (err) {
     showToast(err.message || '获取窗口失败');
   }
 }
 
-function renderWindowChips() {
-  const container = el('window-chips');
-  container.innerHTML = '';
+function renderWindowPicker() {
+  const picker = el('window-picker');
+  picker.replaceChildren();
   for (const win of state.windows) {
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = `window-chip${win.active ? ' active' : ''}`;
-    chip.textContent = `${win.index}:${win.name}`;
-    chip.addEventListener('click', () => selectWindow(win.index));
-    container.appendChild(chip);
+    const option = document.createElement('option');
+    option.value = String(win.index);
+    option.textContent = `${win.index}: ${win.name}`;
+    option.selected = Boolean(win.active);
+    picker.appendChild(option);
   }
+  picker.hidden = state.windows.length <= 1;
 }
 
 async function selectWindow(windowIndex) {
   if (!state.grouped) return;
   state.windows = state.windows.map((w) => ({ ...w, active: w.index === windowIndex }));
-  renderWindowChips();
+  renderWindowPicker();
   try {
     await fetchJson(apiUrl('/api/select-window'), {
       method: 'POST',
@@ -309,7 +526,7 @@ function openSession(session) {
   state.grouped = null;
   state.windows = [];
   el('term-title').textContent = session.name || session.id;
-  el('window-chips').innerHTML = '';
+  renderWindowPicker();
   showView('terminal');
   ensureTerminalCreated();
   state.term.reset();
@@ -359,19 +576,26 @@ function setupToolbar() {
 }
 
 function setupViewportHandling() {
-  const applyHeight = (height) => {
+  let fitFrame = null;
+  const onViewportChange = () => {
+    const viewport = window.visualViewport;
+    const height = Math.round(viewport?.height || window.innerHeight);
+    const offsetTop = Math.round(viewport?.offsetTop || 0);
     el('app').style.height = `${height}px`;
+    el('app').style.top = `${offsetTop}px`;
+    if (fitFrame !== null) cancelAnimationFrame(fitFrame);
+    fitFrame = requestAnimationFrame(() => {
+      fitFrame = null;
+      fitAndNotify();
+    });
   };
   if (window.visualViewport) {
-    const onViewportChange = () => {
-      applyHeight(window.visualViewport.height);
-      fitAndNotify();
-    };
     window.visualViewport.addEventListener('resize', onViewportChange);
     window.visualViewport.addEventListener('scroll', onViewportChange);
   }
-  window.addEventListener('resize', fitAndNotify);
-  window.addEventListener('orientationchange', () => setTimeout(fitAndNotify, 300));
+  window.addEventListener('resize', onViewportChange);
+  window.addEventListener('orientationchange', () => setTimeout(onViewportChange, 300));
+  onViewportChange();
 }
 
 function setupStaticHandlers() {
@@ -381,6 +605,18 @@ function setupStaticHandlers() {
   el('reconnect-btn').addEventListener('click', () => {
     if (state.currentSession) connectWebSocket(state.currentSession.id);
   });
+  el('window-picker').addEventListener('change', (event) => {
+    const windowIndex = Number(event.target.value);
+    if (Number.isInteger(windowIndex)) selectWindow(windowIndex);
+  });
+  el('session-tags-cancel').addEventListener('click', closeSessionTagsModal);
+  el('session-tags-form').addEventListener('submit', saveSessionTags);
+  el('session-tags-modal').addEventListener('click', (event) => {
+    if (event.target === el('session-tags-modal')) closeSessionTagsModal();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !el('session-tags-modal').hidden) closeSessionTagsModal();
+  });
 }
 
 function bootstrap() {
@@ -388,6 +624,7 @@ function bootstrap() {
   setupStaticHandlers();
   setupToolbar();
   setupViewportHandling();
+  renderWorkspaceFilters();
   if (!state.token) {
     setListState({ loading: false, error: '缺少 token 参数，请通过正确链接访问' });
     return;

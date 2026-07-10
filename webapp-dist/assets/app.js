@@ -11389,9 +11389,91 @@ ${s3.join("\n")}
     }
   });
 
+  // src/shared/session-model.js
+  var require_session_model = __commonJS({
+    "src/shared/session-model.js"(exports, module) {
+      function searchableText(session) {
+        return [session.name, session.path, session.activeCommand].filter((value) => typeof value === "string").join("\n").toLocaleLowerCase();
+      }
+      function byRecentActivity(left, right) {
+        const activityDifference = Number(right.activity || 0) - Number(left.activity || 0);
+        if (activityDifference) return activityDifference;
+        return String(left.name || "").localeCompare(String(right.name || ""), "zh-CN");
+      }
+      function filterAndGroupSessions(sessions, favorites, query, favoritesOnly) {
+        const items = Array.isArray(sessions) ? sessions : [];
+        const favoriteNames = Array.isArray(favorites) ? favorites : [];
+        const favoriteOrder = new Map(favoriteNames.map((name, index) => [name, index]));
+        const normalizedQuery = typeof query === "string" ? query.trim().toLocaleLowerCase() : "";
+        const filtered = items.filter((session) => !normalizedQuery || searchableText(session).includes(normalizedQuery));
+        const favoriteSessions = filtered.filter((session) => favoriteOrder.has(session.name)).sort((left, right) => favoriteOrder.get(left.name) - favoriteOrder.get(right.name));
+        const ordinarySessions = favoritesOnly ? [] : filtered.filter((session) => !favoriteOrder.has(session.name)).sort(byRecentActivity);
+        return { favorites: favoriteSessions, sessions: ordinarySessions };
+      }
+      function sessionsForView(sessions, preferences, view) {
+        const items = Array.isArray(sessions) ? sessions : [];
+        if (!view || view.kind === "all") return [];
+        const stored = preferences && typeof preferences === "object" ? preferences : {};
+        let includedNames;
+        if (view.kind === "favorites") {
+          includedNames = new Set(Array.isArray(stored.favorites) ? stored.favorites : []);
+        } else if (view.kind === "tag" && typeof view.tagId === "string") {
+          const sessionTags = stored.sessionTags && typeof stored.sessionTags === "object" && !Array.isArray(stored.sessionTags) ? stored.sessionTags : {};
+          includedNames = new Set(Object.entries(sessionTags).filter(([, tagIds]) => Array.isArray(tagIds) && tagIds.includes(view.tagId)).map(([name]) => name));
+        } else {
+          return [];
+        }
+        const seen = /* @__PURE__ */ new Set();
+        return items.filter((session) => {
+          if (!session || !includedNames.has(session.name) || seen.has(session.name)) return false;
+          seen.add(session.name);
+          return true;
+        }).sort(byRecentActivity);
+      }
+      module.exports = { filterAndGroupSessions, sessionsForView };
+    }
+  });
+
+  // src/webapp/mobile-session-model.js
+  var require_mobile_session_model = __commonJS({
+    "src/webapp/mobile-session-model.js"(exports, module) {
+      var { sessionsForView } = require_session_model();
+      function byRecentActivity(left, right) {
+        const activityDifference = Number(right.activity || 0) - Number(left.activity || 0);
+        if (activityDifference) return activityDifference;
+        return String(left.name || "").localeCompare(String(right.name || ""), "zh-CN");
+      }
+      function uniqueLiveSessions(sessions) {
+        const sorted = (Array.isArray(sessions) ? sessions : []).filter((session) => session && typeof session.name === "string" && session.name.trim()).slice().sort(byRecentActivity);
+        const seen = /* @__PURE__ */ new Set();
+        return sorted.filter((session) => {
+          if (seen.has(session.name)) return false;
+          seen.add(session.name);
+          return true;
+        });
+      }
+      function mobileSessionsForView2(sessions, preferences, view) {
+        const items = uniqueLiveSessions(sessions);
+        if (view?.kind === "all") return items;
+        if (view?.kind === "favorites" || view?.kind === "tag") {
+          return sessionsForView(items, preferences, view);
+        }
+        return [];
+      }
+      function liveCountForView2(sessions, preferences, view) {
+        return mobileSessionsForView2(sessions, preferences, view).length;
+      }
+      module.exports = {
+        liveCountForView: liveCountForView2,
+        mobileSessionsForView: mobileSessionsForView2
+      };
+    }
+  });
+
   // src/webapp/app.js
   var { Terminal } = require_xterm();
   var { FitAddon } = require_addon_fit();
+  var { liveCountForView, mobileSessionsForView } = require_mobile_session_model();
   var LIST_REFRESH_MS = 15e3;
   var PING_INTERVAL_MS = 25e3;
   var TERMINAL_THEME = {
@@ -11404,6 +11486,9 @@ ${s3.join("\n")}
   var state = {
     token: "",
     currentView: "list",
+    sessions: [],
+    preferences: { tags: [], favorites: [], sessionTags: {} },
+    listView: { kind: "all" },
     currentSession: null,
     grouped: null,
     windows: [],
@@ -11451,6 +11536,33 @@ ${s3.join("\n")}
     el("view-list").hidden = name !== "list";
     el("view-terminal").hidden = name !== "terminal";
   }
+  function normalizePreferenceProjection(value) {
+    const preferences = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return {
+      tags: Array.isArray(preferences.tags) ? preferences.tags.filter((tag) => tag && typeof tag.id === "string" && typeof tag.name === "string" && typeof tag.color === "string") : [],
+      favorites: Array.isArray(preferences.favorites) ? preferences.favorites.filter((name) => typeof name === "string") : [],
+      sessionTags: preferences.sessionTags && typeof preferences.sessionTags === "object" && !Array.isArray(preferences.sessionTags) ? preferences.sessionTags : {}
+    };
+  }
+  function sameListView(left, right) {
+    return left?.kind === right?.kind && left?.tagId === right?.tagId;
+  }
+  function ensureListView() {
+    if (state.listView.kind !== "tag") return;
+    if (!state.preferences.tags.some((tag) => tag.id === state.listView.tagId)) {
+      state.listView = { kind: "all" };
+    }
+  }
+  function currentListSessions() {
+    return mobileSessionsForView(state.sessions, state.preferences, state.listView);
+  }
+  function currentListLabel() {
+    if (state.listView.kind === "favorites") return "\u6536\u85CF";
+    if (state.listView.kind === "tag") {
+      return state.preferences.tags.find((tag) => tag.id === state.listView.tagId)?.name || "Tag";
+    }
+    return "\u5168\u90E8";
+  }
   function startOfDay(date) {
     return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
   }
@@ -11474,7 +11586,63 @@ ${s3.join("\n")}
     el("list-error").hidden = error === null;
     if (error !== null) el("list-error-text").textContent = error;
     el("list-empty").hidden = sessions === null || sessions.length > 0;
-    if (sessions !== null) renderSessionList(sessions);
+    if (sessions !== null) {
+      const emptyText = el("list-empty").querySelector("p");
+      emptyText.textContent = state.listView.kind === "all" ? "\u6682\u65E0 tmux \u4F1A\u8BDD" : `${currentListLabel()}\u4E2D\u6682\u65E0\u4F1A\u8BDD`;
+      renderSessionList(sessions);
+    }
+  }
+  function createWorkspaceFilter(view, label, count, tag = null) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `workspace-filter${sameListView(view, state.listView) ? " active" : ""}`;
+    button.setAttribute("aria-pressed", String(sameListView(view, state.listView)));
+    button.title = `${label}\uFF08${count}\uFF09`;
+    if (tag) {
+      button.dataset.tagColor = tag.color;
+      const dot = document.createElement("span");
+      dot.className = "tag-color-dot";
+      dot.setAttribute("aria-hidden", "true");
+      button.appendChild(dot);
+    }
+    const text = document.createElement("span");
+    text.className = "workspace-filter-label";
+    text.textContent = label;
+    const badge = document.createElement("span");
+    badge.className = "workspace-filter-count";
+    badge.textContent = String(count);
+    button.append(text, badge);
+    button.addEventListener("click", () => {
+      state.listView = view;
+      renderWorkspaceFilters();
+      setListState({ loading: false, error: null, sessions: currentListSessions() });
+    });
+    return button;
+  }
+  function renderWorkspaceFilters() {
+    ensureListView();
+    const filters = el("workspace-filters");
+    const views = [
+      { view: { kind: "all" }, label: "\u5168\u90E8" },
+      { view: { kind: "favorites" }, label: "\u6536\u85CF" },
+      ...state.preferences.tags.map((tag) => ({
+        view: { kind: "tag", tagId: tag.id },
+        label: tag.name,
+        tag
+      }))
+    ];
+    filters.replaceChildren(...views.map(({ view, label, tag }) => createWorkspaceFilter(
+      view,
+      label,
+      liveCountForView(state.sessions, state.preferences, view),
+      tag
+    )));
+    filters.querySelector(".workspace-filter.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+  function tagsForSession(sessionName) {
+    const ids = Array.isArray(state.preferences.sessionTags[sessionName]) ? state.preferences.sessionTags[sessionName] : [];
+    const selected = new Set(ids);
+    return state.preferences.tags.filter((tag) => selected.has(tag.id));
   }
   function renderSessionList(sessions) {
     const list = el("session-list");
@@ -11495,9 +11663,41 @@ ${s3.join("\n")}
       sub.textContent = `${session.windows ?? 0} \u7A97\u53E3 \xB7 ${session.paneCount ?? 0} \u9762\u677F \xB7 ${session.activeCommand || "-"}`;
       const meta = document.createElement("div");
       meta.className = "session-meta";
-      meta.textContent = `${session.path || ""} \xB7 ${formatRelativeTime(session.activity)}`;
-      li.append(head, sub, meta);
+      meta.textContent = [session.path || "", formatRelativeTime(session.activity)].filter(Boolean).join(" \xB7 ");
+      const footer = document.createElement("div");
+      footer.className = "session-card-footer";
+      const tagList = document.createElement("div");
+      tagList.className = "session-tags";
+      tagList.setAttribute("aria-label", "\u5DF2\u5173\u8054 Tag");
+      for (const tag of tagsForSession(session.name)) {
+        const pill = document.createElement("span");
+        pill.className = "session-tag-pill";
+        pill.dataset.tagColor = tag.color;
+        pill.textContent = tag.name;
+        pill.title = tag.name;
+        tagList.appendChild(pill);
+      }
+      const manageTags = document.createElement("button");
+      manageTags.type = "button";
+      manageTags.className = "session-tag-button";
+      manageTags.textContent = "Tag";
+      manageTags.setAttribute("aria-label", `\u7BA1\u7406 ${session.name} \u7684 Tag`);
+      manageTags.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openSessionTagsModal(session);
+      });
+      footer.append(tagList, manageTags);
+      li.append(head, sub, meta, footer);
       li.addEventListener("click", () => openSession(session));
+      li.tabIndex = 0;
+      li.setAttribute("role", "button");
+      li.addEventListener("keydown", (event) => {
+        if (event.target !== li) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          openSession(session);
+        }
+      });
       list.appendChild(li);
     }
   }
@@ -11505,9 +11705,80 @@ ${s3.join("\n")}
     setListState({ loading: true, error: null });
     try {
       const body = await fetchJson(apiUrl("/api/sessions"));
-      setListState({ loading: false, error: null, sessions: body.sessions || [] });
+      state.sessions = Array.isArray(body.sessions) ? body.sessions : [];
+      state.preferences = normalizePreferenceProjection(body.preferences);
+      ensureListView();
+      renderWorkspaceFilters();
+      setListState({ loading: false, error: null, sessions: currentListSessions() });
     } catch (err) {
       setListState({ loading: false, error: err.message || "\u52A0\u8F7D\u5931\u8D25" });
+    }
+  }
+  function closeSessionTagsModal() {
+    const modal = el("session-tags-modal");
+    modal.hidden = true;
+    el("session-tags-form").removeAttribute("data-session-name");
+  }
+  function openSessionTagsModal(session) {
+    const form = el("session-tags-form");
+    const list = el("session-tags-list");
+    const selectedIds = new Set(Array.isArray(state.preferences.sessionTags[session.name]) ? state.preferences.sessionTags[session.name] : []);
+    form.dataset.sessionName = session.name;
+    el("session-tags-message").textContent = session.name;
+    list.replaceChildren();
+    for (const tag of state.preferences.tags) {
+      const row = document.createElement("label");
+      row.className = "tag-check-row";
+      row.dataset.tagColor = tag.color;
+      const dot = document.createElement("span");
+      dot.className = "tag-color-dot";
+      dot.setAttribute("aria-hidden", "true");
+      const name = document.createElement("span");
+      name.textContent = tag.name;
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.name = "tagId";
+      checkbox.value = tag.id;
+      checkbox.checked = selectedIds.has(tag.id);
+      row.append(dot, name, checkbox);
+      list.appendChild(row);
+    }
+    if (!state.preferences.tags.length) {
+      const empty = document.createElement("p");
+      empty.className = "tag-check-empty";
+      empty.textContent = "\u8FD8\u6CA1\u6709 Tag\uFF0C\u8BF7\u5148\u5728 Mac \u684C\u9762\u7AEF\u521B\u5EFA\u3002";
+      list.appendChild(empty);
+    }
+    el("session-tags-save").disabled = !state.preferences.tags.length;
+    el("session-tags-modal").hidden = false;
+    requestAnimationFrame(() => list.querySelector("input")?.focus());
+  }
+  async function saveSessionTags(event) {
+    event.preventDefault();
+    const form = el("session-tags-form");
+    const sessionName = form.dataset.sessionName;
+    if (!sessionName) return;
+    const saveButton = el("session-tags-save");
+    const checkedTagIds = [...form.querySelectorAll('input[name="tagId"]:checked')].map((input) => input.value);
+    saveButton.disabled = true;
+    saveButton.textContent = "\u4FDD\u5B58\u4E2D\u2026";
+    try {
+      const body = await fetchJson(apiUrl("/api/session-tags"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionName, tagIds: checkedTagIds })
+      });
+      state.preferences = normalizePreferenceProjection(body.preferences);
+      ensureListView();
+      renderWorkspaceFilters();
+      setListState({ loading: false, error: null, sessions: currentListSessions() });
+      closeSessionTagsModal();
+      showToast("Tag \u5DF2\u4FDD\u5B58");
+    } catch (error) {
+      showToast(error.message || "Tag \u4FDD\u5B58\u5931\u8D25");
+    } finally {
+      saveButton.textContent = "\u4FDD\u5B58";
+      saveButton.disabled = !state.preferences.tags.length;
     }
   }
   function startListAutoRefresh() {
@@ -11633,27 +11904,27 @@ ${s3.join("\n")}
     try {
       const body = await fetchJson(apiUrl("/api/session-detail", { session: sessionId }));
       state.windows = (body.windows || []).slice().sort((a, b) => a.index - b.index);
-      renderWindowChips();
+      renderWindowPicker();
     } catch (err) {
       showToast(err.message || "\u83B7\u53D6\u7A97\u53E3\u5931\u8D25");
     }
   }
-  function renderWindowChips() {
-    const container = el("window-chips");
-    container.innerHTML = "";
+  function renderWindowPicker() {
+    const picker = el("window-picker");
+    picker.replaceChildren();
     for (const win of state.windows) {
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = `window-chip${win.active ? " active" : ""}`;
-      chip.textContent = `${win.index}:${win.name}`;
-      chip.addEventListener("click", () => selectWindow(win.index));
-      container.appendChild(chip);
+      const option = document.createElement("option");
+      option.value = String(win.index);
+      option.textContent = `${win.index}: ${win.name}`;
+      option.selected = Boolean(win.active);
+      picker.appendChild(option);
     }
+    picker.hidden = state.windows.length <= 1;
   }
   async function selectWindow(windowIndex) {
     if (!state.grouped) return;
     state.windows = state.windows.map((w) => ({ ...w, active: w.index === windowIndex }));
-    renderWindowChips();
+    renderWindowPicker();
     try {
       await fetchJson(apiUrl("/api/select-window"), {
         method: "POST",
@@ -11671,7 +11942,7 @@ ${s3.join("\n")}
     state.grouped = null;
     state.windows = [];
     el("term-title").textContent = session.name || session.id;
-    el("window-chips").innerHTML = "";
+    renderWindowPicker();
     showView("terminal");
     ensureTerminalCreated();
     state.term.reset();
@@ -11717,19 +11988,26 @@ ${s3.join("\n")}
     });
   }
   function setupViewportHandling() {
-    const applyHeight = (height) => {
+    let fitFrame = null;
+    const onViewportChange = () => {
+      const viewport = window.visualViewport;
+      const height = Math.round(viewport?.height || window.innerHeight);
+      const offsetTop = Math.round(viewport?.offsetTop || 0);
       el("app").style.height = `${height}px`;
+      el("app").style.top = `${offsetTop}px`;
+      if (fitFrame !== null) cancelAnimationFrame(fitFrame);
+      fitFrame = requestAnimationFrame(() => {
+        fitFrame = null;
+        fitAndNotify();
+      });
     };
     if (window.visualViewport) {
-      const onViewportChange = () => {
-        applyHeight(window.visualViewport.height);
-        fitAndNotify();
-      };
       window.visualViewport.addEventListener("resize", onViewportChange);
       window.visualViewport.addEventListener("scroll", onViewportChange);
     }
-    window.addEventListener("resize", fitAndNotify);
-    window.addEventListener("orientationchange", () => setTimeout(fitAndNotify, 300));
+    window.addEventListener("resize", onViewportChange);
+    window.addEventListener("orientationchange", () => setTimeout(onViewportChange, 300));
+    onViewportChange();
   }
   function setupStaticHandlers() {
     el("refresh-btn").addEventListener("click", loadSessions);
@@ -11738,12 +12016,25 @@ ${s3.join("\n")}
     el("reconnect-btn").addEventListener("click", () => {
       if (state.currentSession) connectWebSocket(state.currentSession.id);
     });
+    el("window-picker").addEventListener("change", (event) => {
+      const windowIndex = Number(event.target.value);
+      if (Number.isInteger(windowIndex)) selectWindow(windowIndex);
+    });
+    el("session-tags-cancel").addEventListener("click", closeSessionTagsModal);
+    el("session-tags-form").addEventListener("submit", saveSessionTags);
+    el("session-tags-modal").addEventListener("click", (event) => {
+      if (event.target === el("session-tags-modal")) closeSessionTagsModal();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !el("session-tags-modal").hidden) closeSessionTagsModal();
+    });
   }
   function bootstrap() {
     state.token = getToken();
     setupStaticHandlers();
     setupToolbar();
     setupViewportHandling();
+    renderWorkspaceFilters();
     if (!state.token) {
       setListState({ loading: false, error: "\u7F3A\u5C11 token \u53C2\u6570\uFF0C\u8BF7\u901A\u8FC7\u6B63\u786E\u94FE\u63A5\u8BBF\u95EE" });
       return;

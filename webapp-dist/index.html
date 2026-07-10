@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -19,6 +19,7 @@
         <h1 class="topbar-title">Tmux Desk</h1>
         <button id="refresh-btn" class="icon-btn" aria-label="刷新" type="button">&#x21bb;</button>
       </header>
+      <nav id="workspace-filters" class="workspace-filters" aria-label="会话工作区"></nav>
       <div id="list-content" class="list-content">
         <ul id="session-list" class="session-list"></ul>
         <div id="list-empty" class="state-message" hidden>
@@ -42,9 +43,8 @@
       <header class="term-topbar">
         <button id="back-btn" class="icon-btn" aria-label="返回" type="button">&#x2039;</button>
         <span id="term-title" class="term-title"></span>
-        <span class="term-topbar-spacer"></span>
+        <select id="window-picker" class="window-picker" aria-label="tmux 窗口" hidden></select>
       </header>
-      <div id="window-chips" class="window-chips"></div>
       <div id="terminal-container" class="terminal-container"></div>
       <div id="toolbar" class="toolbar">
         <button class="key-btn" data-key="esc" type="button">Esc</button>
@@ -57,6 +57,23 @@
         <button class="key-btn" data-key="right" type="button">&#x2192;</button>
       </div>
     </section>
+
+    <div id="session-tags-modal" class="sheet-backdrop" role="dialog" aria-modal="true" aria-labelledby="session-tags-title" hidden>
+      <form id="session-tags-form" class="sheet-panel">
+        <div class="sheet-handle" aria-hidden="true"></div>
+        <header class="sheet-header">
+          <div>
+            <h2 id="session-tags-title">管理 Tag</h2>
+            <p id="session-tags-message"></p>
+          </div>
+        </header>
+        <div id="session-tags-list" class="tag-check-list"></div>
+        <footer class="sheet-footer">
+          <button id="session-tags-cancel" class="btn secondary" type="button">取消</button>
+          <button id="session-tags-save" class="btn primary" type="submit">保存</button>
+        </footer>
+      </form>
+    </div>
 
     <div id="toast" class="toast" hidden></div>
 
