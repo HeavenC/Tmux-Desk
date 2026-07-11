@@ -49,12 +49,17 @@ test('preference patches allow only local UI preference fields', () => {
   });
   assert.deepEqual(validatePreferencesPatch({ sidebarWidth: null }), { sidebarWidth: null });
   assert.deepEqual(validatePreferencesPatch({ tagRailExpanded: true }), { tagRailExpanded: true });
+  assert.deepEqual(validatePreferencesPatch({ tagRailWidth: 259.6 }), { tagRailWidth: 260 });
+  assert.deepEqual(validatePreferencesPatch({ tagRailWidth: null }), { tagRailWidth: null });
   assert.throws(() => validatePreferencesPatch({ theme: 'sepia' }), /主题/);
   assert.throws(() => validatePreferencesPatch({ token: 'secret' }), /偏好字段/);
   assert.throws(() => validatePreferencesPatch({ windowBounds: { width: 2 } }), /窗口尺寸/);
   assert.throws(() => validatePreferencesPatch({ sidebarWidth: 50 }), /侧栏宽度/);
   assert.throws(() => validatePreferencesPatch({ sidebarWidth: 1001 }), /侧栏宽度/);
   assert.throws(() => validatePreferencesPatch({ tagRailExpanded: 'yes' }), /Tag 栏展开状态/);
+  assert.throws(() => validatePreferencesPatch({ tagRailWidth: '260' }), /Tag 栏宽度/);
+  assert.throws(() => validatePreferencesPatch({ tagRailWidth: 50 }), /Tag 栏宽度/);
+  assert.throws(() => validatePreferencesPatch({ tagRailWidth: 1001 }), /Tag 栏宽度/);
 });
 
 test('preference patches shape-check tabOrders but leave deep validation to the store', () => {

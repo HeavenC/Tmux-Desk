@@ -38,7 +38,7 @@ test('malformed and invalid preferences fall back to normalized defaults', async
     }), 'utf8');
     assert.deepEqual(await store.load(), {
       theme: 'light', favorites: ['api'], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null,
-      sidebarWidth: null, tagRailExpanded: false,
+      sidebarWidth: null, tagRailExpanded: false, tagRailWidth: null,
     });
   });
 });
@@ -49,6 +49,16 @@ test('sidebar width is rounded and clamped to the supported desktop range', asyn
     assert.equal((await store.save({ sidebarWidth: 80 })).sidebarWidth, 200);
     assert.equal((await store.save({ sidebarWidth: 500 })).sidebarWidth, 420);
     assert.equal((await store.save({ sidebarWidth: null })).sidebarWidth, null);
+  });
+});
+
+test('tag rail width is rounded, clamped, reset, and restored from disk', async () => {
+  await withStore(async (store) => {
+    assert.equal((await store.save({ tagRailWidth: 239.6 })).tagRailWidth, 240);
+    assert.equal((await store.save({ tagRailWidth: 80 })).tagRailWidth, 180);
+    assert.equal((await store.save({ tagRailWidth: 900 })).tagRailWidth, 420);
+    assert.equal((await store.load()).tagRailWidth, 420);
+    assert.equal((await store.save({ tagRailWidth: null })).tagRailWidth, null);
   });
 });
 

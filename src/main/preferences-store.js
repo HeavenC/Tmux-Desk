@@ -22,8 +22,10 @@ const DEFAULT_PREFERENCES = Object.freeze({
   windowBounds: null,
   sidebarWidth: null,
   tagRailExpanded: false,
+  tagRailWidth: null,
 });
 const SIDEBAR_WIDTH_RANGE = Object.freeze({ min: 200, max: 420 });
+const TAG_RAIL_WIDTH_RANGE = Object.freeze({ min: 180, max: 420 });
 
 const VALID_THEMES = new Set(['light', 'dark', 'system']);
 
@@ -52,6 +54,11 @@ function normalizeBounds(value) {
 function normalizeSidebarWidth(value) {
   if (!Number.isFinite(value)) return null;
   return Math.round(Math.min(SIDEBAR_WIDTH_RANGE.max, Math.max(SIDEBAR_WIDTH_RANGE.min, value)));
+}
+
+function normalizeTagRailWidth(value) {
+  if (!Number.isFinite(value)) return null;
+  return Math.round(Math.min(TAG_RAIL_WIDTH_RANGE.max, Math.max(TAG_RAIL_WIDTH_RANGE.min, value)));
 }
 
 // tabOrders keys are view identifiers: 'favorites' or a tag id that must
@@ -109,6 +116,7 @@ function normalizePreferences(value = {}) {
     tagRailExpanded: typeof value.tagRailExpanded === 'boolean'
       ? value.tagRailExpanded
       : DEFAULT_PREFERENCES.tagRailExpanded,
+    tagRailWidth: normalizeTagRailWidth(value.tagRailWidth),
   };
 }
 

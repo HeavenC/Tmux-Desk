@@ -138,7 +138,7 @@ function validateTabOrders(value) {
 
 function validatePreferencesPatch(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('偏好设置无效');
-  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tabOrders']);
+  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new Error('偏好字段无效');
   }
@@ -161,6 +161,12 @@ function validatePreferencesPatch(value) {
   if ('tagRailExpanded' in value) {
     if (typeof value.tagRailExpanded !== 'boolean') throw new Error('Tag 栏展开状态无效');
     result.tagRailExpanded = value.tagRailExpanded;
+  }
+  if ('tagRailWidth' in value) {
+    if (value.tagRailWidth !== null && (!Number.isFinite(value.tagRailWidth) || value.tagRailWidth < 100 || value.tagRailWidth > 1000)) {
+      throw new Error('Tag 栏宽度无效');
+    }
+    result.tagRailWidth = value.tagRailWidth === null ? null : Math.round(value.tagRailWidth);
   }
   if ('tabOrders' in value) result.tabOrders = validateTabOrders(value.tabOrders);
   return result;
