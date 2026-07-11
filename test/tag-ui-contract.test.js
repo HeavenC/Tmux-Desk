@@ -16,7 +16,7 @@ test('renderer exposes tag navigation, management dialogs, and one session tab r
   }
   assert.doesNotMatch(html, /id=["']windowTabs["']/);
   assert.match(html, /id="sessionTabs"[^>]+aria-label="会话页签"/);
-  assert.match(html, /id="tagRail"[^>]+role="group"[^>]+aria-label="会话 Tag"/);
+  assert.match(html, /id="tagRail"[^>]+role="group"[^>]+aria-label="会话标签"/);
   assert.match(html, /id="tagRailToggleButton"[^>]+aria-controls="tagRail"/);
 });
 

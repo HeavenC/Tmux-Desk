@@ -4,6 +4,7 @@ const { searchCommands } = require('./command-palette');
 const { filterAndGroupSessions, sessionsForView } = require('../shared/session-model');
 const { applyTheme, resolveTheme } = require('./theme');
 const { TerminalView } = require('./terminal-view');
+const { t, applyStaticI18n, setLocale, resolveLocale, loadStoredLanguage, saveLanguage } = require('./i18n');
 
 const api = window.tmuxDesk;
 const $ = (selector) => document.querySelector(selector);
@@ -42,7 +43,7 @@ function cacheElements() {
     'emptyInstallButton', 'emptyRefreshButton', 'emptyAllButton', 'workspaceStatus', 'commandHint', 'themePopover', 'contextMenu', 'toastStack',
     'sessionModal', 'sessionForm', 'sessionNameInput', 'sessionCwdInput', 'startupCommandInput',
     'chooseDirectoryButton', 'renameModal', 'renameForm', 'renameInput', 'killModal', 'killMessage',
-    'confirmKillButton', 'settingsModal', 'themeCards', 'tagSettingsList', 'settingsNewTagButton', 'settingsTmuxVersion', 'commandPalette',
+    'confirmKillButton', 'settingsModal', 'themeCards', 'languageCards', 'tagSettingsList', 'settingsNewTagButton', 'settingsTmuxVersion', 'commandPalette',
     'commandInput', 'commandSearchIcon', 'commandResults',
     'duplicateModal', 'duplicateForm', 'duplicateInput', 'duplicateMessage',
     'importModal', 'importList', 'importTitle', 'importSubtitle', 'importSelectAll', 'importCreateButton',
@@ -56,19 +57,19 @@ function cacheElements() {
 }
 
 function installIcons() {
-  $('[data-view="all"]').innerHTML = railButtonContent('terminal', '全部会话');
-  $('[data-view="favorites"]').innerHTML = railButtonContent('star', '收藏会话');
-  refs.settingsButton.innerHTML = railButtonContent('settings', '设置');
+  $('[data-view="all"]').innerHTML = railButtonContent('terminal', t('rail.all'));
+  $('[data-view="favorites"]').innerHTML = railButtonContent('star', t('rail.favorites'));
+  refs.settingsButton.innerHTML = railButtonContent('settings', t('rail.settings'));
   refs.refreshButton.innerHTML = icon('refresh', 16);
   refs.newSessionButton.innerHTML = icon('plus', 17);
-  refs.newTagButton.innerHTML = railButtonContent('plus', '新建 Tag', 16);
-  refs.tagRailToggleButton.innerHTML = railButtonContent('chevron', '展开 Tag 栏', 16);
+  refs.newTagButton.innerHTML = railButtonContent('plus', t('tag.new'), 16);
+  refs.tagRailToggleButton.innerHTML = railButtonContent('chevron', t('tag.railToggleExpand'), 16);
   refs.searchIcon.innerHTML = icon('search', 14);
   refs.panePickerIcon.innerHTML = icon('panes', 15);
   refs.sessionMenuButton.innerHTML = icon('more', 18);
   refs.commandSearchIcon.innerHTML = icon('search', 18);
   refs.filesToggleButton.innerHTML = icon('sidebar', 17);
-  refs.mobileAccessButton.innerHTML = railButtonContent('phone', '手机访问', 18);
+  refs.mobileAccessButton.innerHTML = railButtonContent('phone', t('rail.share'), 18);
   refs.fbRevealButton.innerHTML = icon('folder', 15);
   refs.fbRefreshButton.innerHTML = icon('refresh', 15);
   refs.fbCollapseButton.innerHTML = icon('close', 15);
@@ -114,12 +115,12 @@ function tagSessionCount(tagId) {
 }
 
 function compactViewLabel() {
-  if (state.view.kind === 'favorites') return '收藏';
+  if (state.view.kind === 'favorites') return t('rail.favorites');
   return currentTag()?.name || 'Tag';
 }
 
 function friendlyError(error) {
-  return String(error?.message || error || '未知错误')
+  return String(error?.message || error || t('error.unknown'))
     .replace(/^Error invoking remote method '[^']+':\s*/i, '')
     .replace(/^Error:\s*/i, '');
 }
@@ -172,10 +173,10 @@ function applyTagRailExpanded() {
   const expanded = state.preferences.tagRailExpanded === true;
   refs.appShell.classList.toggle('tag-rail-expanded', expanded);
   refs.tagRailToggleButton.setAttribute('aria-expanded', String(expanded));
-  refs.tagRailToggleButton.setAttribute('aria-label', expanded ? '收起 Tag 栏' : '展开 Tag 栏');
-  refs.tagRailToggleButton.title = expanded ? '收起 Tag 栏' : '展开 Tag 栏';
+  refs.tagRailToggleButton.setAttribute('aria-label', expanded ? t('tag.railToggleCollapse') : t('tag.railToggleExpand'));
+  refs.tagRailToggleButton.title = expanded ? t('tag.railToggleCollapse') : t('tag.railToggleExpand');
   const label = refs.tagRailToggleButton.querySelector('.rail-label');
-  if (label) label.textContent = expanded ? '收起 Tag 栏' : '展开 Tag 栏';
+  if (label) label.textContent = expanded ? t('tag.railToggleCollapse') : t('tag.railToggleExpand');
 }
 
 async function setTagRailExpanded(expanded) {
@@ -276,8 +277,8 @@ function applyCurrentTheme() {
   applyTheme(document.documentElement, resolved);
   terminalView?.setTheme(resolved);
   const themeIcon = state.preferences.theme === 'system' ? 'laptop' : resolved === 'dark' ? 'moon' : 'sun';
-  refs.themeButton.innerHTML = railButtonContent(themeIcon, '切换主题');
-  refs.themeButton.title = `主题：${{ light: '亮色', dark: '暗色', system: '跟随系统' }[state.preferences.theme]}`;
+  refs.themeButton.innerHTML = railButtonContent(themeIcon, t('theme.toggle'));
+  refs.themeButton.title = t('theme.current', { mode: { light: t('theme.light'), dark: t('theme.dark'), system: t('theme.system') }[state.preferences.theme] });
   renderThemeControls();
 }
 
@@ -291,9 +292,9 @@ async function setThemePreference(theme) {
 function renderThemeControls() {
   if (!refs.themeCards) return;
   const modes = [
-    { id: 'light', title: '亮色', icon: 'sun' },
-    { id: 'dark', title: '暗色', icon: 'moon' },
-    { id: 'system', title: '跟随系统', icon: 'laptop' },
+    { id: 'light', title: t('theme.light'), icon: 'sun' },
+    { id: 'dark', title: t('theme.dark'), icon: 'moon' },
+    { id: 'system', title: t('theme.system'), icon: 'laptop' },
   ];
   refs.themeCards.replaceChildren(...modes.map((mode) => {
     const button = document.createElement('button');
@@ -316,12 +317,62 @@ function renderThemeControls() {
   })));
 }
 
+// Manual language override (defaults to following the system language). Kept
+// separate from theme prefs: it's persisted client-side in localStorage
+// rather than through the preferences store, since it only affects this
+// renderer's own display language.
+function renderLanguageControls() {
+  if (!refs.languageCards) return;
+  const modes = [
+    { id: 'system', title: t('settings.languageSystem') },
+    { id: 'zh', title: t('settings.languageZh') },
+    { id: 'en', title: t('settings.languageEn') },
+  ];
+  const current = loadStoredLanguage();
+  refs.languageCards.replaceChildren(...modes.map((mode) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `theme-card ${current === mode.id ? 'active' : ''}`;
+    button.dataset.language = mode.id;
+    const title = document.createElement('strong');
+    title.textContent = mode.title;
+    button.append(title);
+    button.addEventListener('click', () => setLanguagePreference(mode.id));
+    return button;
+  }));
+}
+
+function setLanguagePreference(language) {
+  const stored = saveLanguage(language);
+  setLocale(resolveLocale(stored));
+  relocalize();
+}
+
+// Re-applies every translated string after a manual language switch, without
+// requiring an app restart: static markup via applyStaticI18n, plus every
+// render path that bakes t() output into dynamically-created DOM.
+function relocalize() {
+  installIcons();
+  applyStaticI18n();
+  applyCurrentTheme();
+  renderLanguageControls();
+  renderSystemStatus();
+  renderTagRail();
+  renderTagSettings();
+  renderSessionList();
+  renderSessionTabs();
+  renderWorkspace();
+  renderDetail();
+  if (refs.commandPalette && !refs.commandPalette.classList.contains('hidden')) renderCommandResults();
+  if (refs.mobileAccessModal && !refs.mobileAccessModal.classList.contains('hidden')) loadMobileAccessStatus();
+}
+
 function renderTagSettings() {
   refs.tagSettingsList.replaceChildren();
   if (!state.preferences.tags.length) {
     const empty = document.createElement('div');
     empty.className = 'tag-settings-empty';
-    empty.textContent = '还没有 Tag';
+    empty.textContent = t('tag.none');
     refs.tagSettingsList.append(empty);
     return;
   }
@@ -336,21 +387,21 @@ function renderTagSettings() {
     name.textContent = tag.name;
     const count = document.createElement('span');
     count.className = 'tag-settings-count';
-    count.textContent = `${tagSessionCount(tag.id)} 个会话`;
+    count.textContent = t('tag.sessionCount', { count: tagSessionCount(tag.id) });
     const actions = document.createElement('span');
     actions.className = 'tag-settings-actions';
     const rename = document.createElement('button');
     rename.className = 'icon-button';
     rename.type = 'button';
-    rename.setAttribute('aria-label', `重命名 ${tag.name}`);
-    rename.title = '重命名';
+    rename.setAttribute('aria-label', t('tag.renameAria', { name: tag.name }));
+    rename.title = t('action.rename');
     rename.innerHTML = icon('edit', 14);
     rename.addEventListener('click', () => openTagEditor(tag));
     const remove = document.createElement('button');
     remove.className = 'icon-button';
     remove.type = 'button';
-    remove.setAttribute('aria-label', `删除 ${tag.name}`);
-    remove.title = '删除';
+    remove.setAttribute('aria-label', t('tag.deleteAria', { name: tag.name }));
+    remove.title = t('action.delete');
     remove.innerHTML = icon('trash', 14);
     remove.addEventListener('click', () => openTagDeleteModal(tag));
     actions.append(rename, remove);
@@ -362,14 +413,14 @@ function renderTagSettings() {
 function renderSystemStatus() {
   const installed = state.systemStatus.installed;
   refs.tmuxStatusDot.className = `status-dot ${installed ? 'ok' : 'error'}`;
-  refs.tmuxStatusText.textContent = installed ? state.systemStatus.version || 'tmux 已就绪' : '未找到 tmux';
+  refs.tmuxStatusText.textContent = installed ? state.systemStatus.version || t('status.tmuxReady') : t('status.tmuxNotFound');
   refs.settingsTmuxVersion.textContent = installed
-    ? `${state.systemStatus.version || '已安装'} · ${state.systemStatus.path}`
-    : '未安装（brew install tmux）';
+    ? `${state.systemStatus.version || t('status.installed')} · ${state.systemStatus.path}`
+    : t('status.notInstalled');
 }
 
 function sessionMeta(session) {
-  const counts = `${session.windows || 0} 窗口 · ${session.paneCount || 0} 面板`;
+  const counts = t('session.metaTemplate', { windows: session.windows || 0, panes: session.paneCount || 0 });
   return session.activeCommand ? `${counts} · ${session.activeCommand}` : counts;
 }
 
@@ -537,8 +588,8 @@ function renderTagRail(previousPositions = null) {
     const button = document.createElement('button');
     button.className = `rail-button tag-rail-button ${state.view.kind === 'tag' && state.view.tagId === tag.id ? 'active' : ''}`;
     button.dataset.tagId = tag.id;
-    button.setAttribute('aria-label', `${tag.name}，${count} 个会话`);
-    button.title = `${tag.name} · ${count} 个会话`;
+    button.setAttribute('aria-label', t('tag.railItemAria', { name: tag.name, count }));
+    button.title = t('tag.railItemTitle', { name: tag.name, count });
     button.style.setProperty('--tag-color', tagColor(tag));
     const initial = document.createElement('span');
     initial.className = 'tag-initial';
@@ -560,10 +611,21 @@ function renderTagRail(previousPositions = null) {
       pin.innerHTML = icon('star', 11);
       button.append(pin);
       button.draggable = true;
-      button.addEventListener('dragstart', (event) => handlePinnedDragStart(event, tag));
+      // Show the grab cursor only after a short press-and-hold, so a normal
+      // click to open the tag doesn't feel draggable; a plain hover stays a
+      // pointer. Native drag still works regardless of the timer.
+      let holdTimer = null;
+      const clearHold = () => { clearTimeout(holdTimer); button.classList.remove('grabbable'); };
+      button.addEventListener('mousedown', () => {
+        clearTimeout(holdTimer);
+        holdTimer = setTimeout(() => button.classList.add('grabbable'), 250);
+      });
+      button.addEventListener('mouseup', clearHold);
+      button.addEventListener('mouseleave', clearHold);
+      button.addEventListener('dragstart', (event) => { button.classList.add('dragging'); handlePinnedDragStart(event, tag); });
       button.addEventListener('dragover', (event) => handlePinnedDragOver(event, tag));
       button.addEventListener('drop', (event) => handlePinnedDrop(event, tag));
-      button.addEventListener('dragend', () => { pinnedDragId = null; clearPinnedDropMarkers(); });
+      button.addEventListener('dragend', () => { pinnedDragId = null; clearPinnedDropMarkers(); clearHold(); button.classList.remove('dragging'); });
     }
     button.addEventListener('click', () => activateTag(tag));
     button.addEventListener('contextmenu', (event) => {
@@ -631,16 +693,16 @@ function renderSessionList() {
     for (const session of sessions) group.append(createSessionRow(session));
     refs.sessionList.append(group);
   };
-  addGroup('收藏', groups.favorites);
-  addGroup('全部会话', groups.sessions);
+  addGroup(t('rail.favorites'), groups.favorites);
+  addGroup(t('rail.all'), groups.sessions);
   if (!groups.favorites.length && !groups.sessions.length) {
     const empty = document.createElement('div');
     empty.className = 'sidebar-empty';
-    empty.textContent = state.query ? '没有匹配的会话' : '暂无 tmux 会话';
+    empty.textContent = state.query ? t('session.noMatch') : t('session.none');
     refs.sessionList.append(empty);
   }
   const attached = state.sessions.filter((session) => session.attached).length;
-  refs.sessionSummary.textContent = `${state.sessions.length} 个会话${attached ? ` · ${attached} 已连接` : ''}`;
+  refs.sessionSummary.textContent = `${t('session.summary', { count: state.sessions.length })}${attached ? t('session.summaryAttached', { count: attached }) : ''}`;
 }
 
 function createSessionRow(session) {
@@ -669,7 +731,7 @@ function createSessionRow(session) {
   if (sessionTags.length) {
     const marks = document.createElement('span');
     marks.className = 'session-tag-marks';
-    marks.title = sessionTags.map((tag) => tag.name).join('、');
+    marks.title = sessionTags.map((tag) => tag.name).join(t('tag.listSeparator'));
     for (const tag of sessionTags.slice(0, 4)) {
       const mark = document.createElement('span');
       mark.className = 'session-tag-mark';
@@ -686,7 +748,7 @@ function createSessionRow(session) {
   main.addEventListener('click', () => selectSession(session));
   const more = document.createElement('button');
   more.className = 'icon-button session-more';
-  more.setAttribute('aria-label', `${session.name} 操作`);
+  more.setAttribute('aria-label', t('session.actionsAria', { name: session.name }));
   more.innerHTML = icon('more', 16);
   more.addEventListener('click', (event) => { event.stopPropagation(); openSessionMenu(session, more); });
   item.append(main, more);
@@ -704,15 +766,15 @@ function renderWorkspace() {
   }
   if (session) {
     refs.activeSessionName.textContent = session.name;
-    refs.activeSessionPath.textContent = shortenPath(session.path) || '本地 tmux 会话';
+    refs.activeSessionPath.textContent = shortenPath(session.path) || t('session.localTmux');
     refs.attachedBadge.classList.toggle('hidden', !session.attached);
     refs.terminalSurface.classList.remove('hidden');
     refs.emptyState.classList.add('hidden');
     refs.sessionMenuButton.classList.remove('hidden');
-    refs.workspaceStatus.textContent = `${session.windows || 0} 窗口 · ${session.paneCount || 0} 面板 · 纯本地连接`;
+    refs.workspaceStatus.textContent = t('workspace.statusLocal', { windows: session.windows || 0, panes: session.paneCount || 0 });
   } else {
     refs.activeSessionName.textContent = compact ? compactViewLabel() : 'Tmux Desk';
-    refs.activeSessionPath.textContent = compact ? '选择页签中的会话开始工作' : '选择一个本机会话开始工作';
+    refs.activeSessionPath.textContent = compact ? t('session.selectFromTabs') : t('session.selectLocal');
     refs.attachedBadge.classList.add('hidden');
     refs.terminalSurface.classList.add('hidden');
     refs.terminalReconnect.classList.add('hidden');
@@ -724,31 +786,31 @@ function renderWorkspace() {
     refs.emptyRefreshButton.classList.add('hidden');
     refs.emptyAllButton.classList.add('hidden');
     if (!state.systemStatus.installed) {
-      refs.emptyTitle.textContent = '需要安装 tmux';
-      refs.emptyMessage.textContent = 'Tmux Desk 是 tmux 的图形前端，需要本机的 tmux。请用 Homebrew 安装后重新检测。';
+      refs.emptyTitle.textContent = t('empty.installTitle');
+      refs.emptyMessage.textContent = t('empty.installMessage');
       refs.emptyInstallButton.classList.remove('hidden');
       refs.emptyRefreshButton.classList.remove('hidden');
-      refs.emptyRefreshButton.textContent = '重新检测';
+      refs.emptyRefreshButton.textContent = t('action.recheck');
     } else if (compact) {
-      refs.emptyTitle.textContent = state.view.kind === 'favorites' ? '还没有收藏会话' : `“${compactViewLabel()}” 还没有会话`;
+      refs.emptyTitle.textContent = state.view.kind === 'favorites' ? t('empty.noFavorites') : t('empty.noTagSessions', { tag: compactViewLabel() });
       refs.emptyMessage.textContent = state.view.kind === 'favorites'
-        ? '收藏会话后，它们会作为页签显示在这里。'
-        : '可回到全部会话分配 Tag，或直接新建一个自动归入当前 Tag 的会话。';
+        ? t('empty.favoritesHint')
+        : t('empty.tagHint');
       refs.emptyAllButton.classList.remove('hidden');
       if (state.view.kind === 'tag') refs.emptyNewButton.classList.remove('hidden');
-      refs.workspaceStatus.textContent = `${compactViewLabel()} · 0 个会话`;
+      refs.workspaceStatus.textContent = t('workspace.statusEmptyTag', { label: compactViewLabel() });
     } else if (!state.sessions.length) {
-      refs.emptyTitle.textContent = '还没有 tmux 会话';
-      refs.emptyMessage.textContent = '创建第一个会话，应用会在所选目录中启动一个真实 tmux 终端。';
+      refs.emptyTitle.textContent = t('empty.noSessionsTitle');
+      refs.emptyMessage.textContent = t('empty.noSessionsMessage');
       refs.emptyNewButton.classList.remove('hidden');
       refs.emptyRefreshButton.classList.remove('hidden');
-      refs.emptyRefreshButton.textContent = '刷新列表';
+      refs.emptyRefreshButton.textContent = t('action.refreshList');
     } else {
-      refs.emptyTitle.textContent = '你的 tmux 工作台';
-      refs.emptyMessage.textContent = '从左侧选择一个会话，或新建会话开始工作。';
+      refs.emptyTitle.textContent = t('empty.workspaceTitle');
+      refs.emptyMessage.textContent = t('empty.workspaceMessage');
       refs.emptyNewButton.classList.remove('hidden');
       refs.emptyRefreshButton.classList.remove('hidden');
-      refs.emptyRefreshButton.textContent = '刷新列表';
+      refs.emptyRefreshButton.textContent = t('action.refreshList');
     }
   }
 }
@@ -830,7 +892,7 @@ function clearTabDragState() {
 }
 
 // Writes the full manual order for the active view and re-renders — used by
-// both drag-and-drop and the Cmd+Option+Arrow keyboard reorder.
+// both drag-and-drop and the ⌘⇧←/→ keyboard reorder.
 async function persistTabOrder(names) {
   const viewKey = currentViewKey();
   if (!viewKey) return;
@@ -920,11 +982,11 @@ function syncFileBrowser(force = false) {
 }
 
 async function loadFileTree(dir) {
-  refs.fbPath.textContent = shortenPath(dir) || '没有可用目录';
+  refs.fbPath.textContent = shortenPath(dir) || t('file.noDir');
   refs.fbPath.title = dir || '';
   const loading = document.createElement('div');
   loading.className = 'fb-loading';
-  loading.textContent = dir ? '正在读取…' : '选择一个会话后即可浏览其目录。';
+  loading.textContent = dir ? t('file.loading') : t('file.selectSessionHint');
   refs.fbTree.replaceChildren(loading);
   if (!dir) return;
   try {
@@ -946,7 +1008,7 @@ function renderFileEntries(mount, entries, depth) {
     const empty = document.createElement('div');
     empty.className = 'fb-empty';
     empty.style.paddingLeft = `${14 + depth * 14}px`;
-    empty.textContent = '空文件夹';
+    empty.textContent = t('file.emptyFolder');
     mount.append(empty);
     return;
   }
@@ -984,7 +1046,7 @@ async function toggleDir(node, entry, depth) {
   const loading = document.createElement('div');
   loading.className = 'fb-loading';
   loading.style.paddingLeft = `${14 + (depth + 1) * 14}px`;
-  loading.textContent = '正在读取…';
+  loading.textContent = t('file.loading');
   children.append(loading);
   node.append(children);
   node.classList.add('open');
@@ -1010,21 +1072,21 @@ async function openEntry(entry) {
 function openFileMenu(entry, x, y) {
   closeFloatingMenus();
   refs.contextMenu.replaceChildren(
-    menuButton({ iconName: entry.isDir ? 'folder' : 'terminal', title: entry.isDir ? '在访达中打开' : '打开', action: () => { closeFloatingMenus(); openEntry(entry); } }),
-    menuButton({ iconName: 'external', title: '打开方式…', action: async () => {
+    menuButton({ iconName: entry.isDir ? 'folder' : 'terminal', title: entry.isDir ? t('file.openInFinder') : t('action.open'), action: () => { closeFloatingMenus(); openEntry(entry); } }),
+    menuButton({ iconName: 'external', title: t('file.openWith'), action: async () => {
       closeFloatingMenus();
-      try { const result = await api.openFileWith(entry.path); if (result && result.app) toast(`已用 ${result.app} 打开`); }
+      try { const result = await api.openFileWith(entry.path); if (result && result.app) toast(t('file.openedWith', { app: result.app })); }
       catch (error) { toast(friendlyError(error), 'error'); }
     } }),
-    menuButton({ iconName: 'folder', title: '在访达中显示', action: async () => {
+    menuButton({ iconName: 'folder', title: t('action.revealInFinder'), action: async () => {
       closeFloatingMenus();
       try { await api.revealFile(entry.path); } catch (error) { toast(friendlyError(error), 'error'); }
     } }),
     separator(),
-    menuButton({ iconName: 'copy', title: '复制路径', action: async () => {
+    menuButton({ iconName: 'copy', title: t('action.copyPath'), action: async () => {
       closeFloatingMenus();
       await navigator.clipboard.writeText(entry.path);
-      toast('路径已复制');
+      toast(t('toast.pathCopied'));
     } }),
   );
   placePopoverAt(refs.contextMenu, x, y);
@@ -1095,7 +1157,7 @@ async function selectSession(session) {
     state.preferences = await api.savePreferences({ lastSession: session.name });
     await Promise.all([refreshDetail(), terminalView.attach(session.id)]);
     if (token !== selectionToken) return;
-    refs.workspaceStatus.textContent = `${session.windows || 0} 窗口 · ${session.paneCount || 0} 面板 · 已连接`;
+    refs.workspaceStatus.textContent = t('workspace.statusAttached', { windows: session.windows || 0, panes: session.paneCount || 0 });
   } catch (error) {
     if (token === selectionToken) {
       refs.terminalReconnect.classList.remove('hidden');
@@ -1119,7 +1181,7 @@ async function refreshSessions({ initial = false, notify = false } = {}) {
       state.detail = { windows: [], panes: [] };
       await terminalView.detach();
       syncFileBrowser();
-      if (!initial) toast('当前 tmux 会话已在外部关闭', 'error');
+      if (!initial) toast(t('toast.sessionClosedExternally'), 'error');
     }
     renderSystemStatus();
     renderTagRail();
@@ -1140,7 +1202,7 @@ async function refreshSessions({ initial = false, notify = false } = {}) {
       const preferred = sessions.find((session) => session.name === state.preferences.lastSession) || sessions[0];
       await selectSession(preferred);
     }
-    if (notify) toast('会话列表已刷新');
+    if (notify) toast(t('toast.sessionsRefreshed'));
   } catch (error) {
     toast(friendlyError(error), 'error');
   } finally {
@@ -1199,23 +1261,23 @@ function openSessionMenu(session, anchor) {
   closeFloatingMenus();
   const isFavorite = state.preferences.favorites.includes(session.name);
   refs.contextMenu.replaceChildren(
-    menuButton({ iconName: 'terminal', title: '连接会话', action: () => { closeFloatingMenus(); selectSession(session); } }),
-    menuButton({ iconName: 'star', title: isFavorite ? '取消收藏' : '收藏会话', action: async () => {
+    menuButton({ iconName: 'terminal', title: t('menu.connectSession'), action: () => { closeFloatingMenus(); selectSession(session); } }),
+    menuButton({ iconName: 'star', title: isFavorite ? t('menu.unfavorite') : t('menu.favorite'), action: async () => {
       closeFloatingMenus();
       try { await toggleFavorite(session); }
       catch (error) { toast(friendlyError(error), 'error'); }
     } }),
-    menuButton({ iconName: 'tag', title: '管理 Tag…', action: () => { closeFloatingMenus(); openSessionTagsModal(session); } }),
+    menuButton({ iconName: 'tag', title: t('menu.manageTags'), action: () => { closeFloatingMenus(); openSessionTagsModal(session); } }),
     separator(),
-    menuButton({ iconName: 'edit', title: '重命名', action: () => { closeFloatingMenus(); openRenameModal(session); } }),
-    menuButton({ iconName: 'copy', title: '复制会话…', action: () => { closeFloatingMenus(); openDuplicateModal(session); } }),
-    menuButton({ iconName: 'copy', title: '复制名称', action: async () => {
+    menuButton({ iconName: 'edit', title: t('action.rename'), action: () => { closeFloatingMenus(); openRenameModal(session); } }),
+    menuButton({ iconName: 'copy', title: t('menu.duplicateSession'), action: () => { closeFloatingMenus(); openDuplicateModal(session); } }),
+    menuButton({ iconName: 'copy', title: t('menu.copyName'), action: async () => {
       closeFloatingMenus();
       await navigator.clipboard.writeText(session.name);
-      toast('会话名称已复制');
+      toast(t('toast.nameCopied'));
     } }),
     separator(),
-    menuButton({ iconName: 'trash', title: '关闭会话…', danger: true, action: () => { closeFloatingMenus(); openKillModal(session); } }),
+    menuButton({ iconName: 'trash', title: t('menu.closeSession'), danger: true, action: () => { closeFloatingMenus(); openKillModal(session); } }),
   );
   placePopover(refs.contextMenu, anchor);
 }
@@ -1225,18 +1287,18 @@ function openTagMenu(tag, x, y) {
   const topUnpinned = firstUnpinnedTag();
   let pinItem;
   if (tag.pinned) {
-    pinItem = menuButton({ iconName: 'star', title: '取消固定', action: () => { closeFloatingMenus(); setTagPinned(tag, false); } });
+    pinItem = menuButton({ iconName: 'star', title: t('menu.unpin'), action: () => { closeFloatingMenus(); setTagPinned(tag, false); } });
   } else if (topUnpinned && topUnpinned.id === tag.id) {
-    pinItem = menuButton({ iconName: 'star', title: '固定到顶部', action: () => { closeFloatingMenus(); setTagPinned(tag, true); } });
+    pinItem = menuButton({ iconName: 'star', title: t('menu.pinToTop'), action: () => { closeFloatingMenus(); setTagPinned(tag, true); } });
   } else {
-    pinItem = menuButton({ iconName: 'star', title: '固定（仅可固定最上方的 Tag）', disabled: true });
+    pinItem = menuButton({ iconName: 'star', title: t('menu.pinDisabledHint'), disabled: true });
   }
   refs.contextMenu.replaceChildren(
-    menuButton({ iconName: 'terminal', title: `打开 “${tag.name}”`, action: () => setView({ kind: 'tag', tagId: tag.id }) }),
+    menuButton({ iconName: 'terminal', title: t('menu.openTag', { name: tag.name }), action: () => setView({ kind: 'tag', tagId: tag.id }) }),
     separator(),
     pinItem,
-    menuButton({ iconName: 'edit', title: '重命名 Tag…', action: () => { closeFloatingMenus(); openTagEditor(tag); } }),
-    menuButton({ iconName: 'trash', title: '删除 Tag…', danger: true, action: () => { closeFloatingMenus(); openTagDeleteModal(tag); } }),
+    menuButton({ iconName: 'edit', title: t('menu.renameTag'), action: () => { closeFloatingMenus(); openTagEditor(tag); } }),
+    menuButton({ iconName: 'trash', title: t('menu.deleteTag'), danger: true, action: () => { closeFloatingMenus(); openTagDeleteModal(tag); } }),
   );
   placePopoverAt(refs.contextMenu, x, y);
 }
@@ -1251,7 +1313,7 @@ function closeModal(modal) { modal.classList.add('hidden'); }
 
 function openTagEditor(tag = null) {
   refs.tagEditorModal.dataset.tagId = tag?.id || '';
-  refs.tagEditorTitle.textContent = tag ? '重命名 Tag' : '新建 Tag';
+  refs.tagEditorTitle.textContent = tag ? t('tag.renameTitle') : t('tag.new');
   refs.tagNameInput.value = tag?.name || '';
   openModal(refs.tagEditorModal, refs.tagNameInput);
   refs.tagNameInput.select();
@@ -1259,20 +1321,20 @@ function openTagEditor(tag = null) {
 
 function openTagDeleteModal(tag) {
   refs.tagDeleteModal.dataset.tagId = tag.id;
-  refs.tagDeleteMessage.textContent = `删除 “${tag.name}” 只会移除 Tag 和分类关系，不会关闭任何 tmux 会话。`;
+  refs.tagDeleteMessage.textContent = t('tag.deleteMessage', { name: tag.name });
   openModal(refs.tagDeleteModal, refs.confirmTagDeleteButton);
 }
 
 function openSessionTagsModal(session = selectedSession()) {
   if (!session) return;
   refs.sessionTagsModal.dataset.sessionName = session.name;
-  refs.sessionTagsMessage.textContent = `为 “${session.name}” 选择一个或多个 Tag。`;
+  refs.sessionTagsMessage.textContent = t('session.tagsMessage', { name: session.name });
   const selectedIds = new Set(state.preferences.sessionTags[session.name] || []);
   refs.sessionTagsList.replaceChildren();
   if (!state.preferences.tags.length) {
     const empty = document.createElement('div');
     empty.className = 'tag-settings-empty';
-    empty.textContent = '还没有 Tag，请先从左侧 + 或设置中新建。';
+    empty.textContent = t('tag.noneHint');
     refs.sessionTagsList.append(empty);
   } else {
     for (const tag of state.preferences.tags) {
@@ -1316,7 +1378,7 @@ function openKillModal(session = selectedSession()) {
   if (!session) return;
   refs.killModal.dataset.sessionId = session.id;
   refs.killModal.dataset.sessionName = session.name;
-  refs.killMessage.textContent = `“${session.name}” 中的 ${session.paneCount || 0} 个面板及其进程都会被终止。此操作不可撤销。`;
+  refs.killMessage.textContent = t('session.killMessage', { name: session.name, count: session.paneCount || 0 });
   openModal(refs.killModal, refs.confirmKillButton);
 }
 
@@ -1333,7 +1395,7 @@ function openDuplicateModal(session = selectedSession()) {
   if (!session) return;
   refs.duplicateModal.dataset.sessionId = session.id;
   refs.duplicateModal.dataset.sessionName = session.name;
-  refs.duplicateMessage.textContent = `按 “${session.name}” 的窗口与目录创建一个副本，原会话保持不变。`;
+  refs.duplicateMessage.textContent = t('session.duplicateMessage', { name: session.name });
   refs.duplicateInput.value = suggestCopyName(session.name);
   openModal(refs.duplicateModal, refs.duplicateInput);
   refs.duplicateInput.select();
@@ -1341,6 +1403,7 @@ function openDuplicateModal(session = selectedSession()) {
 
 function openSettings() {
   renderThemeControls();
+  renderLanguageControls();
   renderTagSettings();
   openModal(refs.settingsModal, refs.settingsModal.querySelector('.theme-card'));
 }
@@ -1365,8 +1428,8 @@ function uniqueSessionName(base, used) {
 
 async function openImportModal(tool) {
   const meta = IMPORT_TOOLS.find((item) => item.id === tool) || { id: tool, label: tool };
-  refs.importTitle.textContent = `从 ${meta.label} 导入会话`;
-  refs.importSubtitle.textContent = '正在扫描…';
+  refs.importTitle.textContent = t('import.title', { tool: meta.label });
+  refs.importSubtitle.textContent = t('import.scanning');
   refs.importList.replaceChildren();
   importEntries = [];
   openModal(refs.importModal, refs.importCreateButton);
@@ -1385,14 +1448,14 @@ async function openImportModal(tool) {
 function renderImportList() {
   refs.importList.replaceChildren();
   if (!importEntries.length) {
-    refs.importSubtitle.textContent = '未发现可导入的代码库';
+    refs.importSubtitle.textContent = t('import.noneFound');
     const empty = document.createElement('p');
     empty.className = 'import-empty';
-    empty.textContent = '这个工具还没有可用的最近项目记录。';
+    empty.textContent = t('import.noRecentProjects');
     refs.importList.append(empty);
     return;
   }
-  refs.importSubtitle.textContent = `发现 ${importEntries.length} 个代码库，勾选后点击“导入选中”。`;
+  refs.importSubtitle.textContent = t('import.foundCount', { count: importEntries.length });
   const existing = new Set(state.sessions.map((session) => session.name));
   refs.importList.replaceChildren(...importEntries.map((entry, index) => {
     const row = document.createElement('label');
@@ -1409,7 +1472,7 @@ function renderImportList() {
     if (existing.has(entry.name)) {
       const badge = document.createElement('span');
       badge.className = 'import-row-badge';
-      badge.textContent = '已存在';
+      badge.textContent = t('import.exists');
       name.append(badge);
     }
     const dir = document.createElement('div');
@@ -1430,7 +1493,7 @@ function toggleAllImports() {
 async function runImport() {
   const checkboxes = [...refs.importList.querySelectorAll('input[type="checkbox"]:checked')];
   const chosen = checkboxes.map((checkbox) => importEntries[Number(checkbox.dataset.index)]).filter(Boolean);
-  if (!chosen.length) { toast('未选择任何代码库'); return; }
+  if (!chosen.length) { toast(t('import.noneSelected')); return; }
 
   const used = new Set(state.sessions.map((session) => session.name));
   let created = 0;
@@ -1450,10 +1513,10 @@ async function runImport() {
 
   closeModal(refs.importModal);
   await refreshSessions();
-  const parts = [`已创建 ${created} 个会话`];
-  if (skipped) parts.push(`跳过 ${skipped} 个已存在`);
-  if (failed) parts.push(`失败 ${failed} 个`);
-  toast(parts.join('，'), failed ? 'error' : 'info');
+  const parts = [t('import.created', { count: created })];
+  if (skipped) parts.push(t('import.skipped', { count: skipped }));
+  if (failed) parts.push(t('import.failed', { count: failed }));
+  toast(parts.join(t('import.partsSeparator')), failed ? 'error' : 'info');
 }
 
 let mobileAccessBusy = false;
@@ -1476,7 +1539,7 @@ async function loadMobileAccessStatus() {
 function renderMobileAccessLoading() {
   const loading = document.createElement('div');
   loading.className = 'mobile-access-loading';
-  loading.textContent = '正在检测服务状态…';
+  loading.textContent = t('mobile.checking');
   refs.mobileAccessBody.replaceChildren(loading);
 }
 
@@ -1488,7 +1551,7 @@ function renderMobileAccessError(error) {
   const retry = document.createElement('button');
   retry.type = 'button';
   retry.className = 'button';
-  retry.textContent = '重试';
+  retry.textContent = t('action.retry');
   retry.addEventListener('click', loadMobileAccessStatus);
   wrap.append(message, retry);
   refs.mobileAccessBody.replaceChildren(wrap);
@@ -1498,11 +1561,11 @@ function renderMobileAccessIdle() {
   const wrap = document.createElement('div');
   wrap.className = 'mobile-access-empty';
   const message = document.createElement('p');
-  message.textContent = '服务尚未启动，点击下方按钮启动后即可用手机扫码访问全部 tmux 会话。';
+  message.textContent = t('mobile.idleMessage');
   const start = document.createElement('button');
   start.type = 'button';
   start.className = 'button primary';
-  start.textContent = '启动 Web 服务';
+  start.textContent = t('mobile.start');
   start.addEventListener('click', startMobileAccess);
   wrap.append(message, start);
   refs.mobileAccessBody.replaceChildren(wrap);
@@ -1512,11 +1575,11 @@ function renderMobileAccessStarting() {
   const wrap = document.createElement('div');
   wrap.className = 'mobile-access-empty';
   const message = document.createElement('p');
-  message.textContent = '服务尚未启动，点击下方按钮启动后即可用手机扫码访问全部 tmux 会话。';
+  message.textContent = t('mobile.idleMessage');
   const start = document.createElement('button');
   start.type = 'button';
   start.className = 'button primary';
-  start.textContent = '启动中…';
+  start.textContent = t('mobile.starting');
   start.disabled = true;
   wrap.append(message, start);
   refs.mobileAccessBody.replaceChildren(wrap);
@@ -1543,7 +1606,7 @@ async function stopMobileAccess() {
   try {
     const status = await api.webStop();
     renderMobileAccess(status);
-    toast('Web 服务已停止');
+    toast(t('toast.webStopped'));
   } catch (error) {
     toast(friendlyError(error), 'error');
   } finally {
@@ -1556,9 +1619,9 @@ function mobileAccessCards(urls) {
   const lan = urls.find((entry) => entry.kind === 'lan');
   const other = urls.find((entry) => entry.kind === 'other');
   const cards = [];
-  if (tailscale) cards.push({ entry: tailscale, title: 'Tailscale', subtitle: '外网可用（需手机装 Tailscale）' });
-  if (lan) cards.push({ entry: lan, title: '局域网', subtitle: '同一 WiFi 下可用' });
-  if (!tailscale && !lan && other) cards.push({ entry: other, title: '本机网络', subtitle: '同一局域网下可用' });
+  if (tailscale) cards.push({ entry: tailscale, title: 'Tailscale', subtitle: t('mobile.tailscaleSubtitle') });
+  if (lan) cards.push({ entry: lan, title: t('mobile.lan'), subtitle: t('mobile.lanSubtitle') });
+  if (!tailscale && !lan && other) cards.push({ entry: other, title: t('mobile.localNetwork'), subtitle: t('mobile.localNetworkSubtitle') });
   return { cards, hasTailscale: Boolean(tailscale), hasLan: Boolean(lan) };
 }
 
@@ -1573,22 +1636,22 @@ function createMobileAccessCard(card) {
   const qrFrame = document.createElement('div');
   qrFrame.className = 'mobile-access-qr';
   const img = document.createElement('img');
-  img.alt = `${card.title} 二维码`;
+  img.alt = t('mobile.qrAlt', { title: card.title });
   qrFrame.append(img);
   const urlButton = document.createElement('button');
   urlButton.type = 'button';
   urlButton.className = 'mobile-access-url';
   urlButton.textContent = card.entry.url;
-  urlButton.title = '点击复制';
+  urlButton.title = t('mobile.clickToCopy');
   const copyButton = document.createElement('button');
   copyButton.type = 'button';
   copyButton.className = 'button mobile-access-copy';
-  copyButton.textContent = '复制链接';
+  copyButton.textContent = t('action.copyLink');
   const copyLink = async (trigger) => {
     try {
       await navigator.clipboard.writeText(card.entry.url);
       const original = trigger.textContent;
-      trigger.textContent = '已复制';
+      trigger.textContent = t('action.copied');
       setTimeout(() => { trigger.textContent = original; }, 1400);
     } catch (error) { toast(friendlyError(error), 'error'); }
   };
@@ -1597,7 +1660,7 @@ function createMobileAccessCard(card) {
   wrap.append(title, subtitle, qrFrame, urlButton, copyButton);
   QRCode.toDataURL(card.entry.url, { width: 220, margin: 1 })
     .then((dataUrl) => { img.src = dataUrl; })
-    .catch(() => { qrFrame.textContent = '二维码生成失败'; });
+    .catch(() => { qrFrame.textContent = t('mobile.qrFailed'); });
   return wrap;
 }
 
@@ -1609,7 +1672,7 @@ function renderMobileAccessRunning(status) {
   const dot = document.createElement('span');
   dot.className = 'status-dot ok';
   const text = document.createElement('span');
-  text.textContent = `运行中 · 端口 ${status.port}${status.external ? '（由外部进程启动）' : ''}`;
+  text.textContent = `${t('mobile.running', { port: status.port })}${status.external ? t('mobile.externalSuffix') : ''}`;
   statusRow.append(dot, text);
   wrap.append(statusRow);
 
@@ -1622,13 +1685,13 @@ function renderMobileAccessRunning(status) {
     if (!hasTailscale && hasLan) {
       const hint = document.createElement('p');
       hint.className = 'mobile-access-hint';
-      hint.textContent = '未检测到 Tailscale 网卡';
+      hint.textContent = t('mobile.noTailscale');
       wrap.append(hint);
     }
   } else {
     const empty = document.createElement('p');
     empty.className = 'mobile-access-hint';
-    empty.textContent = '未检测到可用的网络地址，请确认已连接局域网或 Tailscale。';
+    empty.textContent = t('mobile.noNetwork');
     wrap.append(empty);
   }
 
@@ -1637,13 +1700,13 @@ function renderMobileAccessRunning(status) {
   if (status.external) {
     const note = document.createElement('p');
     note.className = 'mobile-access-hint';
-    note.textContent = '由外部进程启动，如需停止请在终端中结束该进程。';
+    note.textContent = t('mobile.externalHint');
     footer.append(note);
   } else {
     const stop = document.createElement('button');
     stop.type = 'button';
     stop.className = 'button mobile-access-stop';
-    stop.textContent = '停止服务';
+    stop.textContent = t('mobile.stop');
     stop.addEventListener('click', stopMobileAccess);
     footer.append(stop);
   }
@@ -1666,30 +1729,30 @@ function focusSessionSearch() {
 function commands() {
   const session = selectedSession();
   return [
-    { id: 'new', title: '新建会话', subtitle: '创建一个本地 tmux 会话', shortcut: '⌘N', icon: 'plus', action: openNewSessionModal },
-    { id: 'refresh', title: '刷新会话', subtitle: '重新读取本机 tmux 状态', shortcut: '⌘R', icon: 'refresh', action: () => refreshSessions({ notify: true }) },
-    { id: 'search', title: '搜索会话', subtitle: '回到全部并聚焦搜索框', shortcut: '⌘F', icon: 'search', action: focusSessionSearch },
-    { id: 'files', title: state.files.open ? '隐藏文件浏览器' : '显示文件浏览器', subtitle: '浏览当前会话目录', shortcut: '⌘B', icon: 'sidebar', action: toggleFileBrowser },
-    { id: 'all', title: '显示全部会话', subtitle: '恢复左侧会话列表', icon: 'terminal', action: () => setView({ kind: 'all' }) },
-    { id: 'favorites', title: '打开收藏工作区', subtitle: '用页签切换收藏会话', icon: 'star', action: () => setView({ kind: 'favorites' }) },
-    { id: 'newTag', title: '新建 Tag', subtitle: '创建本地会话分组', icon: 'tag', action: () => openTagEditor() },
-    { id: 'theme', title: '切换主题', subtitle: '亮色、暗色、跟随系统', shortcut: '⌘⇧T', keywords: ['light', 'dark'], icon: 'palette', action: cycleTheme },
-    { id: 'settings', title: '打开设置', subtitle: '外观与本地环境信息', icon: 'settings', action: openSettings },
+    { id: 'new', title: t('action.newSession'), subtitle: t('palette.newSessionSubtitle'), shortcut: '⌘N', icon: 'plus', action: openNewSessionModal },
+    { id: 'refresh', title: t('action.refreshSessions'), subtitle: t('palette.refreshSubtitle'), shortcut: '⌘R', icon: 'refresh', action: () => refreshSessions({ notify: true }) },
+    { id: 'search', title: t('action.searchSessions'), subtitle: t('palette.searchSubtitle'), shortcut: '⌘F', icon: 'search', action: focusSessionSearch },
+    { id: 'files', title: state.files.open ? t('palette.hideFiles') : t('palette.showFiles'), subtitle: t('palette.filesSubtitle'), shortcut: '⌘B', icon: 'sidebar', action: toggleFileBrowser },
+    { id: 'all', title: t('palette.showAll'), subtitle: t('palette.showAllSubtitle'), icon: 'terminal', action: () => setView({ kind: 'all' }) },
+    { id: 'favorites', title: t('palette.openFavorites'), subtitle: t('palette.favoritesSubtitle'), icon: 'star', action: () => setView({ kind: 'favorites' }) },
+    { id: 'newTag', title: t('tag.new'), subtitle: t('palette.newTagSubtitle'), icon: 'tag', action: () => openTagEditor() },
+    { id: 'theme', title: t('theme.toggle'), subtitle: t('palette.themeSubtitle'), shortcut: '⌘⇧T', keywords: ['light', 'dark'], icon: 'palette', action: cycleTheme },
+    { id: 'settings', title: t('palette.openSettings'), subtitle: t('palette.settingsSubtitle'), icon: 'settings', action: openSettings },
     ...IMPORT_TOOLS.map((tool) => ({
       id: `import-${tool.id}`,
-      title: `从 ${tool.label} 导入会话`,
-      subtitle: '按最近打开的代码库目录创建 tmux 会话',
+      title: t('import.title', { tool: tool.label }),
+      subtitle: t('palette.importSubtitle'),
       keywords: ['import', 'codebase', '导入', '代码库', '项目', tool.id, tool.label.toLowerCase()],
       icon: 'copy',
       action: () => openImportModal(tool.id),
     })),
-    { id: 'mobileAccess', title: '手机访问（Web 服务）', subtitle: '扫码在手机浏览器中操作全部 tmux 会话', keywords: ['mobile', 'web', 'qrcode', '二维码'], icon: 'phone', action: openMobileAccessModal },
+    { id: 'mobileAccess', title: t('action.mobileAccess'), subtitle: t('palette.mobileAccessSubtitle'), keywords: ['mobile', 'web', 'qrcode', '二维码'], icon: 'phone', action: openMobileAccessModal },
     ...(session ? [
-      { id: 'rename', title: `重命名 “${session.name}”`, subtitle: '修改 tmux 会话名称', icon: 'edit', action: () => openRenameModal(session) },
-      { id: 'duplicate', title: `复制 “${session.name}”`, subtitle: '按现有会话创建副本', icon: 'copy', action: () => openDuplicateModal(session) },
-      { id: 'sessionTags', title: `管理 “${session.name}” 的 Tag`, subtitle: '可同时选择多个 Tag', icon: 'tag', action: () => openSessionTagsModal(session) },
-      { id: 'favorite', title: state.preferences.favorites.includes(session.name) ? '取消收藏当前会话' : '收藏当前会话', subtitle: session.name, icon: 'star', action: () => toggleSelectedFavorite() },
-      { id: 'kill', title: `关闭 “${session.name}”…`, subtitle: '终止此会话中的所有进程', icon: 'trash', action: () => openKillModal(session) },
+      { id: 'rename', title: t('palette.renameTitle', { name: session.name }), subtitle: t('palette.renameSubtitle'), icon: 'edit', action: () => openRenameModal(session) },
+      { id: 'duplicate', title: t('palette.duplicateTitle', { name: session.name }), subtitle: t('palette.duplicateSubtitle'), icon: 'copy', action: () => openDuplicateModal(session) },
+      { id: 'sessionTags', title: t('palette.manageTagsTitle', { name: session.name }), subtitle: t('palette.manageTagsSubtitle'), icon: 'tag', action: () => openSessionTagsModal(session) },
+      { id: 'favorite', title: state.preferences.favorites.includes(session.name) ? t('palette.unfavoriteCurrent') : t('palette.favoriteCurrent'), subtitle: session.name, icon: 'star', action: () => toggleSelectedFavorite() },
+      { id: 'kill', title: t('palette.killTitle', { name: session.name }), subtitle: t('palette.killSubtitle'), icon: 'trash', action: () => openKillModal(session) },
     ] : []),
   ];
 }
@@ -1713,7 +1776,7 @@ function renderCommandResults() {
   if (!items.length) {
     const empty = document.createElement('div');
     empty.className = 'command-empty';
-    empty.textContent = '没有匹配的命令';
+    empty.textContent = t('palette.noMatch');
     refs.commandResults.append(empty);
     return;
   }
@@ -1789,7 +1852,7 @@ function bindEvents() {
   refs.tagRailToggleButton.addEventListener('click', () => setTagRailExpanded(!state.preferences.tagRailExpanded));
   refs.settingsNewTagButton.addEventListener('click', () => openTagEditor());
   refs.emptyInstallButton.addEventListener('click', async () => {
-    try { await navigator.clipboard.writeText('brew install tmux'); toast('已复制：brew install tmux'); }
+    try { await navigator.clipboard.writeText('brew install tmux'); toast(t('toast.copiedInstallCmd')); }
     catch (error) { toast(friendlyError(error), 'error'); }
   });
   refs.sessionSearch.addEventListener('input', () => { state.query = refs.sessionSearch.value; renderSessionList(); });
@@ -1815,7 +1878,7 @@ function bindEvents() {
     if (!session) return;
     refs.terminalReconnect.classList.add('hidden');
     terminalView.attach(session.id)
-      .then(() => { refs.workspaceStatus.textContent = '已重新连接本地 tmux 会话'; })
+      .then(() => { refs.workspaceStatus.textContent = t('workspace.reconnected'); })
       .catch((error) => { refs.terminalReconnect.classList.remove('hidden'); toast(friendlyError(error), 'error'); });
   });
 
@@ -1849,7 +1912,7 @@ function bindEvents() {
         const created = state.preferences.tags.find((tag) => !previousIds.has(tag.id));
         if (created) await setView({ kind: 'tag', tagId: created.id });
       }
-      toast(editingId ? 'Tag 已重命名' : 'Tag 已创建');
+      toast(editingId ? t('toast.tagRenamed') : t('toast.tagCreated'));
     } catch (error) { toast(friendlyError(error), 'error'); }
     finally { submit.disabled = false; }
   });
@@ -1864,7 +1927,7 @@ function bindEvents() {
       renderTagRail();
       renderSessionList();
       await setView(state.view);
-      toast('会话 Tag 已更新');
+      toast(t('toast.sessionTagsUpdated'));
     } catch (error) { toast(friendlyError(error), 'error'); }
   });
   refs.confirmTagDeleteButton.addEventListener('click', async () => {
@@ -1883,7 +1946,7 @@ function bindEvents() {
         renderSessionTabs();
         renderWorkspace();
       }
-      toast('Tag 已删除');
+      toast(t('toast.tagDeleted'));
     } catch (error) { toast(friendlyError(error), 'error'); }
     finally { refs.confirmTagDeleteButton.disabled = false; }
   });
@@ -1902,7 +1965,7 @@ function bindEvents() {
       await refreshSessions();
       const session = state.sessions.find((item) => item.id === created.id || item.name === created.name);
       if (session) await selectSession(session);
-      toast(`已复制为 ${created.name}`);
+      toast(t('toast.duplicatedAs', { name: created.name }));
     } catch (error) { toast(friendlyError(error), 'error'); }
     finally { submit.disabled = false; }
   });
@@ -1934,7 +1997,7 @@ function bindEvents() {
       await refreshSessions();
       const session = state.sessions.find((item) => item.id === created.id || item.name === created.name);
       if (session) await selectSession(session);
-      toast(`已创建会话 ${created.name}`);
+      toast(t('toast.sessionCreated', { name: created.name }));
     } catch (error) { toast(friendlyError(error), 'error'); }
     finally { submit.disabled = false; }
   });
@@ -1949,7 +2012,7 @@ function bindEvents() {
       state.preferences = await api.getPreferences();
       closeModal(refs.renameModal);
       await refreshSessions();
-      toast('会话已重命名');
+      toast(t('toast.sessionRenamed'));
     } catch (error) { toast(friendlyError(error), 'error'); }
   });
   refs.confirmKillButton.addEventListener('click', async () => {
@@ -1962,7 +2025,7 @@ function bindEvents() {
       if (target === state.selectedSessionId) state.selectedSessionId = null;
       closeModal(refs.killModal);
       await refreshSessions();
-      toast('tmux 会话已关闭');
+      toast(t('toast.sessionClosed'));
     } catch (error) { toast(friendlyError(error), 'error'); }
     finally { refs.confirmKillButton.disabled = false; }
   });
@@ -2006,10 +2069,10 @@ function handleKeyboard(event) {
   else if (meta && /^[1-9]$/.test(event.key)) {
     const windowInfo = state.detail.windows[Number(event.key) - 1];
     if (windowInfo) { event.preventDefault(); api.selectWindow(windowInfo.id).then(refreshDetail).catch((error) => toast(friendlyError(error), 'error')); }
-  } else if (event.metaKey && event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+  } else if (event.metaKey && !event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
     && state.view.kind !== 'all' && selectedSession()) {
     event.preventDefault();
-    // ⌘⌥←/→ switches to the neighboring tab (terminal follows, like iTerm);
+    // ⌘←/→ switches to the neighboring tab (terminal follows, like iTerm);
     // adding Shift moves the current tab within the manual order instead.
     if (event.shiftKey) moveSelectedTab(event.key === 'ArrowLeft' ? -1 : 1);
     else selectAdjacentTab(event.key === 'ArrowLeft' ? -1 : 1);
@@ -2031,11 +2094,16 @@ function handleAppCommand(command) {
 }
 
 async function initialize() {
+  // Resolve the manual language override (defaults to "system") before any
+  // label is computed, so installIcons()/applyStaticI18n() below render in
+  // the right language from the very first paint.
+  setLocale(resolveLocale(loadStoredLanguage()));
   cacheElements();
   installIcons();
+  applyStaticI18n();
   if (!api) {
-    refs.emptyTitle.textContent = '无法连接本地服务';
-    refs.emptyMessage.textContent = '请通过 Tmux Desk 桌面应用打开此界面。';
+    refs.emptyTitle.textContent = t('error.noLocalService');
+    refs.emptyMessage.textContent = t('error.openViaApp');
     refs.emptyActions.classList.add('hidden');
     return;
   }
@@ -2050,7 +2118,7 @@ async function initialize() {
     api,
     onExit: () => {
       refs.terminalReconnect.classList.remove('hidden');
-      refs.workspaceStatus.textContent = '连接已结束 · tmux 会话可能仍在运行';
+      refs.workspaceStatus.textContent = t('workspace.disconnected');
     },
     onError: (error) => toast(friendlyError(error), 'error'),
   });
