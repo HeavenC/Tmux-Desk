@@ -629,6 +629,14 @@ async function moveSelectedTab(direction) {
   await persistTabOrder(names);
 }
 
+async function selectAdjacentTab(direction) {
+  const sessions = compactSessions();
+  const index = sessions.findIndex((item) => item.id === state.selectedSessionId);
+  if (index === -1) return;
+  const target = sessions[index + direction];
+  if (target) await selectSession(target);
+}
+
 function renderDetail() {
   const session = selectedSession();
   refs.panePicker.replaceChildren();
@@ -1657,7 +1665,10 @@ function handleKeyboard(event) {
   } else if (event.metaKey && event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
     && state.view.kind !== 'all' && selectedSession()) {
     event.preventDefault();
-    moveSelectedTab(event.key === 'ArrowLeft' ? -1 : 1);
+    // ⌘⌥←/→ switches to the neighboring tab (terminal follows, like iTerm);
+    // adding Shift moves the current tab within the manual order instead.
+    if (event.shiftKey) moveSelectedTab(event.key === 'ArrowLeft' ? -1 : 1);
+    else selectAdjacentTab(event.key === 'ArrowLeft' ? -1 : 1);
   } else if (event.key === 'Escape') {
     closeFloatingMenus();
     const openModalElement = [...document.querySelectorAll('.modal-backdrop:not(.hidden)')].pop();

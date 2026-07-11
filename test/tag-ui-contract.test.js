@@ -69,3 +69,9 @@ test('tag icon has its own artwork rather than falling back to the info icon', (
   const { icon } = require('../src/renderer/icons');
   assert.notEqual(icon('tag'), icon('info'));
 });
+
+test('compact-view shortcuts switch adjacent sessions and reserve Shift for tab reordering', async () => {
+  const app = await readFile(join(rendererDir, 'app.js'), 'utf8');
+  assert.match(app, /async function selectAdjacentTab\(direction\)/);
+  assert.match(app, /if \(event\.shiftKey\) moveSelectedTab\([^)]+\);\s*else selectAdjacentTab\([^)]+\);/s);
+});
