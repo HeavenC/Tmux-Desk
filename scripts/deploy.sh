@@ -68,6 +68,9 @@ ASAR_CLI="$PROJECT_DIR/node_modules/@electron/asar/bin/asar.js"
 echo "  Extracting app.asar..."
 node "$ASAR_CLI" extract "$ASAR_PATH" "$TMPDIR"
 
+echo "  Syncing missing runtime dependencies..."
+node "$PROJECT_DIR/scripts/sync-runtime-dependencies.js" "$PROJECT_DIR" "$TMPDIR"
+
 echo "  Copying renderer-dist..."
 rm -rf "$TMPDIR/renderer-dist"
 cp -R "$PROJECT_DIR/renderer-dist" "$TMPDIR/"
