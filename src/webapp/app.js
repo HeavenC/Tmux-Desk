@@ -2,11 +2,54 @@ const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
 const { ClipboardAddon } = require('@xterm/addon-clipboard');
 const { liveCountForView, mobileSessionsForView } = require('./mobile-session-model');
+const { t, applyStaticI18n, setLocale, getLocale, detectLocale } = require('./i18n');
 
 const LIST_REFRESH_MS = 15000;
 const PING_INTERVAL_MS = 25000;
 const THEME_KEY = 'tmux-desk-web-theme';
-const CUSTOM_KEYS_KEY = 'tmux-desk-web-custom-keys';
+const LANG_KEY = 'tmux-desk-web-lang'; // 'zh' | 'en'; unset = follow system
+const CUSTOM_KEYS_KEY = 'tmux-desk-web-custom-keys'; // legacy text-only keys, migrated on first load
+const QUICKKEYS_KEY = 'tmux-desk-web-quickkeys';
+const BALL_KEY = 'tmux-desk-web-ball';
+
+// Preset keys the user can add to the quick bar. `ctrl` is the sticky-Ctrl
+// toggle; the rest send a fixed escape/control sequence.
+const PRESET_KEYS = {
+  esc: { label: 'Esc', seq: '\x1b' },
+  tab: { label: 'Tab', seq: '\t' },
+  enter: { label: '⏎', seq: '\r' },
+  backspace: { label: '⌫', seq: '\x7f' },
+  ctrl: { label: 'Ctrl', ctrl: true },
+  prefix: { label: '⌃B', seq: '\x02' },
+  'ctrl-c': { label: '⌃C', seq: '\x03' },
+  'ctrl-d': { label: '⌃D', seq: '\x04' },
+  'ctrl-z': { label: '⌃Z', seq: '\x1a' },
+  'ctrl-l': { label: '⌃L', seq: '\x0c' },
+  'ctrl-r': { label: '⌃R', seq: '\x12' },
+  'ctrl-u': { label: '⌃U', seq: '\x15' },
+  'ctrl-a': { label: '⌃A', seq: '\x01' },
+  'ctrl-e': { label: '⌃E', seq: '\x05' },
+  up: { label: '↑', seq: '\x1b[A' },
+  down: { label: '↓', seq: '\x1b[B' },
+  left: { label: '←', seq: '\x1b[D' },
+  right: { label: '→', seq: '\x1b[C' },
+};
+
+const DEFAULT_QUICKKEYS = [
+  { type: 'preset', id: 'esc' },
+  { type: 'preset', id: 'up' },
+  { type: 'preset', id: 'ctrl-c' },
+  { type: 'preset', id: 'enter' },
+  { type: 'preset', id: 'left' },
+  { type: 'preset', id: 'down' },
+  { type: 'preset', id: 'right' },
+  { type: 'text', label: '/btw', text: '/btw', enter: true },
+  { type: 'text', label: '/usage', text: '/usage', enter: true },
+  { type: 'text', label: '/new', text: '/new', enter: true },
+  { type: 'text', label: '/resume', text: '/resume', enter: true },
+  { type: 'text', label: '/context', text: '/context', enter: true },
+  { type: 'preset', id: 'backspace' },
+];
 const THEME_META_COLORS = { light: '#f2f4f7', dark: '#15191d' };
 const TOUCH_SCROLL_SLOP = 8;
 const TERMINAL_THEMES = {
@@ -38,6 +81,8 @@ const state = {
   ws: null,
   wsSessionId: null,
   pingTimer: null,
+  reconnectAttempts: 0,
+  reconnectTimer: null,
   listRefreshTimer: null,
   ctrlActive: false,
   manualClose: false,
@@ -46,7 +91,10 @@ const state = {
   fitAddon: null,
   termTextarea: null,
   keyboardActive: false,
-  customKeys: [],
+  relockTimer: null,
+  composing: false,
+  quickKeys: [],
+  panelOpen: false,
 };
 
 const el = (id) => document.getElementById(id);
@@ -68,9 +116,9 @@ async function fetchJson(url, options) {
   try {
     body = await response.json();
   } catch {
-    throw new Error('服务器响应格式错误');
+    throw new Error(t('error.badResponse'));
   }
-  if (!response.ok || !body.ok) throw new Error(body.error || '请求失败');
+  if (!response.ok || !body.ok) throw new Error(body.error || t('error.requestFailed'));
   return body;
 }
 
@@ -86,6 +134,10 @@ function showView(name) {
   state.currentView = name;
   el('view-list').hidden = name !== 'list';
   el('view-terminal').hidden = name !== 'terminal';
+  // The floating quick bar only makes sense over a live terminal.
+  const ball = el('quickball');
+  if (ball) ball.hidden = name !== 'terminal';
+  if (name !== 'terminal') closeQuickPanel();
 }
 
 function storedTheme() {
@@ -111,6 +163,52 @@ function toggleTheme() {
   applyTheme(state.theme === 'dark' ? 'light' : 'dark');
 }
 
+// Language: default follows the system; a manual pick is remembered per device.
+function storedLanguage() {
+  try {
+    const value = localStorage.getItem(LANG_KEY);
+    return value === 'zh' || value === 'en' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyStoredLanguage() {
+  setLocale(storedLanguage() || detectLocale());
+  updateLangButton();
+}
+
+function updateLangButton() {
+  const button = document.getElementById('lang-btn');
+  if (!button) return;
+  // Show the current language; tapping switches to the other.
+  button.textContent = getLocale() === 'zh' ? '中' : 'EN';
+  button.setAttribute('aria-label', getLocale() === 'zh' ? '切换到英文' : 'Switch to Chinese');
+}
+
+function toggleLanguage() {
+  const next = getLocale() === 'zh' ? 'en' : 'zh';
+  try { localStorage.setItem(LANG_KEY, next); } catch { /* private mode */ }
+  setLocale(next);
+  relocalize();
+}
+
+// Re-apply every translated string after a language change, without reloading.
+function relocalize() {
+  applyStaticI18n();
+  updateLangButton();
+  renderWorkspaceFilters();
+  if (state.currentView === 'list' && state.sessions.length) {
+    setListState({ loading: false, error: null, sessions: currentListSessions() });
+  }
+  renderQuickKeys();
+  if (!el('quickedit-modal').hidden) {
+    renderQuickPresets();
+    renderQuickCurrent();
+  }
+  syncFullscreenButton();
+}
+
 function normalizePreferenceProjection(value) {
   const preferences = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   return {
@@ -130,6 +228,7 @@ function normalizePreferenceProjection(value) {
       && !Array.isArray(preferences.tabOrders)
       ? preferences.tabOrders
       : {},
+    webQuickKeys: Array.isArray(preferences.webQuickKeys) ? preferences.webQuickKeys : [],
   };
 }
 
@@ -149,11 +248,11 @@ function currentListSessions() {
 }
 
 function currentListLabel() {
-  if (state.listView.kind === 'favorites') return '收藏';
+  if (state.listView.kind === 'favorites') return t('filter.favorites');
   if (state.listView.kind === 'tag') {
     return state.preferences.tags.find((tag) => tag.id === state.listView.tagId)?.name || 'Tag';
   }
-  return '全部';
+  return t('filter.all');
 }
 
 function startOfDay(date) {
@@ -165,12 +264,12 @@ function formatRelativeTime(epochSeconds) {
   const now = new Date();
   const then = new Date(epochSeconds * 1000);
   const diffSec = Math.max(0, Math.floor((now.getTime() - then.getTime()) / 1000));
-  if (diffSec < 60) return '刚刚';
-  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} 分钟前`;
-  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} 小时前`;
+  if (diffSec < 60) return t('time.justNow');
+  if (diffSec < 3600) return t('time.minutesAgo', { n: Math.floor(diffSec / 60) });
+  if (diffSec < 86400) return t('time.hoursAgo', { n: Math.floor(diffSec / 3600) });
   const dayDiff = Math.round((startOfDay(now) - startOfDay(then)) / 86400000);
-  if (dayDiff <= 1) return '昨天';
-  if (dayDiff < 7) return `${dayDiff} 天前`;
+  if (dayDiff <= 1) return t('time.yesterday');
+  if (dayDiff < 7) return t('time.daysAgo', { n: dayDiff });
   const mm = String(then.getMonth() + 1).padStart(2, '0');
   const dd = String(then.getDate()).padStart(2, '0');
   return `${mm}-${dd}`;
@@ -184,8 +283,8 @@ function setListState({ loading = false, error = null, sessions = null }) {
   if (sessions !== null) {
     const emptyText = el('list-empty').querySelector('p');
     emptyText.textContent = state.listView.kind === 'all'
-      ? '暂无 tmux 会话'
-      : `${currentListLabel()}中暂无会话`;
+      ? t('list.emptyAll')
+      : t('list.emptyFiltered', { label: currentListLabel() });
     renderSessionList(sessions);
   }
 }
@@ -195,7 +294,7 @@ function createWorkspaceFilter(view, label, count, tag = null) {
   button.type = 'button';
   button.className = `workspace-filter${sameListView(view, state.listView) ? ' active' : ''}`;
   button.setAttribute('aria-pressed', String(sameListView(view, state.listView)));
-  button.title = `${label}（${count}）`;
+  button.title = t('filter.titleCount', { label, count });
   if (tag) {
     button.dataset.tagColor = tag.color;
     const dot = document.createElement('span');
@@ -222,8 +321,8 @@ function renderWorkspaceFilters() {
   ensureListView();
   const filters = el('workspace-filters');
   const views = [
-    { view: { kind: 'all' }, label: '全部' },
-    { view: { kind: 'favorites' }, label: '收藏' },
+    { view: { kind: 'all' }, label: t('filter.all') },
+    { view: { kind: 'favorites' }, label: t('filter.favorites') },
     ...state.preferences.tags.map((tag) => ({
       view: { kind: 'tag', tagId: tag.id },
       label: tag.name,
@@ -265,7 +364,11 @@ function renderSessionList(sessions) {
 
     const sub = document.createElement('div');
     sub.className = 'session-sub';
-    sub.textContent = `${session.windows ?? 0} 窗口 · ${session.paneCount ?? 0} 面板 · ${session.activeCommand || '-'}`;
+    sub.textContent = t('list.sessionSub', {
+      windows: session.windows ?? 0,
+      panes: session.paneCount ?? 0,
+      cmd: session.activeCommand || '-',
+    });
 
     const meta = document.createElement('div');
     meta.className = 'session-meta';
@@ -275,7 +378,7 @@ function renderSessionList(sessions) {
     footer.className = 'session-card-footer';
     const tagList = document.createElement('div');
     tagList.className = 'session-tags';
-    tagList.setAttribute('aria-label', '已关联 Tag');
+    tagList.setAttribute('aria-label', t('list.tagsAssociatedAria'));
     for (const tag of tagsForSession(session.name)) {
       const pill = document.createElement('span');
       pill.className = 'session-tag-pill';
@@ -288,7 +391,7 @@ function renderSessionList(sessions) {
     manageTags.type = 'button';
     manageTags.className = 'session-tag-button';
     manageTags.textContent = 'Tag';
-    manageTags.setAttribute('aria-label', `管理 ${session.name} 的 Tag`);
+    manageTags.setAttribute('aria-label', t('list.manageTagsAria', { name: session.name }));
     manageTags.addEventListener('click', (event) => {
       event.stopPropagation();
       openSessionTagsModal(session);
@@ -316,11 +419,12 @@ async function loadSessions() {
     const body = await fetchJson(apiUrl('/api/sessions'));
     state.sessions = Array.isArray(body.sessions) ? body.sessions : [];
     state.preferences = normalizePreferenceProjection(body.preferences);
+    applyServerQuickKeys(state.preferences.webQuickKeys);
     ensureListView();
     renderWorkspaceFilters();
     setListState({ loading: false, error: null, sessions: currentListSessions() });
   } catch (err) {
-    setListState({ loading: false, error: err.message || '加载失败' });
+    setListState({ loading: false, error: err.message || t('error.loadFailed') });
   }
 }
 
@@ -359,7 +463,7 @@ function openSessionTagsModal(session) {
   if (!state.preferences.tags.length) {
     const empty = document.createElement('p');
     empty.className = 'tag-check-empty';
-    empty.textContent = '还没有 Tag，请先在 Mac 桌面端创建。';
+    empty.textContent = t('sheet.noTagsHint');
     list.appendChild(empty);
   }
   el('session-tags-save').disabled = !state.preferences.tags.length;
@@ -376,7 +480,7 @@ async function saveSessionTags(event) {
   const checkedTagIds = [...form.querySelectorAll('input[name="tagId"]:checked')]
     .map((input) => input.value);
   saveButton.disabled = true;
-  saveButton.textContent = '保存中…';
+  saveButton.textContent = t('common.saving');
   try {
     const body = await fetchJson(apiUrl('/api/session-tags'), {
       method: 'POST',
@@ -388,11 +492,11 @@ async function saveSessionTags(event) {
     renderWorkspaceFilters();
     setListState({ loading: false, error: null, sessions: currentListSessions() });
     closeSessionTagsModal();
-    showToast('Tag 已保存');
+    showToast(t('toast.tagSaved'));
   } catch (error) {
-    showToast(error.message || 'Tag 保存失败');
+    showToast(error.message || t('toast.tagSaveFailed'));
   } finally {
-    saveButton.textContent = '保存';
+    saveButton.textContent = t('common.save');
     saveButton.disabled = !state.preferences.tags.length;
   }
 }
@@ -449,12 +553,29 @@ function setupKeyboardGate() {
   if (!textarea) return;
   state.termTextarea = textarea;
   lockKeyboard();
-  textarea.addEventListener('blur', lockKeyboard);
+  textarea.addEventListener('blur', onTextareaBlur);
+  textarea.addEventListener('focus', () => { clearTimeout(state.relockTimer); });
+  // While an IME composition is active, never re-lock — locking sets the
+  // textarea readonly, which drops the committed text (notably Chinese
+  // full-width punctuation on iOS/iPadOS).
+  textarea.addEventListener('compositionstart', () => { state.composing = true; clearTimeout(state.relockTimer); });
+  textarea.addEventListener('compositionend', () => { state.composing = false; });
+}
+
+function onTextareaBlur() {
+  // The Chinese IME's punctuation panel briefly blurs the textarea; re-locking
+  // it synchronously swallows the punctuation. Defer the re-lock and skip it if
+  // focus (or a composition) has come back by then.
+  clearTimeout(state.relockTimer);
+  state.relockTimer = setTimeout(() => {
+    if (!state.composing && document.activeElement !== state.termTextarea) lockKeyboard();
+  }, 500);
 }
 
 function lockKeyboard() {
   const textarea = state.termTextarea;
   if (!textarea) return;
+  clearTimeout(state.relockTimer);
   textarea.setAttribute('readonly', 'readonly');
   textarea.setAttribute('inputmode', 'none');
   state.keyboardActive = false;
@@ -464,6 +585,7 @@ function lockKeyboard() {
 function unlockKeyboard() {
   const textarea = state.termTextarea;
   if (!textarea) return;
+  clearTimeout(state.relockTimer);
   textarea.removeAttribute('readonly');
   textarea.removeAttribute('inputmode');
   state.keyboardActive = true;
@@ -471,12 +593,17 @@ function unlockKeyboard() {
 }
 
 function toggleKeyboard() {
-  if (!state.term) return;
+  const textarea = state.termTextarea;
+  if (!state.term || !textarea) return;
   if (state.keyboardActive) {
-    state.term.blur();
+    textarea.blur();
+    lockKeyboard();
   } else {
     unlockKeyboard();
-    state.term.focus();
+    // Focus the real IME textarea synchronously inside the tap gesture: iOS only
+    // raises the keyboard for a focus() made editable in the same user gesture,
+    // and term.focus() is frequently a no-op there (the "needs 3 taps" bug).
+    try { textarea.focus({ preventScroll: true }); } catch { textarea.focus(); }
   }
 }
 
@@ -492,7 +619,7 @@ function handleTerminalInput(data) {
 
 function setCtrlActive(active) {
   state.ctrlActive = active;
-  el('ctrl-btn').classList.toggle('active', active);
+  document.querySelectorAll('.qk-ctrl').forEach((button) => button.classList.toggle('active', active));
 }
 
 // xterm.js has no native long-press text selection on touch, and tmux runs
@@ -530,7 +657,7 @@ async function copyOverlayText() {
   const text = pre.textContent || '';
   try {
     await navigator.clipboard.writeText(text);
-    showToast('已复制到剪贴板');
+    showToast(t('toast.copied'));
   } catch {
     // Clipboard API unavailable/denied: select the text so the user can
     // still copy it manually (long-press → 拷贝 on iOS/Android).
@@ -539,7 +666,7 @@ async function copyOverlayText() {
     range.selectNodeContents(pre);
     selection.removeAllRanges();
     selection.addRange(range);
-    showToast('无法自动复制，已为你选中内容，请手动复制');
+    showToast(t('toast.copyManual'));
   }
 }
 
@@ -572,7 +699,21 @@ function wsUrlFor(sessionId) {
   return `${protocol}//${window.location.host}/ws?${params.toString()}`;
 }
 
+const RECONNECT_MAX = 10;
+
+// Growing backoff, capped at 30s: 1s, 2s, 4s, 8s, 16s, then 30s.
+function reconnectDelay(attempt) {
+  return Math.min(1000 * 2 ** (attempt - 1), 30000);
+}
+
+// Public entry: (re)connect fresh, resetting the auto-reconnect counter.
 function connectWebSocket(sessionId) {
+  state.reconnectAttempts = 0;
+  clearTimeout(state.reconnectTimer);
+  openSocket(sessionId);
+}
+
+function openSocket(sessionId) {
   clearInterval(state.pingTimer);
   if (state.ws) {
     state.manualClose = true;
@@ -585,6 +726,8 @@ function connectWebSocket(sessionId) {
   state.ws = ws;
 
   ws.onopen = () => {
+    state.reconnectAttempts = 0;
+    clearTimeout(state.reconnectTimer);
     hideDisconnectBanner();
     state.pingTimer = setInterval(() => sendWsJson({ type: 'ping' }), PING_INTERVAL_MS);
   };
@@ -592,10 +735,27 @@ function connectWebSocket(sessionId) {
   ws.onclose = () => {
     clearInterval(state.pingTimer);
     if (!state.manualClose && state.currentView === 'terminal' && state.wsSessionId === sessionId) {
-      showDisconnectBanner();
+      scheduleReconnect(sessionId);
     }
   };
   ws.onerror = () => {};
+}
+
+// Auto-reconnect on an unexpected drop, Claude Code-style: retry with growing
+// delay up to RECONNECT_MAX times, surfacing progress; only after all attempts
+// fail do we fall back to a manual "重连" button.
+function scheduleReconnect(sessionId) {
+  state.reconnectAttempts += 1;
+  if (state.reconnectAttempts > RECONNECT_MAX) {
+    showDisconnectBanner({ reconnecting: false });
+    return;
+  }
+  showDisconnectBanner({ reconnecting: true, attempt: state.reconnectAttempts });
+  clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = setTimeout(() => {
+    if (state.manualClose || state.currentView !== 'terminal' || state.wsSessionId !== sessionId) return;
+    openSocket(sessionId);
+  }, reconnectDelay(state.reconnectAttempts));
 }
 
 function handleWsMessage(event) {
@@ -615,19 +775,29 @@ function handleWsMessage(event) {
       state.term.write(msg.data);
       break;
     case 'exit':
-      showToast('会话已结束');
+      showToast(t('toast.sessionEnded'));
       backToList();
       break;
     case 'error':
-      showToast(msg.message || '发生错误');
+      showToast(msg.message || t('toast.genericError'));
       break;
     default:
       break;
   }
 }
 
-function showDisconnectBanner() {
-  el('disconnect-banner').hidden = false;
+function showDisconnectBanner({ reconnecting = false, attempt = 0 } = {}) {
+  const banner = el('disconnect-banner');
+  const label = banner.querySelector('span');
+  const button = el('reconnect-btn');
+  if (reconnecting) {
+    if (label) label.textContent = t('reconnect.progress', { n: attempt, max: RECONNECT_MAX });
+    if (button) button.hidden = true;
+  } else {
+    if (label) label.textContent = t('reconnect.disconnected');
+    if (button) button.hidden = false;
+  }
+  banner.hidden = false;
 }
 
 function hideDisconnectBanner() {
@@ -640,7 +810,7 @@ async function loadWindows(sessionId) {
     state.windows = (body.windows || []).slice().sort((a, b) => a.index - b.index);
     renderWindowPicker();
   } catch (err) {
-    showToast(err.message || '获取窗口失败');
+    showToast(err.message || t('error.loadWindowsFailed'));
   }
 }
 
@@ -669,7 +839,7 @@ async function selectWindow(windowIndex) {
     });
     await loadWindows(state.grouped);
   } catch (err) {
-    showToast(err.message || '切换窗口失败');
+    showToast(err.message || t('error.switchWindowFailed'));
   }
   state.term.focus();
 }
@@ -692,6 +862,8 @@ function openSession(session) {
 function backToList() {
   state.manualClose = true;
   clearInterval(state.pingTimer);
+  clearTimeout(state.reconnectTimer);
+  state.reconnectAttempts = 0;
   if (state.ws) state.ws.close();
   state.ws = null;
   hideDisconnectBanner();
@@ -700,131 +872,381 @@ function backToList() {
   loadSessions();
 }
 
-const TOOLBAR_SEQUENCES = {
-  esc: '\x1b',
-  tab: '\t',
-  prefix: '\x02',
-  'ctrl-c': '\x03',
-  left: '\x1b[D',
-  down: '\x1b[B',
-  up: '\x1b[A',
-  right: '\x1b[C',
-};
+// ---- Quick bar: a customizable, draggable floating key panel --------------
 
-function runToolbarKey(key) {
-  if (key === 'ctrl') {
-    setCtrlActive(!state.ctrlActive);
-  } else {
-    sendWsInput(TOOLBAR_SEQUENCES[key]);
+function normalizeQuickKey(item) {
+  if (!item || typeof item !== 'object') return null;
+  if (item.type === 'preset' && PRESET_KEYS[item.id]) return { type: 'preset', id: item.id };
+  if (item.type === 'text' && typeof item.label === 'string' && typeof item.text === 'string') {
+    return { type: 'text', label: item.label.slice(0, 16), text: item.text.slice(0, 200), enter: item.enter === true };
   }
-  // Only refocus xterm when the user has explicitly summoned the keyboard.
-  // Focusing the helper textarea during a tap re-raises the iOS/iPadOS soft
-  // keyboard — the very thing these toolbar keys exist to avoid, since arrows
-  // and Esc/Tab are sent over the websocket, not typed.
+  return null;
+}
+
+function loadQuickKeys() {
+  let stored = null;
+  try { stored = JSON.parse(localStorage.getItem(QUICKKEYS_KEY)); } catch { stored = null; }
+  if (Array.isArray(stored)) {
+    state.quickKeys = stored.map(normalizeQuickKey).filter(Boolean).slice(0, 40);
+    return;
+  }
+  // First run: seed defaults, then fold in any legacy text-only custom keys.
+  const keys = [...DEFAULT_QUICKKEYS];
+  try {
+    const legacy = JSON.parse(localStorage.getItem(CUSTOM_KEYS_KEY) || '[]');
+    if (Array.isArray(legacy)) {
+      for (const item of legacy) {
+        if (item && typeof item.label === 'string' && typeof item.text === 'string') {
+          keys.push({ type: 'text', label: item.label.slice(0, 16), text: item.text.slice(0, 200), enter: item.enter !== false });
+        }
+      }
+    }
+  } catch { /* ignore malformed legacy data */ }
+  state.quickKeys = keys;
+  saveQuickKeys();
+}
+
+function saveQuickKeys() {
+  // localStorage is a per-device cache / offline fallback; the machine running
+  // tmux-desk is the shared source of truth so every phone sees the same bar.
+  try { localStorage.setItem(QUICKKEYS_KEY, JSON.stringify(state.quickKeys)); } catch { /* private mode */ }
+  pushQuickKeysToServer();
+}
+
+function pushQuickKeysToServer() {
+  if (!state.token) return;
+  fetchJson(apiUrl('/api/quick-keys'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(state.quickKeys),
+  }).catch(() => { /* offline — the localStorage copy re-syncs on next edit */ });
+}
+
+// Pull the latest shared bar on demand (opening the panel / editor), so a change
+// made on another device shows up without waiting for a session-list refresh.
+function refreshQuickKeysFromServer() {
+  if (!state.token) return;
+  fetchJson(apiUrl('/api/quick-keys'))
+    .then((body) => applyServerQuickKeys(body.keys))
+    .catch(() => { /* offline — keep the local copy */ });
+}
+
+// Reconcile with the shared copy on this machine, delivered alongside the
+// session list. A non-empty shared copy wins; an empty one gets seeded from this
+// device so the first phone to edit publishes its bar to the rest.
+function applyServerQuickKeys(serverKeys) {
+  const normalized = (Array.isArray(serverKeys) ? serverKeys : []).map(normalizeQuickKey).filter(Boolean);
+  if (normalized.length) {
+    if (JSON.stringify(normalized) === JSON.stringify(state.quickKeys)) return;
+    state.quickKeys = normalized;
+    try { localStorage.setItem(QUICKKEYS_KEY, JSON.stringify(state.quickKeys)); } catch { /* private mode */ }
+    renderQuickKeys();
+    if (!el('quickedit-modal').hidden) renderQuickCurrent();
+  } else if (state.quickKeys.length) {
+    pushQuickKeysToServer();
+  }
+}
+
+function quickKeyLabel(key) {
+  return key.type === 'preset' ? (PRESET_KEYS[key.id]?.label ?? key.id) : key.label;
+}
+
+function renderQuickKeys() {
+  const container = el('quickpanel-keys');
+  if (!container) return;
+  container.replaceChildren(...state.quickKeys.map((key, index) => {
+    const button = document.createElement('button');
+    button.className = 'qk-btn';
+    button.type = 'button';
+    button.textContent = quickKeyLabel(key);
+    if (key.type === 'preset' && PRESET_KEYS[key.id]?.ctrl) button.classList.add('qk-ctrl');
+    if (key.type === 'text') button.title = key.text + (key.enter ? ' ⏎' : '');
+    bindTap(button, () => runQuickKey(index));
+    return button;
+  }));
+  if (state.ctrlActive) setCtrlActive(true);
+}
+
+function runQuickKey(index) {
+  const key = state.quickKeys[index];
+  if (!key) return;
+  if (key.type === 'preset') {
+    const preset = PRESET_KEYS[key.id];
+    if (!preset) return;
+    if (preset.ctrl) { setCtrlActive(!state.ctrlActive); return; }
+    sendWsInput(preset.seq);
+  } else {
+    sendWsInput(key.text);
+    if (key.enter) sendWsInput('\r');
+  }
   if (state.keyboardActive) state.term?.focus();
 }
 
-// ---- User-defined toolbar keys (persisted per device) --------------------
+// ---- Quick-bar editor sheet ----
 
-function loadCustomKeys() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(CUSTOM_KEYS_KEY) || '[]');
-    state.customKeys = Array.isArray(parsed)
-      ? parsed
-        .filter((item) => item && typeof item.label === 'string' && typeof item.text === 'string')
-        .slice(0, 30)
-        .map((item) => ({ label: item.label.slice(0, 16), text: item.text.slice(0, 200), enter: item.enter !== false }))
-      : [];
-  } catch {
-    state.customKeys = [];
-  }
-}
-
-function saveCustomKeys() {
-  try { localStorage.setItem(CUSTOM_KEYS_KEY, JSON.stringify(state.customKeys)); } catch { /* private mode */ }
-}
-
-function renderCustomKeys() {
-  const container = el('custom-keys');
+function renderQuickPresets() {
+  const container = el('qk-presets');
   if (!container) return;
-  container.replaceChildren(...state.customKeys.map((key, index) => {
+  container.replaceChildren(...Object.entries(PRESET_KEYS).map(([id, preset]) => {
     const button = document.createElement('button');
-    button.className = 'key-btn custom';
+    button.className = 'qk-preset';
     button.type = 'button';
-    button.textContent = key.label;
-    button.title = key.text + (key.enter ? ' ⏎' : '');
-    bindTap(button, () => runCustomKey(index));
+    button.textContent = preset.label;
+    button.addEventListener('click', () => {
+      state.quickKeys.push({ type: 'preset', id });
+      saveQuickKeys();
+      renderQuickKeys();
+      renderQuickCurrent();
+    });
     return button;
   }));
 }
 
-function runCustomKey(index) {
-  const key = state.customKeys[index];
-  if (!key) return;
-  sendWsInput(key.text);
-  if (key.enter) sendWsInput('\r');
-  if (state.keyboardActive) state.term?.focus();
-}
-
-function renderCustomKeysEditor() {
-  const list = el('custom-keys-list');
+function renderQuickCurrent() {
+  const list = el('qk-current');
   if (!list) return;
-  if (!state.customKeys.length) {
+  if (!state.quickKeys.length) {
     const empty = document.createElement('p');
-    empty.className = 'custom-keys-empty';
-    empty.textContent = '还没有自定义快捷键。';
+    empty.className = 'qk-empty';
+    empty.textContent = t('quick.empty');
     list.replaceChildren(empty);
     return;
   }
-  list.replaceChildren(...state.customKeys.map((key, index) => {
+  list.replaceChildren(...state.quickKeys.map((key, index) => {
     const row = document.createElement('div');
-    row.className = 'custom-keys-row';
-    const info = document.createElement('div');
-    info.className = 'custom-keys-info';
+    row.className = 'qk-row';
+    row.dataset.index = String(index);
+    const handle = document.createElement('span');
+    handle.className = 'qk-handle';
+    handle.textContent = '≡';
+    handle.setAttribute('aria-label', t('quick.dragHandleAria'));
+    handle.addEventListener('pointerdown', (event) => startQkDrag(event, index));
     const label = document.createElement('span');
-    label.className = 'custom-keys-label';
-    label.textContent = key.label;
-    const text = document.createElement('span');
-    text.className = 'custom-keys-text';
-    text.textContent = key.text + (key.enter ? ' ⏎' : '');
-    info.append(label, text);
+    label.className = 'qk-row-label';
+    label.textContent = quickKeyLabel(key);
+    const meta = document.createElement('span');
+    meta.className = 'qk-row-meta';
+    meta.textContent = key.type === 'text' ? (key.text + (key.enter ? ' ⏎' : '')) : t('quick.keyTypeMeta');
     const remove = document.createElement('button');
     remove.className = 'btn secondary btn-sm';
     remove.type = 'button';
-    remove.textContent = '删除';
+    remove.textContent = t('common.delete');
     remove.addEventListener('click', () => {
-      state.customKeys.splice(index, 1);
-      saveCustomKeys();
-      renderCustomKeys();
-      renderCustomKeysEditor();
+      state.quickKeys.splice(index, 1);
+      saveQuickKeys();
+      renderQuickKeys();
+      renderQuickCurrent();
     });
-    row.append(info, remove);
+    row.append(handle, label, meta, remove);
     return row;
   }));
 }
 
-function openCustomKeysModal() {
-  renderCustomKeysEditor();
-  el('custom-keys-modal').hidden = false;
-}
-
-function closeCustomKeysModal() {
-  el('custom-keys-modal').hidden = true;
-}
-
-function addCustomKeyFromForm(event) {
+// Pointer-based drag reordering (works for both touch and mouse) of the saved
+// keys. The drag doesn't reshuffle the DOM live; it marks the insertion point
+// and commits on release.
+function startQkDrag(event, fromIndex) {
   event.preventDefault();
-  const label = el('custom-key-label').value.trim().slice(0, 16);
-  const text = el('custom-key-text').value.slice(0, 200);
-  if (!label || !text) { showToast('请填写按钮名和发送内容'); return; }
-  state.customKeys.push({ label, text, enter: el('custom-key-enter').checked });
-  saveCustomKeys();
-  renderCustomKeys();
-  renderCustomKeysEditor();
-  el('custom-key-label').value = '';
-  el('custom-key-text').value = '';
-  el('custom-key-enter').checked = true;
-  el('custom-key-label').focus();
+  const list = el('qk-current');
+  const rows = [...list.querySelectorAll('.qk-row')];
+  const dragRow = rows[fromIndex];
+  dragRow?.classList.add('dragging');
+
+  const insertionIndexAt = (y) => {
+    for (let i = 0; i < rows.length; i += 1) {
+      const rect = rows[i].getBoundingClientRect();
+      if (y < rect.top + rect.height / 2) return i;
+    }
+    return rows.length;
+  };
+  const mark = (insertion) => {
+    rows.forEach((row, i) => {
+      row.classList.toggle('drop-before', i === insertion);
+      row.classList.toggle('drop-after', insertion === rows.length && i === rows.length - 1);
+    });
+  };
+
+  const onMove = (moveEvent) => mark(insertionIndexAt(moveEvent.clientY));
+  const onUp = (upEvent) => {
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+    document.removeEventListener('pointercancel', onUp);
+    const insertion = insertionIndexAt(upEvent.clientY);
+    const to = fromIndex < insertion ? insertion - 1 : insertion;
+    if (to !== fromIndex && to >= 0 && to < state.quickKeys.length) {
+      const [item] = state.quickKeys.splice(fromIndex, 1);
+      state.quickKeys.splice(to, 0, item);
+      saveQuickKeys();
+      renderQuickKeys();
+    }
+    renderQuickCurrent();
+  };
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+  document.addEventListener('pointercancel', onUp);
+}
+
+function openQuickEdit() {
+  refreshQuickKeysFromServer();
+  renderQuickPresets();
+  renderQuickCurrent();
+  el('quickedit-modal').hidden = false;
+}
+
+function closeQuickEdit() {
+  el('quickedit-modal').hidden = true;
+}
+
+function addQuickTextKey(event) {
+  event.preventDefault();
+  const label = el('qk-text-label').value.trim().slice(0, 16);
+  const text = el('qk-text-value').value.slice(0, 200);
+  if (!label || !text) { showToast(t('toast.fillLabelAndText')); return; }
+  state.quickKeys.push({ type: 'text', label, text, enter: el('qk-text-enter').checked });
+  saveQuickKeys();
+  renderQuickKeys();
+  renderQuickCurrent();
+  el('qk-text-label').value = '';
+  el('qk-text-value').value = '';
+  el('qk-text-enter').checked = false;
+  el('qk-text-label').focus();
+}
+
+function resetQuickKeys() {
+  state.quickKeys = [...DEFAULT_QUICKKEYS];
+  saveQuickKeys();
+  renderQuickKeys();
+  renderQuickCurrent();
+}
+
+// ---- The floating ball (drag to move, tap to open) ----
+
+function openQuickPanel() {
+  state.panelOpen = true;
+  refreshQuickKeysFromServer();
+  const panel = el('quickpanel');
+  panel.hidden = false;
+  positionQuickPanel();
+  el('quickball').setAttribute('aria-expanded', 'true');
+}
+
+function closeQuickPanel() {
+  state.panelOpen = false;
+  el('quickpanel').hidden = true;
+  el('quickball').setAttribute('aria-expanded', 'false');
+}
+
+function toggleQuickPanel() {
+  if (state.panelOpen) closeQuickPanel();
+  else openQuickPanel();
+}
+
+// Anchor the panel next to the ball, opening toward the side with more room and
+// clamped inside the viewport.
+function positionQuickPanel() {
+  const panel = el('quickpanel');
+  const ball = el('quickball');
+  if (!panel || !ball || panel.hidden) return;
+  const ballRect = ball.getBoundingClientRect();
+  const margin = 8;
+  const pw = panel.offsetWidth;
+  const ph = panel.offsetHeight;
+  const openLeft = ballRect.left + ballRect.width / 2 > window.innerWidth / 2;
+  let left = openLeft ? ballRect.left - pw - margin : ballRect.right + margin;
+  left = Math.max(margin, Math.min(left, window.innerWidth - pw - margin));
+  let top = ballRect.top + ballRect.height / 2 - ph / 2;
+  top = Math.max(margin, Math.min(top, window.innerHeight - ph - margin));
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
+}
+
+function loadBallPosition() {
+  const ball = el('quickball');
+  if (!ball) return;
+  let pos = null;
+  try { pos = JSON.parse(localStorage.getItem(BALL_KEY)); } catch { pos = null; }
+  const size = 56;
+  const defaultPos = { x: window.innerWidth - size - 12, y: Math.round(window.innerHeight * 0.62) };
+  applyBallPosition(pos && Number.isFinite(pos.x) && Number.isFinite(pos.y) ? pos : defaultPos);
+}
+
+function applyBallPosition({ x, y }) {
+  const ball = el('quickball');
+  const size = ball.offsetWidth || 56;
+  const margin = 6;
+  const clampedX = Math.max(margin, Math.min(x, window.innerWidth - size - margin));
+  const clampedY = Math.max(margin, Math.min(y, window.innerHeight - size - margin));
+  ball.style.left = `${clampedX}px`;
+  ball.style.top = `${clampedY}px`;
+}
+
+function saveBallPosition() {
+  const ball = el('quickball');
+  const pos = { x: parseFloat(ball.style.left) || 0, y: parseFloat(ball.style.top) || 0 };
+  try { localStorage.setItem(BALL_KEY, JSON.stringify(pos)); } catch { /* private mode */ }
+}
+
+function setupQuickball() {
+  const ball = el('quickball');
+  if (!ball) return;
+  loadBallPosition();
+
+  let dragging = false;
+  let moved = false;
+  let startX = 0;
+  let startY = 0;
+  let originLeft = 0;
+  let originTop = 0;
+
+  ball.addEventListener('pointerdown', (event) => {
+    dragging = true;
+    moved = false;
+    startX = event.clientX;
+    startY = event.clientY;
+    originLeft = parseFloat(ball.style.left) || 0;
+    originTop = parseFloat(ball.style.top) || 0;
+    ball.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+
+  ball.addEventListener('pointermove', (event) => {
+    if (!dragging) return;
+    const dx = event.clientX - startX;
+    const dy = event.clientY - startY;
+    if (!moved && Math.hypot(dx, dy) < 6) return;
+    moved = true;
+    if (state.panelOpen) closeQuickPanel();
+    applyBallPosition({ x: originLeft + dx, y: originTop + dy });
+  });
+
+  const endDrag = (event) => {
+    if (!dragging) return;
+    dragging = false;
+    try { ball.releasePointerCapture(event.pointerId); } catch { /* already released */ }
+    if (moved) {
+      // Snap to the nearer horizontal edge, iPhone-style, and remember it.
+      const size = ball.offsetWidth || 56;
+      const left = parseFloat(ball.style.left) || 0;
+      const snapLeft = left + size / 2 < window.innerWidth / 2 ? 6 : window.innerWidth - size - 6;
+      applyBallPosition({ x: snapLeft, y: parseFloat(ball.style.top) || 0 });
+      saveBallPosition();
+    } else {
+      toggleQuickPanel();
+    }
+  };
+  ball.addEventListener('pointerup', endDrag);
+  ball.addEventListener('pointercancel', endDrag);
+
+  window.addEventListener('resize', () => {
+    applyBallPosition({ x: parseFloat(ball.style.left) || 0, y: parseFloat(ball.style.top) || 0 });
+    if (state.panelOpen) positionQuickPanel();
+  });
+  // Tapping outside the panel (and not on the ball) closes it.
+  document.addEventListener('pointerdown', (event) => {
+    if (!state.panelOpen) return;
+    if (el('quickpanel').contains(event.target) || event.target === ball) return;
+    closeQuickPanel();
+  });
 }
 
 // ---- Fullscreen -----------------------------------------------------------
@@ -858,12 +1280,12 @@ function toggleFullscreen() {
   }
   if (fullscreenSupported()) {
     (root.requestFullscreen || root.webkitRequestFullscreen).call(root).catch(() => {
-      showToast('全屏被浏览器拒绝');
+      showToast(t('toast.fullscreenDenied'));
     });
   } else {
     // iOS/iPadOS Safari won't fullscreen arbitrary elements — the home-screen
     // web app is the only way to drop the address bar there.
-    showToast('在 Safari 中点击分享 → 添加到主屏幕，即可全屏使用');
+    showToast(t('toast.fullscreenSafariHint'));
   }
 }
 
@@ -872,7 +1294,7 @@ function syncFullscreenButton() {
   if (!button) return;
   const active = document.fullscreenElement || document.webkitFullscreenElement;
   button.classList.toggle('active', Boolean(active));
-  button.setAttribute('aria-label', active ? '退出全屏' : '全屏');
+  button.setAttribute('aria-label', active ? t('fullscreen.exit') : t('fullscreen.enter'));
 }
 
 // Shared tap binding for toolbar-style buttons: avoids the ~300ms synthetic
@@ -891,23 +1313,14 @@ function bindTap(button, handler) {
 }
 
 function setupToolbar() {
-  document.querySelectorAll('.key-btn[data-key]').forEach((button) => {
-    bindTap(button, () => runToolbarKey(button.dataset.key));
-  });
   bindTap(el('copy-btn'), openCopyOverlay);
-  bindTap(el('keyboard-btn'), toggleKeyboard);
-  bindTap(el('custom-keys-edit'), openCustomKeysModal);
-  bindTap(el('quickbar-toggle'), toggleQuickbar);
-  renderCustomKeys();
-}
-
-function toggleQuickbar() {
-  const quickbar = el('quickbar');
-  const collapsed = quickbar.classList.toggle('collapsed');
-  const toggle = el('quickbar-toggle');
-  toggle.innerHTML = collapsed ? '&#x2039;' : '&#x203A;';
-  toggle.setAttribute('aria-expanded', String(!collapsed));
-  toggle.setAttribute('aria-label', collapsed ? '展开快捷键' : '收起快捷键');
+  // A plain click (not bindTap) keeps the tap a genuine user gesture so the
+  // focus() inside toggleKeyboard reliably raises the soft keyboard; bindTap's
+  // touchstart preventDefault is what made the first tap silently fail.
+  el('keyboard-btn').addEventListener('click', toggleKeyboard);
+  bindTap(el('quickedit-open'), openQuickEdit);
+  renderQuickKeys();
+  setupQuickball();
 }
 
 function sendScrollLine(up, clientX, clientY, rect) {
@@ -981,11 +1394,20 @@ function setupViewportHandling() {
 
 function setupStaticHandlers() {
   el('refresh-btn').addEventListener('click', loadSessions);
+  el('lang-btn').addEventListener('click', toggleLanguage);
   document.querySelectorAll('.theme-btn').forEach((button) => button.addEventListener('click', toggleTheme));
   el('list-retry-btn').addEventListener('click', loadSessions);
   el('back-btn').addEventListener('click', backToList);
   el('reconnect-btn').addEventListener('click', () => {
     if (state.currentSession) connectWebSocket(state.currentSession.id);
+  });
+  // Coming back to the foreground after the OS froze/closed the socket: retry
+  // immediately instead of waiting out the backoff.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (state.currentView !== 'terminal' || !state.currentSession) return;
+    const socketDown = !state.ws || state.ws.readyState > WebSocket.OPEN;
+    if (socketDown) connectWebSocket(state.currentSession.id);
   });
   el('window-picker').addEventListener('change', (event) => {
     const windowIndex = Number(event.target.value);
@@ -1001,23 +1423,26 @@ function setupStaticHandlers() {
   el('copy-modal').addEventListener('click', (event) => {
     if (event.target === el('copy-modal')) closeCopyOverlay();
   });
-  el('custom-keys-close').addEventListener('click', closeCustomKeysModal);
-  el('custom-keys-add').addEventListener('submit', addCustomKeyFromForm);
-  el('custom-keys-modal').addEventListener('click', (event) => {
-    if (event.target === el('custom-keys-modal')) closeCustomKeysModal();
+  el('quickedit-close').addEventListener('click', closeQuickEdit);
+  el('qk-reset').addEventListener('click', resetQuickKeys);
+  el('qk-add-text').addEventListener('submit', addQuickTextKey);
+  el('quickedit-modal').addEventListener('click', (event) => {
+    if (event.target === el('quickedit-modal')) closeQuickEdit();
   });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     if (!el('session-tags-modal').hidden) closeSessionTagsModal();
     if (!el('copy-modal').hidden) closeCopyOverlay();
-    if (!el('custom-keys-modal').hidden) closeCustomKeysModal();
+    if (!el('quickedit-modal').hidden) closeQuickEdit();
   });
 }
 
 function bootstrap() {
+  applyStoredLanguage();
+  applyStaticI18n();
   state.token = getToken();
   applyTheme(storedTheme());
-  loadCustomKeys();
+  loadQuickKeys();
   setupStaticHandlers();
   setupToolbar();
   setupTouchScroll();
@@ -1029,7 +1454,7 @@ function bootstrap() {
   // font while "Tmux Desk Mono" is still resolving.
   document.fonts?.load?.('13px "Tmux Desk Mono"', 'Aa中。（）').catch(() => {});
   if (!state.token) {
-    setListState({ loading: false, error: '缺少 token 参数，请通过正确链接访问' });
+    setListState({ loading: false, error: t('error.missingToken') });
     return;
   }
   loadSessions();
