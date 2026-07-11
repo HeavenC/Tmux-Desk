@@ -11389,9 +11389,9 @@ ${s3.join("\n")}
     }
   });
 
-  // ../../node_modules/@xterm/addon-clipboard/lib/addon-clipboard.js
+  // node_modules/@xterm/addon-clipboard/lib/addon-clipboard.js
   var require_addon_clipboard = __commonJS({
-    "../../node_modules/@xterm/addon-clipboard/lib/addon-clipboard.js"(exports, module) {
+    "node_modules/@xterm/addon-clipboard/lib/addon-clipboard.js"(exports, module) {
       !(function(t, e) {
         "object" == typeof exports && "object" == typeof module ? module.exports = e() : "function" == typeof define && define.amd ? define([], e) : "object" == typeof exports ? exports.ClipboardAddon = e() : t.ClipboardAddon = e();
       })(self, (() => (() => {
