@@ -16,9 +16,9 @@
       <button class="rail-button active" data-view="all" aria-label="全部会话" title="全部会话"></button>
       <button class="rail-button" data-view="favorites" aria-label="收藏会话" title="收藏会话"></button>
       <button class="rail-button" id="mobileAccessButton" aria-label="手机访问" title="手机访问"></button>
-      <div class="tag-rail no-drag" id="tagRail" role="list" aria-label="会话 Tag"></div>
+      <div class="tag-rail no-drag" id="tagRail" role="group" aria-label="会话 Tag"></div>
       <button class="rail-button rail-add-tag no-drag" id="newTagButton" aria-label="新建 Tag" title="新建 Tag"></button>
-      <button class="rail-button rail-toggle no-drag" id="tagRailToggleButton" aria-label="展开 Tag 栏" aria-expanded="false" title="展开 Tag 栏"></button>
+      <button class="rail-button rail-toggle no-drag" id="tagRailToggleButton" aria-label="展开 Tag 栏" aria-controls="tagRail" aria-expanded="false" title="展开 Tag 栏"></button>
       <button class="rail-button" id="themeButton" aria-label="切换主题" title="切换主题"></button>
       <button class="rail-button" id="settingsButton" aria-label="设置" title="设置"></button>
     </nav>

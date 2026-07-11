@@ -21,6 +21,9 @@ const DEFAULT_PREFERENCES = Object.freeze({
   tagRailExpanded: false,
 });
 const SIDEBAR_WIDTH_RANGE = Object.freeze({ min: 200, max: 420 });
+const PREFERENCES_LOCK_TIMEOUT_MS = 5000;
+const PREFERENCES_LOCK_STALE_MS = 30000;
+const PREFERENCES_LOCK_RETRY_MS = 10;
 
 const VALID_THEMES = new Set(['light', 'dark', 'system']);
 
@@ -102,9 +105,10 @@ class PreferencesStore {
   constructor({ filePath, fsImpl, createId } = {}) {
     if (typeof filePath !== 'string' || !filePath) throw new Error('偏好文件路径无效');
     this.filePath = filePath;
-    this.fs = fsImpl || fs;
+    this.fs = fsImpl ? Object.assign(Object.create(fs), fsImpl) : fs;
     this.createId = createId || randomUUID;
     this.writeQueue = Promise.resolve();
+    this.lockPath = `${this.filePath}.lock`;
   }
 
   async load() {
@@ -124,15 +128,51 @@ class PreferencesStore {
   }
 
   update(createPatch) {
-    const operation = this.writeQueue.then(async () => {
+    const operation = this.writeQueue.then(() => this.withFileLock(async () => {
       const current = await this.load();
       const patch = await createPatch(current);
       const next = normalizePreferences({ ...current, ...patch });
       await this.writeNormalized(next);
       return next;
-    });
+    }));
     this.writeQueue = operation.then(() => undefined, () => undefined);
     return operation;
+  }
+
+  async withFileLock(run) {
+    await this.fs.mkdir(path.dirname(this.filePath), { recursive: true });
+    const startedAt = Date.now();
+    let handle = null;
+    while (!handle) {
+      try {
+        handle = await this.fs.open(this.lockPath, 'wx');
+      } catch (error) {
+        if (error?.code !== 'EEXIST') throw error;
+        if (await this.removeStaleLock()) continue;
+        if (Date.now() - startedAt >= PREFERENCES_LOCK_TIMEOUT_MS) {
+          throw new Error('偏好文件正被其他进程占用');
+        }
+        await new Promise((resolve) => setTimeout(resolve, PREFERENCES_LOCK_RETRY_MS));
+      }
+    }
+    try {
+      return await run();
+    } finally {
+      try { await handle.close(); } finally {
+        try { await this.fs.unlink(this.lockPath); } catch {}
+      }
+    }
+  }
+
+  async removeStaleLock() {
+    try {
+      const stats = await this.fs.stat(this.lockPath);
+      if (Date.now() - stats.mtimeMs <= PREFERENCES_LOCK_STALE_MS) return false;
+      await this.fs.unlink(this.lockPath);
+      return true;
+    } catch (error) {
+      return error?.code === 'ENOENT';
+    }
   }
 
   async writeNormalized(next) {

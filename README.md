@@ -75,6 +75,7 @@ npm run serve:web     # 构建手机页面并启动，默认端口 8790
 - 终端顶部只保留一个 tmux window 选择器，不再叠加 `2: claude / 3: server` 式第二排页签
 - 手机 attach 的是**会话组派生会话**（`_web_*`），与桌面端内容同步但当前窗口、尺寸互不干扰；断开自动清理
 - 桌面内启动的 Web 服务直接复用桌面偏好存储；命令行守护进程默认读取同一个平台目录，可用 `TMUX_DESK_PREFERENCES_FILE` 显式覆盖
+- 偏好读改写使用跨进程文件锁串行化，桌面点击 Tag 与外部 Web 设备修改关联不会互相覆盖
 - 环境变量：`TMUX_DESK_WEB_PORT`、`TMUX_DESK_WEB_HOST`、`TMUX_DESK_WEB_TOKEN`、`TMUX_DESK_PREFERENCES_FILE`
 
 Web 服务使用 URL 中的随机 token 鉴权，但自身不提供 TLS。建议只通过 Tailscale 使用；局域网 URL 只适合可信 Wi-Fi，**不要把 8790 端口直接暴露到公网**。带 token 的完整 URL 等同访问凭据，不要转发给无关人员。

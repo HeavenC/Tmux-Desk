@@ -175,7 +175,7 @@ test('default preference path matches Electron userData across supported platfor
   }), '/tmp/shared-tmux-desk.json');
 });
 
-test('concurrent tag mutations on one store preserve updates from multiple devices', async () => {
+test('concurrent tag mutations on one store are serialized', async () => {
   let activeWrites = 0;
   let maximumWrites = 0;
   const delayedFs = {
@@ -212,5 +212,45 @@ test('concurrent tag mutations on one store preserve updates from multiple devic
       api: [first.id],
       worker: [second.id],
     });
+  }, { createId: () => ids.shift(), fsImpl: delayedFs });
+});
+
+test('concurrent mutations from desktop and web store instances preserve both updates', async () => {
+  let activeWrites = 0;
+  let maximumWrites = 0;
+  const delayedFs = {
+    readFile,
+    mkdir,
+    rename: require('node:fs/promises').rename,
+    unlink: require('node:fs/promises').unlink,
+    writeFile: async (...args) => {
+      activeWrites += 1;
+      maximumWrites = Math.max(maximumWrites, activeWrites);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      try {
+        return await writeFile(...args);
+      } finally {
+        activeWrites -= 1;
+      }
+    },
+  };
+  const ids = ['one', 'two'];
+  await withStore(async (desktopStore, filePath) => {
+    let preferences = await desktopStore.createTag('DMS');
+    const dms = preferences.tags[0];
+    preferences = await desktopStore.createTag('K8S');
+    const k8s = preferences.tags[0];
+    const webStore = new PreferencesStore({ filePath, fsImpl: delayedFs });
+    maximumWrites = 0;
+
+    await Promise.all([
+      desktopStore.touchTag(dms.id),
+      webStore.setSessionTags('api', [k8s.id]),
+    ]);
+
+    preferences = await desktopStore.load();
+    assert.equal(maximumWrites, 1);
+    assert.deepEqual(preferences.tags.map((tag) => tag.id), [dms.id, k8s.id]);
+    assert.deepEqual(preferences.sessionTags, { api: [k8s.id] });
   }, { createId: () => ids.shift(), fsImpl: delayedFs });
 });

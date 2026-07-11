@@ -16,6 +16,8 @@ test('renderer exposes tag navigation, management dialogs, and one session tab r
   }
   assert.doesNotMatch(html, /id=["']windowTabs["']/);
   assert.match(html, /id="sessionTabs"[^>]+aria-label="会话页签"/);
+  assert.match(html, /id="tagRail"[^>]+role="group"[^>]+aria-label="会话 Tag"/);
+  assert.match(html, /id="tagRailToggleButton"[^>]+aria-controls="tagRail"/);
 });
 
 test('tag rail owns the available height and compact views keep the dynamic rail width', async () => {
@@ -52,6 +54,9 @@ test('renderer controller uses explicit all, favorites, and tag workspace state'
   assert.match(app, /function renderTagRail\(/);
   assert.match(app, /api\.touchTag\(/);
   assert.match(app, /tagRailExpanded/);
+  assert.match(app, /state\.preferences\s*=\s*\{\s*\.\.\.state\.preferences,\s*tags:\s*result\.preferences\.tags\s*\}/s);
+  assert.match(app, /const token\s*=\s*\+\+tagActivationToken/);
+  assert.match(app, /token\s*===\s*tagActivationToken/);
   assert.doesNotMatch(app, /favoritesOnly/);
   assert.doesNotMatch(app, /windowTabs/);
   assert.doesNotMatch(app, /setAttribute\(['"]role['"],\s*['"]listitem['"]\)/);

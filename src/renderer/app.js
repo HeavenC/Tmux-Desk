@@ -29,6 +29,7 @@ const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
 let terminalView = null;
 let pollTimer = null;
 let selectionToken = 0;
+let tagActivationToken = 0;
 
 function cacheElements() {
   for (const id of [
@@ -338,6 +339,7 @@ function renderTagRail() {
 }
 
 async function activateTag(tag) {
+  const token = ++tagActivationToken;
   const index = state.preferences.tags.findIndex((item) => item.id === tag.id);
   if (index > 0) {
     state.preferences = {
@@ -353,12 +355,15 @@ async function activateTag(tag) {
   );
   await setView({ kind: 'tag', tagId: tag.id });
   const result = await touchResult;
-  if (result.preferences) {
-    state.preferences = result.preferences;
+  if (result.preferences && token === tagActivationToken) {
+    state.preferences = { ...state.preferences, tags: result.preferences.tags };
     renderTagRail();
     renderTagSettings();
-  } else {
-    try { state.preferences = await api.getPreferences(); } catch {}
+  } else if (result.error && token === tagActivationToken) {
+    try {
+      const preferences = await api.getPreferences();
+      state.preferences = { ...state.preferences, tags: preferences.tags };
+    } catch {}
     renderTagRail();
     renderTagSettings();
     toast(friendlyError(result.error), 'error');
