@@ -44,6 +44,28 @@ function normalizeTags(value) {
   return pinned.length ? [...pinned, ...rest] : result;
 }
 
+// The tag id one step away from `currentTagId` in the rail order, for ⌘↑/↓
+// browsing. direction -1 = previous (up), +1 = next (down). When the current
+// view isn't a tag (All/Favorites — currentTagId not in the list), enter from
+// the matching end: down → first tag, up → last tag. Clamps at the ends (no
+// wrap-around, matching ⌘←/→ tab switching). Returns null when there's nowhere
+// to go. This is deliberately order-only: it never reorders the list, so ⌘↑/↓
+// never triggers the recency promotion that clicking a tag does.
+function adjacentTagId(tags, currentTagId, direction) {
+  const list = Array.isArray(tags) ? tags : [];
+  if (!list.length || (direction !== 1 && direction !== -1)) return null;
+  const index = list.findIndex((tag) => tag && tag.id === currentTagId);
+  let target;
+  if (index === -1) {
+    target = direction > 0 ? 0 : list.length - 1;
+  } else {
+    target = index + direction;
+    if (target < 0 || target >= list.length) return null;
+  }
+  const tag = list[target];
+  return tag && tag.id !== currentTagId ? tag.id : null;
+}
+
 function normalizeSessionKey(value) {
   if (typeof value !== 'string') return null;
   const name = value.trim();
@@ -68,6 +90,7 @@ function normalizeSessionTags(value, tags) {
 module.exports = {
   TAG_COLORS,
   TAG_ID_PATTERN,
+  adjacentTagId,
   normalizeSessionKey,
   normalizeSessionTags,
   normalizeTagId,

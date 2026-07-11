@@ -141,16 +141,30 @@ function setMenuLocale(locale) {
 }
 
 async function bootstrap() {
+  // TMUX_DESK_PREFERENCES_FILE lets a demo/test instance keep its own tags,
+  // favorites and window sizes instead of touching the real preferences.
+  const prefsOverride = typeof process.env.TMUX_DESK_PREFERENCES_FILE === 'string'
+    ? process.env.TMUX_DESK_PREFERENCES_FILE.trim()
+    : '';
   preferencesStore = new PreferencesStore({
-    filePath: path.join(app.getPath('userData'), 'preferences.json'),
+    filePath: prefsOverride
+      ? path.resolve(prefsOverride)
+      : path.join(app.getPath('userData'), 'preferences.json'),
   });
+  // TMUX_DESK_SOCKET runs every tmux command against a dedicated socket
+  // (`tmux -L <name>`) instead of the default one. Handy for demos/screenshots
+  // and testing without touching your real sessions. Empty → default socket.
+  const socketName = typeof process.env.TMUX_DESK_SOCKET === 'string' && process.env.TMUX_DESK_SOCKET.trim()
+    ? process.env.TMUX_DESK_SOCKET.trim()
+    : null;
   // Prefer a tmux binary bundled inside the .app (Contents/Resources/bin/tmux)
   // so the app can ship self-contained; falls back to Homebrew / system tmux.
   const bundledTmux = app.isPackaged ? path.join(process.resourcesPath, 'bin', 'tmux') : null;
-  const tmuxService = new TmuxService({ tmuxPath: bundledTmux });
+  const tmuxService = new TmuxService({ tmuxPath: bundledTmux, socketName });
   const tmuxPath = await tmuxService.resolveTmuxPath();
   terminalManager = new TerminalManager({
     tmuxPath: tmuxPath || 'tmux',
+    socketName,
     sendEvent: sendToRenderer,
   });
   webControl = createWebControl({ preferencesStore });

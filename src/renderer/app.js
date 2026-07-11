@@ -2,6 +2,7 @@ const QRCode = require('qrcode');
 const { icon } = require('./icons');
 const { searchCommands } = require('./command-palette');
 const { filterAndGroupSessions, sessionsForView } = require('../shared/session-model');
+const { adjacentTagId } = require('../shared/tag-model');
 const { applyTheme, resolveTheme } = require('./theme');
 const { TerminalView } = require('./terminal-view');
 const { t, applyStaticI18n, setLocale, getLocale, resolveLocale, loadStoredLanguage, saveLanguage } = require('./i18n');
@@ -926,6 +927,18 @@ async function selectAdjacentTab(direction) {
   if (index === -1) return;
   const target = sessions[index + direction];
   if (target) await selectSession(target);
+}
+
+// ⌘↑/↓ browses between tags in the rail order. Unlike clicking a tag
+// (activateTag, which promotes the tag to the top of the unpinned region),
+// this switches the view WITHOUT reordering the rail — so repeated ⌘↑/↓ never
+// reshuffles non-pinned tags. setView jumps to the tag's first session, so the
+// effect is "click that tag once" minus the recency promotion.
+async function selectAdjacentTagView(direction) {
+  const currentTagId = state.view.kind === 'tag' ? state.view.tagId : null;
+  const targetId = adjacentTagId(state.preferences.tags, currentTagId, direction);
+  if (!targetId) return;
+  await setView({ kind: 'tag', tagId: targetId });
 }
 
 function renderDetail() {
@@ -2165,6 +2178,13 @@ function handleKeyboard(event) {
     // adding Shift moves the current tab within the manual order instead.
     if (event.shiftKey) moveSelectedTab(event.key === 'ArrowLeft' ? -1 : 1);
     else selectAdjacentTab(event.key === 'ArrowLeft' ? -1 : 1);
+  } else if (event.metaKey && !event.altKey && !event.shiftKey
+    && (event.key === 'ArrowUp' || event.key === 'ArrowDown')
+    && state.preferences.tags.length) {
+    event.preventDefault();
+    // ⌘↑/↓ switches between tags (jumps to the target tag's first session),
+    // without triggering the recency reorder that clicking a tag does.
+    selectAdjacentTagView(event.key === 'ArrowUp' ? -1 : 1);
   } else if (event.key === 'Escape') {
     closeFloatingMenus();
     const openModalElement = [...document.querySelectorAll('.modal-backdrop:not(.hidden)')].pop();

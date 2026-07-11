@@ -109,7 +109,10 @@ function startWebServer({
 } = {}) {
   if (!token) token = loadToken();
 
-  const service = providedService || new TmuxService();
+  const socketName = typeof process.env.TMUX_DESK_SOCKET === 'string' && process.env.TMUX_DESK_SOCKET.trim()
+    ? process.env.TMUX_DESK_SOCKET.trim()
+    : null;
+  const service = providedService || new TmuxService({ socketName });
   const preferencesStore = providedPreferencesStore || new PreferencesStore({
     filePath: defaultPreferencesFilePath(),
   });
