@@ -14,6 +14,7 @@
 - 只有“全部”显示中间会话栏，收藏/Tag 继续使用单层会话页签。
 - 新建 Tag 与最近点击使用的 Tag 排在首位，顺序跨重启保持。
 - 展开态显示完整 Tag 名称；手机 Web 保持现有触控布局。
+- 设置弹窗不得超过视口，Tag 列表增多时中央内容滚动，头部和完成按钮保持可见。
 - 不安装或覆盖 `/Applications`；产物保持 arm64、ad-hoc 签名、未公证。
 
 ---
@@ -144,6 +145,7 @@ git commit -m "feat(tmux-desk): persist recent tag order"
 **Interfaces:**
 - Consumes: `api.touchTag(id)` 与 `preferences.tagRailExpanded`。
 - Produces: DOM `#tagRailToggleButton`。
+- Produces: DOM `#settingsScroll`。
 - Produces: class `.tag-rail-expanded` 和完整名称节点 `.tag-name`。
 
 - [ ] **Step 1: 写 renderer 结构失败测试**
@@ -158,6 +160,9 @@ assert.match(css, /\.tag-name\s*\{/);
 assert.doesNotMatch(css, /\.rail-spacer\s*\{[^}]*flex:\s*1/s);
 assert.match(app, /api\.touchTag\(/);
 assert.match(app, /tagRailExpanded/);
+assert.match(html, /id=["']settingsScroll["']/);
+assert.match(css, /\.settings-modal\s*\{[^}]*max-height:/s);
+assert.match(css, /\.settings-scroll\s*\{[^}]*overflow-y:\s*auto/s);
 ```
 
 - [ ] **Step 2: 运行 renderer 测试确认 RED**
@@ -211,6 +216,8 @@ function applyTagRailExpanded() {
 ```
 
 toggle 点击时先更新 UI，再 `savePreferences({ tagRailExpanded })`。Tag 点击时把目标本地移到首位、重绘并调用 `api.touchTag(tag.id)`，成功后用返回偏好校准并进入 Tag；失败则重新读取偏好并 toast。
+
+设置弹窗把三个 section 包进 `#settingsScroll.settings-scroll`。`.settings-modal` 使用纵向 flex、`max-height: min(760px, calc(100vh - 56px))` 和 `overflow: hidden`；`.settings-scroll` 使用 `min-height: 0; overflow-y: auto; overscroll-behavior: contain`，header/footer 留在滚动区外。
 
 - [ ] **Step 6: 运行 renderer 与相关偏好测试并提交**
 

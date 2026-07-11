@@ -11,6 +11,7 @@
 - 最近使用顺序持久化，重启后保持；Web API 继续按持久化顺序投影 Tag，因此其他设备读取到相同顺序。
 - 左侧列提供明确的 toggle。折叠态保持当前图标式导航；展开态显示主导航文字，以及每个 Tag 的完整名称和会话数。
 - 展开状态只属于桌面 UI 偏好并持久化，不进入手机 Web 的公开偏好投影。
+- 设置弹窗总高度不超过 760px，也不超过视口减 56px；头部和底部固定，中央内容独立滚动。
 
 ## 数据模型
 
@@ -30,6 +31,7 @@
 - Tag 按钮继续保留原生 button 语义。折叠态显示首字符与角标；展开态显示颜色标记、允许换行的完整名称和独立计数。
 - `.tag-rail` 保持 `flex: 1; min-height: 0; overflow-y: auto`；`.rail-spacer` 不再消耗剩余高度。
 - `compact-view` 只收起中间会话栏，不影响 activity rail 的展开状态；响应式网格仍由 CSS 变量控制，不能在 JavaScript 中内联整个 `grid-template-columns`。
+- 设置弹窗使用 header / `.settings-scroll` / footer 三段式 flex 布局，避免 Tag 增多时整个弹窗被视口裁切。
 
 ## 事件与同步
 
@@ -44,6 +46,7 @@
 - Store 单测覆盖新建 Tag 首位、touch 后移到首位、重复 touch 幂等和未知 id 拒绝。
 - IPC 与 preload 契约测试覆盖 `tags:touch` 及 `tagRailExpanded` 白名单。
 - renderer 静态契约覆盖 toggle、展开 class、完整名称节点、基于 CSS 变量的网格以及 spacer 不再争抢空间。
+- 设置弹窗契约覆盖视口内最大高度、中央滚动容器以及固定在滚动区外的头尾操作区。
 - 全量单元测试、隔离 tmux 集成测试和 renderer/Web 构建必须通过。
 - 真实 Electron 验收折叠/展开、长 Tag 完整显示、点击后的顺序变化、重启后展开状态与顺序保持，并检查 1050px 以下窗口没有横向布局破坏。
 

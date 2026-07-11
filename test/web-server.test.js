@@ -42,7 +42,8 @@ test('web API projects shared tags and validates mobile session assignments', as
   let preferences = await store.createTag('DMS');
   const first = preferences.tags[0];
   preferences = await store.createTag('K8S');
-  const second = preferences.tags[1];
+  const second = preferences.tags.find((tag) => tag.name === 'K8S');
+  await store.touchTag(first.id);
   await store.save({ favorites: ['worker'] });
   await store.setSessionTags('api', [first.id]);
 

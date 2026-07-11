@@ -18,7 +18,7 @@
       <button class="rail-button" id="mobileAccessButton" aria-label="手机访问" title="手机访问"></button>
       <div class="tag-rail no-drag" id="tagRail" role="list" aria-label="会话 Tag"></div>
       <button class="rail-button rail-add-tag no-drag" id="newTagButton" aria-label="新建 Tag" title="新建 Tag"></button>
-      <div class="rail-spacer"></div>
+      <button class="rail-button rail-toggle no-drag" id="tagRailToggleButton" aria-label="展开 Tag 栏" aria-expanded="false" title="展开 Tag 栏"></button>
       <button class="rail-button" id="themeButton" aria-label="切换主题" title="切换主题"></button>
       <button class="rail-button" id="settingsButton" aria-label="设置" title="设置"></button>
     </nav>
@@ -160,12 +160,14 @@
   <div class="modal-backdrop hidden no-drag" id="settingsModal">
     <div class="modal settings-modal">
       <header><div><h2>设置</h2><p>所有偏好仅保存在这台 Mac。</p></div><button type="button" class="icon-button modal-close" aria-label="关闭"></button></header>
-      <section><h3>外观</h3><div class="theme-cards" id="themeCards"></div></section>
-      <section>
-        <div class="settings-section-heading"><h3>Tag</h3><button type="button" class="button" id="settingsNewTagButton">新建 Tag</button></div>
-        <div class="tag-settings-list" id="tagSettingsList"></div>
-      </section>
-      <section class="settings-info"><h3>本地环境</h3><dl><div><dt>tmux</dt><dd id="settingsTmuxVersion">检测中</dd></div><div><dt>数据</dt><dd>~/Library/Application Support/Tmux Desk</dd></div><div><dt>网络</dt><dd>不连接任何远程服务</dd></div></dl></section>
+      <div class="settings-scroll" id="settingsScroll">
+        <section><h3>外观</h3><div class="theme-cards" id="themeCards"></div></section>
+        <section>
+          <div class="settings-section-heading"><h3>Tag</h3><button type="button" class="button" id="settingsNewTagButton">新建 Tag</button></div>
+          <div class="tag-settings-list" id="tagSettingsList"></div>
+        </section>
+        <section class="settings-info"><h3>本地环境</h3><dl><div><dt>tmux</dt><dd id="settingsTmuxVersion">检测中</dd></div><div><dt>数据</dt><dd>~/Library/Application Support/Tmux Desk</dd></div><div><dt>网络</dt><dd>不连接任何远程服务</dd></div></dl></section>
+      </div>
       <footer><button class="button primary modal-cancel">完成</button></footer>
     </div>
   </div>

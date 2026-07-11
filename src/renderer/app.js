@@ -13,6 +13,7 @@ const state = {
   systemStatus: { installed: false, path: null, version: null },
   preferences: {
     theme: 'light', favorites: [], tags: [], sessionTags: {}, lastSession: null, windowBounds: null, sidebarWidth: null,
+    tagRailExpanded: false,
   },
   sessions: [],
   selectedSessionId: null,
@@ -48,27 +49,32 @@ function cacheElements() {
     'sessionTagsModal', 'sessionTagsForm', 'sessionTagsMessage', 'sessionTagsList',
     'tagDeleteModal', 'tagDeleteMessage', 'confirmTagDeleteButton',
     'filesToggleButton', 'fileBrowser', 'fbTree', 'fbPath', 'fbRevealButton', 'fbRefreshButton', 'fbCollapseButton',
-    'sidebarResizer',
+    'sidebarResizer', 'tagRailToggleButton', 'settingsScroll',
   ]) refs[id] = document.getElementById(id);
 }
 
 function installIcons() {
-  $('[data-view="all"]').innerHTML = icon('terminal');
-  $('[data-view="favorites"]').innerHTML = icon('star');
-  refs.settingsButton.innerHTML = icon('settings');
+  $('[data-view="all"]').innerHTML = railButtonContent('terminal', '全部会话');
+  $('[data-view="favorites"]').innerHTML = railButtonContent('star', '收藏会话');
+  refs.settingsButton.innerHTML = railButtonContent('settings', '设置');
   refs.refreshButton.innerHTML = icon('refresh', 16);
   refs.newSessionButton.innerHTML = icon('plus', 17);
-  refs.newTagButton.innerHTML = icon('plus', 16);
+  refs.newTagButton.innerHTML = railButtonContent('plus', '新建 Tag', 16);
+  refs.tagRailToggleButton.innerHTML = railButtonContent('chevron', '展开 Tag 栏', 16);
   refs.searchIcon.innerHTML = icon('search', 14);
   refs.panePickerIcon.innerHTML = icon('panes', 15);
   refs.sessionMenuButton.innerHTML = icon('more', 18);
   refs.commandSearchIcon.innerHTML = icon('search', 18);
   refs.filesToggleButton.innerHTML = icon('sidebar', 17);
-  refs.mobileAccessButton.innerHTML = icon('phone', 18);
+  refs.mobileAccessButton.innerHTML = railButtonContent('phone', '手机访问', 18);
   refs.fbRevealButton.innerHTML = icon('folder', 15);
   refs.fbRefreshButton.innerHTML = icon('refresh', 15);
   refs.fbCollapseButton.innerHTML = icon('close', 15);
   document.querySelectorAll('.modal-close').forEach((button) => { button.innerHTML = icon('close', 16); });
+}
+
+function railButtonContent(iconName, label, size = 18) {
+  return `${icon(iconName, size)}<span class="rail-label">${label}</span>`;
 }
 
 function selectedSession() {
@@ -139,6 +145,29 @@ function applySidebarWidth() {
   else refs.appShell.style.setProperty('--session-sidebar-width', `${custom}px`);
 }
 
+function applyTagRailExpanded() {
+  const expanded = state.preferences.tagRailExpanded === true;
+  refs.appShell.classList.toggle('tag-rail-expanded', expanded);
+  refs.tagRailToggleButton.setAttribute('aria-expanded', String(expanded));
+  refs.tagRailToggleButton.setAttribute('aria-label', expanded ? '收起 Tag 栏' : '展开 Tag 栏');
+  refs.tagRailToggleButton.title = expanded ? '收起 Tag 栏' : '展开 Tag 栏';
+  const label = refs.tagRailToggleButton.querySelector('.rail-label');
+  if (label) label.textContent = expanded ? '收起 Tag 栏' : '展开 Tag 栏';
+}
+
+async function setTagRailExpanded(expanded) {
+  const previous = state.preferences.tagRailExpanded === true;
+  state.preferences = { ...state.preferences, tagRailExpanded: expanded };
+  applyTagRailExpanded();
+  try {
+    state.preferences = await api.savePreferences({ tagRailExpanded: expanded });
+  } catch (error) {
+    state.preferences = { ...state.preferences, tagRailExpanded: previous };
+    applyTagRailExpanded();
+    toast(friendlyError(error), 'error');
+  }
+}
+
 function bindSidebarResizer() {
   refs.sidebarResizer.addEventListener('mousedown', (event) => {
     if (event.button !== 0) return;
@@ -176,7 +205,7 @@ function applyCurrentTheme() {
   applyTheme(document.documentElement, resolved);
   terminalView?.setTheme(resolved);
   const themeIcon = state.preferences.theme === 'system' ? 'laptop' : resolved === 'dark' ? 'moon' : 'sun';
-  refs.themeButton.innerHTML = icon(themeIcon);
+  refs.themeButton.innerHTML = railButtonContent(themeIcon, '切换主题');
   refs.themeButton.title = `主题：${{ light: '亮色', dark: '暗色', system: '跟随系统' }[state.preferences.theme]}`;
   renderThemeControls();
 }
@@ -289,19 +318,50 @@ function renderTagRail() {
     const initial = document.createElement('span');
     initial.className = 'tag-initial';
     initial.textContent = Array.from(tag.name)[0].toLocaleUpperCase();
-    button.append(initial);
+    const name = document.createElement('span');
+    name.className = 'tag-name';
+    name.textContent = tag.name;
+    button.append(initial, name);
     if (count) {
       const badge = document.createElement('span');
       badge.className = 'tag-count';
       badge.textContent = count > 99 ? '99+' : String(count);
       button.append(badge);
     }
-    button.addEventListener('click', () => setView({ kind: 'tag', tagId: tag.id }));
+    button.addEventListener('click', () => activateTag(tag));
     button.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       openTagMenu(tag, event.clientX, event.clientY);
     });
     refs.tagRail.append(button);
+  }
+}
+
+async function activateTag(tag) {
+  const index = state.preferences.tags.findIndex((item) => item.id === tag.id);
+  if (index > 0) {
+    state.preferences = {
+      ...state.preferences,
+      tags: [tag, ...state.preferences.tags.filter((item) => item.id !== tag.id)],
+    };
+    renderTagRail();
+    renderTagSettings();
+  }
+  const touchResult = api.touchTag(tag.id).then(
+    (preferences) => ({ preferences }),
+    (error) => ({ error }),
+  );
+  await setView({ kind: 'tag', tagId: tag.id });
+  const result = await touchResult;
+  if (result.preferences) {
+    state.preferences = result.preferences;
+    renderTagRail();
+    renderTagSettings();
+  } else {
+    try { state.preferences = await api.getPreferences(); } catch {}
+    renderTagRail();
+    renderTagSettings();
+    toast(friendlyError(result.error), 'error');
   }
 }
 
@@ -1278,6 +1338,7 @@ function bindEvents() {
   refs.emptyNewButton.addEventListener('click', openNewSessionModal);
   refs.emptyAllButton.addEventListener('click', () => setView({ kind: 'all' }));
   refs.newTagButton.addEventListener('click', () => openTagEditor());
+  refs.tagRailToggleButton.addEventListener('click', () => setTagRailExpanded(!state.preferences.tagRailExpanded));
   refs.settingsNewTagButton.addEventListener('click', () => openTagEditor());
   refs.emptyInstallButton.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText('brew install tmux'); toast('已复制：brew install tmux'); }
@@ -1531,6 +1592,7 @@ async function initialize() {
     state.preferences = await api.getPreferences();
     applyCurrentTheme();
     applySidebarWidth();
+    applyTagRailExpanded();
     await refreshSessions({ initial: true });
     pollTimer = setInterval(() => { if (!document.hidden) refreshSessions(); }, 2000);
   } catch (error) {
