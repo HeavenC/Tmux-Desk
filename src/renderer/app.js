@@ -401,6 +401,14 @@ function sameTagList(left, right) {
       && tag.name === right[index].name && tag.color === right[index].color);
 }
 
+function tagRailMatchesTags(tags) {
+  const buttons = [...refs.tagRail.querySelectorAll('[data-tag-id]')];
+  return buttons.length === tags.length && buttons.every((button, index) => {
+    const name = button.querySelector('.tag-name')?.textContent;
+    return button.dataset.tagId === tags[index].id && name === tags[index].name;
+  });
+}
+
 function renderTagRail(previousPositions = null) {
   refs.tagRail.replaceChildren();
   document.querySelectorAll('[data-view]').forEach((button) => {
@@ -456,7 +464,7 @@ async function activateTag(tag) {
   const result = await touchResult;
   if (token !== tagActivationToken) return;
   if (!result.error) {
-    const needsRender = !sameTagList(state.preferences.tags, result.tags);
+    const needsRender = !tagRailMatchesTags(result.tags);
     state.preferences = { ...state.preferences, tags: result.tags };
     if (needsRender) renderTagRail();
     renderTagSettings();

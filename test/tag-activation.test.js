@@ -41,7 +41,10 @@ function fakeElement(animationCalls = []) {
       this.append(...children);
     },
     setAttribute() {},
-    querySelector() { return null; },
+    querySelector(selector) {
+      if (selector.startsWith('.')) return this._children.find((child) => child.className === selector.slice(1)) || null;
+      return null;
+    },
     querySelectorAll(selector) {
       if (selector === '[data-tag-id]') return this._children.filter((child) => child.dataset.tagId);
       return [];
@@ -130,11 +133,12 @@ test('touch success restores server tag order after an older preference save res
 
 test('recently used tag reorder animates changed positions with a short eased transition', async () => {
   const animationCalls = [];
+  const touch = deferred();
   const first = { id: 'first', name: 'First', color: 'blue' };
   const second = { id: 'second', name: 'Second', color: 'green' };
   const third = { id: 'third', name: 'Third', color: 'gold' };
   const api = {
-    touchTag: async () => ({ tags: [second, first, third] }),
+    touchTag: () => touch.promise,
   };
   const controller = await loadTagController(api, { animationCalls });
   controller.state.preferences = {
@@ -144,7 +148,10 @@ test('recently used tag reorder animates changed positions with a short eased tr
   };
   controller.renderTagRail();
 
-  await controller.activateTag(second);
+  const activation = controller.activateTag(second);
+  controller.state.preferences = { ...controller.state.preferences, tags: [first, second, third] };
+  touch.resolve({ tags: [second, first, third] });
+  await activation;
 
   assert.equal(animationCalls.length, 2);
   assert.equal(
