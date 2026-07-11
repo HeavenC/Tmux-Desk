@@ -6,3 +6,9 @@ dist/
 coverage/
 .DS_Store
 .deploy-stamp
+
+# Local agent / planning material — not for the public repo
+.Codex/
+CLAUDE.md
+docs/superpowers/
+export-plus-*.md
