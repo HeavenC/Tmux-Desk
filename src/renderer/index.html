@@ -129,11 +129,11 @@
     </form>
   </div>
 
-  <div class="modal-backdrop hidden no-drag" id="apiModal">
-    <div class="modal api-modal">
-      <header><div><h2>给 AI Agent 的会话导入指南</h2><p>复制这段 Markdown 交给 Claude Code 等 Agent，它就能按其工作目录把会话建进来。</p></div><button type="button" class="icon-button modal-close" aria-label="关闭"></button></header>
-      <pre class="api-markdown" id="apiMarkdown"></pre>
-      <footer><button type="button" class="button modal-cancel">关闭</button><button type="button" class="button primary" id="apiCopyButton">复制 Markdown</button></footer>
+  <div class="modal-backdrop hidden no-drag" id="importModal">
+    <div class="modal import-modal">
+      <header><div><h2 id="importTitle">从代码库导入会话</h2><p id="importSubtitle">选择要为其创建 tmux 会话的代码库。</p></div><button type="button" class="icon-button modal-close" aria-label="关闭"></button></header>
+      <div class="import-list" id="importList"></div>
+      <footer><button type="button" class="button" id="importSelectAll">全选</button><button type="button" class="button modal-cancel">取消</button><button type="button" class="button primary" id="importCreateButton">导入选中</button></footer>
     </div>
   </div>
 

@@ -185,6 +185,58 @@ test('new and recently used tags move to the front', async () => {
   }, { createId: () => ids.shift() });
 });
 
+test('pinning holds order above the recency list and supports manual reorder', async () => {
+  const ids = ['one', 'two', 'three', 'four'];
+  await withStore(async (store) => {
+    await store.createTag('DMS');   // tag-one
+    await store.createTag('K8S');   // tag-two
+    await store.createTag('PROD');  // tag-three
+    await store.createTag('APP');   // tag-four -> order [APP, PROD, K8S, DMS]
+
+    // Pin the topmost tag, then the next: both collect at the top in order.
+    let prefs = await store.setTagPinned('tag-four', true);
+    assert.equal(prefs.tags[0].pinned, true);
+    prefs = await store.setTagPinned('tag-three', true);
+    assert.deepEqual(prefs.tags.filter((tag) => tag.pinned).map((tag) => tag.name), ['APP', 'PROD']);
+    assert.deepEqual(prefs.tags.map((tag) => tag.name), ['APP', 'PROD', 'K8S', 'DMS']);
+
+    // Touching a pinned tag is a no-op; touching an unpinned one rises only to
+    // the top of the unpinned region, never above the pinned block.
+    assert.deepEqual((await store.touchTag('tag-four')).tags, prefs.tags);
+    prefs = await store.touchTag('tag-one');
+    assert.deepEqual(prefs.tags.map((tag) => tag.name), ['APP', 'PROD', 'DMS', 'K8S']);
+
+    // Reorder the pinned block; only a permutation of exactly the pinned set is allowed.
+    prefs = await store.reorderPinnedTags(['tag-three', 'tag-four']);
+    assert.deepEqual(prefs.tags.map((tag) => tag.name), ['PROD', 'APP', 'DMS', 'K8S']);
+    await assert.rejects(() => store.reorderPinnedTags(['tag-three']), /Tag 顺序无效/);
+    await assert.rejects(() => store.reorderPinnedTags(['tag-three', 'tag-one']), /Tag 顺序无效/);
+
+    // Unpinning drops the tag to the top of the recency list.
+    prefs = await store.setTagPinned('tag-three', false);
+    assert.deepEqual(prefs.tags.filter((tag) => tag.pinned).map((tag) => tag.name), ['APP']);
+    assert.deepEqual(prefs.tags.map((tag) => tag.name), ['APP', 'PROD', 'DMS', 'K8S']);
+    assert.equal(prefs.tags.find((tag) => tag.name === 'PROD').pinned, undefined);
+  }, { createId: () => ids.shift() });
+});
+
+test('persisted pinned tags are partitioned above the rest on load', async () => {
+  await withStore(async (store, filePath) => {
+    await mkdir(join(filePath, '..'), { recursive: true });
+    await writeFile(filePath, JSON.stringify({
+      tags: [
+        { id: 'tag-a', name: 'A', color: 'blue' },
+        { id: 'tag-b', name: 'B', color: 'green', pinned: true },
+        { id: 'tag-c', name: 'C', color: 'gold' },
+      ],
+    }), 'utf8');
+    const prefs = await store.load();
+    assert.deepEqual(prefs.tags.map((tag) => tag.name), ['B', 'A', 'C']);
+    assert.equal(prefs.tags[0].pinned, true);
+    assert.equal(prefs.tags[1].pinned, undefined);
+  });
+});
+
 test('tag lifecycle rejects duplicate names and unknown tag associations', async () => {
   await withStore(async (store) => {
     const preferences = await store.createTag('DMS');

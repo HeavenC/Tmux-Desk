@@ -18,6 +18,7 @@
       <header class="topbar">
         <h1 class="topbar-title">Tmux Desk</h1>
         <div class="topbar-actions">
+          <button id="fullscreen-btn" class="icon-btn" aria-label="全屏" type="button" hidden>&#x26F6;</button>
           <button id="theme-btn-list" class="icon-btn theme-btn" aria-label="切换主题" type="button">&#x263E;</button>
           <button id="refresh-btn" class="icon-btn" aria-label="刷新" type="button">&#x21bb;</button>
         </div>
@@ -50,18 +51,23 @@
         <select id="window-picker" class="window-picker" aria-label="tmux 窗口" hidden></select>
       </header>
       <div id="terminal-container" class="terminal-container"></div>
-      <div id="toolbar" class="toolbar">
-        <button class="key-btn" data-key="esc" type="button">Esc</button>
-        <button class="key-btn" data-key="tab" type="button">Tab</button>
-        <button id="ctrl-btn" class="key-btn" data-key="ctrl" type="button">Ctrl</button>
-        <button class="key-btn" data-key="prefix" type="button">&#x2303;B</button>
-        <button class="key-btn" data-key="ctrl-c" type="button">&#x2303;C</button>
-        <button class="key-btn" data-key="left" type="button">&#x2190;</button>
-        <button class="key-btn" data-key="down" type="button">&#x2193;</button>
-        <button class="key-btn" data-key="up" type="button">&#x2191;</button>
-        <button class="key-btn" data-key="right" type="button">&#x2192;</button>
-        <button id="copy-btn" class="key-btn" type="button" aria-label="选择并复制终端内容">&#x29C9;</button>
-        <button id="keyboard-btn" class="key-btn" type="button" aria-label="呼出键盘">&#x2328;</button>
+      <div id="quickbar" class="quickbar collapsed">
+        <div id="toolbar" class="toolbar">
+          <button class="key-btn" data-key="esc" type="button">Esc</button>
+          <button class="key-btn" data-key="tab" type="button">Tab</button>
+          <button id="ctrl-btn" class="key-btn" data-key="ctrl" type="button">Ctrl</button>
+          <button class="key-btn" data-key="prefix" type="button">&#x2303;B</button>
+          <button class="key-btn" data-key="ctrl-c" type="button">&#x2303;C</button>
+          <button class="key-btn" data-key="left" type="button">&#x2190;</button>
+          <button class="key-btn" data-key="down" type="button">&#x2193;</button>
+          <button class="key-btn" data-key="up" type="button">&#x2191;</button>
+          <button class="key-btn" data-key="right" type="button">&#x2192;</button>
+          <span id="custom-keys" class="custom-keys"></span>
+          <button id="custom-keys-edit" class="key-btn" type="button" aria-label="编辑快捷键">&#xFF0B;</button>
+          <button id="copy-btn" class="key-btn" type="button" aria-label="选择并复制终端内容">&#x29C9;</button>
+          <button id="keyboard-btn" class="key-btn" type="button" aria-label="呼出键盘">&#x2328;</button>
+        </div>
+        <button id="quickbar-toggle" class="quickbar-toggle" type="button" aria-label="展开快捷键" aria-expanded="false">&#x2039;</button>
       </div>
     </section>
 
@@ -80,6 +86,28 @@
           <button id="session-tags-save" class="btn primary" type="submit">保存</button>
         </footer>
       </form>
+    </div>
+
+    <div id="custom-keys-modal" class="sheet-backdrop" role="dialog" aria-modal="true" aria-labelledby="custom-keys-title" hidden>
+      <div class="sheet-panel">
+        <div class="sheet-handle" aria-hidden="true"></div>
+        <header class="sheet-header">
+          <div>
+            <h2 id="custom-keys-title">编辑快捷键</h2>
+            <p>添加常用命令（如 /usage、/export），点按即发送。</p>
+          </div>
+        </header>
+        <div id="custom-keys-list" class="custom-keys-list"></div>
+        <form id="custom-keys-add" class="custom-keys-add">
+          <input id="custom-key-label" class="custom-key-input" type="text" placeholder="按钮名（如 usage）" maxlength="16" autocomplete="off">
+          <input id="custom-key-text" class="custom-key-input" type="text" placeholder="发送内容（如 /usage）" maxlength="200" autocomplete="off">
+          <label class="custom-key-enter"><input id="custom-key-enter" type="checkbox" checked> 回车</label>
+          <button class="btn primary btn-sm" type="submit">添加</button>
+        </form>
+        <footer class="sheet-footer">
+          <button id="custom-keys-close" class="btn secondary" type="button">完成</button>
+        </footer>
+      </div>
     </div>
 
     <div id="copy-modal" class="copy-backdrop" role="dialog" aria-modal="true" aria-labelledby="copy-modal-title" hidden>

@@ -46,6 +46,41 @@ brew install tmux
 
 > **从访达/程序坞启动也能正常读取会话**：应用会为 tmux 子进程强制 UTF-8 locale（`LANG`/`LC_ALL`）。否则从 Finder 启动时进程不继承 shell 的 `LANG`，tmux 会退回 C locale 并把制表符分隔和中文/emoji 会话名替换成 `_`，导致会话名为空、窗口数为 0、报“会话名称无效/tmux 目标无效”。
 
+## Windows（WSL）版本
+
+Windows 上没有原生 tmux，Tmux Desk 通过 **WSL** 运行 tmux：桌面端仍是 Windows 上的
+Electron 应用，所有 tmux 控制命令与终端 attach 都以 `wsl.exe -e tmux …` 的形式进入 WSL 执行，
+会话、window、pane 的工作目录都是 WSL 侧路径。
+
+**环境要求**
+
+- Windows 10 (1903+) 或 Windows 11，已启用 **WSL2** 并安装一个发行版（Ubuntu 等）
+- 在 WSL 里安装 tmux：`sudo apt install tmux`
+- Node.js 22+ 与构建工具（仅打包时需要）
+
+**可选环境变量**
+
+| 变量 | 作用 |
+|---|---|
+| `TMUX_DESK_WSL_DISTRO` | 指定使用哪个 WSL 发行版（对应 `wsl -d <distro>`）。不设则用默认发行版 |
+| `TMUX_DESK_WSL_TMUX` | WSL 内 tmux 命令或绝对路径（默认 `tmux`） |
+
+**路径处理**：位于 Windows 盘符下的目录（tmux 里表现为 `/mnt/c/...`）与 WSL 原生目录
+（`/home/...`，经 `\\wsl$\<distro>\...` UNC 访问）都可创建会话与浏览文件。右侧文件浏览器访问
+原生 WSL 目录时需要知道发行版名——默认自动探测 `wsl -l -q` 的第一个发行版，也可用
+`TMUX_DESK_WSL_DISTRO` 固定。
+
+**打包（需在 Windows 上执行）**：
+
+```powershell
+cd terminal-cli
+npm install                 # 同时为 Electron 重建 node-pty（Windows 走 ConPTY）
+npm run package:win         # 生成 NSIS 安装包到 dist\
+```
+
+> 当前未内置 Windows 图标；如需品牌化，放一个 256×256 的 `build/icon.ico` 再打包即可。
+> 复制会话时，若某个源会话的工作目录是无法解析发行版的 WSL 原生路径，新会话可能回退到默认目录。
+
 ## 本地运行
 
 ```bash

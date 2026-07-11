@@ -6,6 +6,7 @@ const { liveCountForView, mobileSessionsForView } = require('./mobile-session-mo
 const LIST_REFRESH_MS = 15000;
 const PING_INTERVAL_MS = 25000;
 const THEME_KEY = 'tmux-desk-web-theme';
+const CUSTOM_KEYS_KEY = 'tmux-desk-web-custom-keys';
 const THEME_META_COLORS = { light: '#f2f4f7', dark: '#15191d' };
 const TOUCH_SCROLL_SLOP = 8;
 const TERMINAL_THEMES = {
@@ -45,6 +46,7 @@ const state = {
   fitAddon: null,
   termTextarea: null,
   keyboardActive: false,
+  customKeys: [],
 };
 
 const el = (id) => document.getElementById(id);
@@ -715,7 +717,162 @@ function runToolbarKey(key) {
   } else {
     sendWsInput(TOOLBAR_SEQUENCES[key]);
   }
-  state.term?.focus();
+  // Only refocus xterm when the user has explicitly summoned the keyboard.
+  // Focusing the helper textarea during a tap re-raises the iOS/iPadOS soft
+  // keyboard — the very thing these toolbar keys exist to avoid, since arrows
+  // and Esc/Tab are sent over the websocket, not typed.
+  if (state.keyboardActive) state.term?.focus();
+}
+
+// ---- User-defined toolbar keys (persisted per device) --------------------
+
+function loadCustomKeys() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CUSTOM_KEYS_KEY) || '[]');
+    state.customKeys = Array.isArray(parsed)
+      ? parsed
+        .filter((item) => item && typeof item.label === 'string' && typeof item.text === 'string')
+        .slice(0, 30)
+        .map((item) => ({ label: item.label.slice(0, 16), text: item.text.slice(0, 200), enter: item.enter !== false }))
+      : [];
+  } catch {
+    state.customKeys = [];
+  }
+}
+
+function saveCustomKeys() {
+  try { localStorage.setItem(CUSTOM_KEYS_KEY, JSON.stringify(state.customKeys)); } catch { /* private mode */ }
+}
+
+function renderCustomKeys() {
+  const container = el('custom-keys');
+  if (!container) return;
+  container.replaceChildren(...state.customKeys.map((key, index) => {
+    const button = document.createElement('button');
+    button.className = 'key-btn custom';
+    button.type = 'button';
+    button.textContent = key.label;
+    button.title = key.text + (key.enter ? ' ⏎' : '');
+    bindTap(button, () => runCustomKey(index));
+    return button;
+  }));
+}
+
+function runCustomKey(index) {
+  const key = state.customKeys[index];
+  if (!key) return;
+  sendWsInput(key.text);
+  if (key.enter) sendWsInput('\r');
+  if (state.keyboardActive) state.term?.focus();
+}
+
+function renderCustomKeysEditor() {
+  const list = el('custom-keys-list');
+  if (!list) return;
+  if (!state.customKeys.length) {
+    const empty = document.createElement('p');
+    empty.className = 'custom-keys-empty';
+    empty.textContent = '还没有自定义快捷键。';
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...state.customKeys.map((key, index) => {
+    const row = document.createElement('div');
+    row.className = 'custom-keys-row';
+    const info = document.createElement('div');
+    info.className = 'custom-keys-info';
+    const label = document.createElement('span');
+    label.className = 'custom-keys-label';
+    label.textContent = key.label;
+    const text = document.createElement('span');
+    text.className = 'custom-keys-text';
+    text.textContent = key.text + (key.enter ? ' ⏎' : '');
+    info.append(label, text);
+    const remove = document.createElement('button');
+    remove.className = 'btn secondary btn-sm';
+    remove.type = 'button';
+    remove.textContent = '删除';
+    remove.addEventListener('click', () => {
+      state.customKeys.splice(index, 1);
+      saveCustomKeys();
+      renderCustomKeys();
+      renderCustomKeysEditor();
+    });
+    row.append(info, remove);
+    return row;
+  }));
+}
+
+function openCustomKeysModal() {
+  renderCustomKeysEditor();
+  el('custom-keys-modal').hidden = false;
+}
+
+function closeCustomKeysModal() {
+  el('custom-keys-modal').hidden = true;
+}
+
+function addCustomKeyFromForm(event) {
+  event.preventDefault();
+  const label = el('custom-key-label').value.trim().slice(0, 16);
+  const text = el('custom-key-text').value.slice(0, 200);
+  if (!label || !text) { showToast('请填写按钮名和发送内容'); return; }
+  state.customKeys.push({ label, text, enter: el('custom-key-enter').checked });
+  saveCustomKeys();
+  renderCustomKeys();
+  renderCustomKeysEditor();
+  el('custom-key-label').value = '';
+  el('custom-key-text').value = '';
+  el('custom-key-enter').checked = true;
+  el('custom-key-label').focus();
+}
+
+// ---- Fullscreen -----------------------------------------------------------
+
+function isStandalone() {
+  return window.navigator.standalone === true
+    || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+}
+
+function fullscreenSupported() {
+  const root = document.documentElement;
+  return typeof root.requestFullscreen === 'function' || typeof root.webkitRequestFullscreen === 'function';
+}
+
+function setupFullscreen() {
+  const button = el('fullscreen-btn');
+  if (!button) return;
+  // Already launched from the home screen: the chrome is gone, nothing to do.
+  if (isStandalone()) { button.hidden = true; return; }
+  button.hidden = false;
+  button.addEventListener('click', toggleFullscreen);
+  document.addEventListener('fullscreenchange', syncFullscreenButton);
+}
+
+function toggleFullscreen() {
+  const root = document.documentElement;
+  const active = document.fullscreenElement || document.webkitFullscreenElement;
+  if (active) {
+    (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+    return;
+  }
+  if (fullscreenSupported()) {
+    (root.requestFullscreen || root.webkitRequestFullscreen).call(root).catch(() => {
+      showToast('全屏被浏览器拒绝');
+    });
+  } else {
+    // iOS/iPadOS Safari won't fullscreen arbitrary elements — the home-screen
+    // web app is the only way to drop the address bar there.
+    showToast('在 Safari 中点击分享 → 添加到主屏幕，即可全屏使用');
+  }
+}
+
+function syncFullscreenButton() {
+  const button = el('fullscreen-btn');
+  if (!button) return;
+  const active = document.fullscreenElement || document.webkitFullscreenElement;
+  button.classList.toggle('active', Boolean(active));
+  button.setAttribute('aria-label', active ? '退出全屏' : '全屏');
 }
 
 // Shared tap binding for toolbar-style buttons: avoids the ~300ms synthetic
@@ -739,6 +896,18 @@ function setupToolbar() {
   });
   bindTap(el('copy-btn'), openCopyOverlay);
   bindTap(el('keyboard-btn'), toggleKeyboard);
+  bindTap(el('custom-keys-edit'), openCustomKeysModal);
+  bindTap(el('quickbar-toggle'), toggleQuickbar);
+  renderCustomKeys();
+}
+
+function toggleQuickbar() {
+  const quickbar = el('quickbar');
+  const collapsed = quickbar.classList.toggle('collapsed');
+  const toggle = el('quickbar-toggle');
+  toggle.innerHTML = collapsed ? '&#x2039;' : '&#x203A;';
+  toggle.setAttribute('aria-expanded', String(!collapsed));
+  toggle.setAttribute('aria-label', collapsed ? '展开快捷键' : '收起快捷键');
 }
 
 function sendScrollLine(up, clientX, clientY, rect) {
@@ -832,20 +1001,28 @@ function setupStaticHandlers() {
   el('copy-modal').addEventListener('click', (event) => {
     if (event.target === el('copy-modal')) closeCopyOverlay();
   });
+  el('custom-keys-close').addEventListener('click', closeCustomKeysModal);
+  el('custom-keys-add').addEventListener('submit', addCustomKeyFromForm);
+  el('custom-keys-modal').addEventListener('click', (event) => {
+    if (event.target === el('custom-keys-modal')) closeCustomKeysModal();
+  });
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     if (!el('session-tags-modal').hidden) closeSessionTagsModal();
     if (!el('copy-modal').hidden) closeCopyOverlay();
+    if (!el('custom-keys-modal').hidden) closeCustomKeysModal();
   });
 }
 
 function bootstrap() {
   state.token = getToken();
   applyTheme(storedTheme());
+  loadCustomKeys();
   setupStaticHandlers();
   setupToolbar();
   setupTouchScroll();
   setupViewportHandling();
+  setupFullscreen();
   renderWorkspaceFilters();
   // Warm the composite terminal font ahead of the first term.open() so the
   // very first paint doesn't fall back to the browser default monospace

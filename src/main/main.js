@@ -3,7 +3,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 
 const { registerIpc } = require('./ipc');
-const { listDirectory, validatePath } = require('./file-service');
+const { listDirectory, toBrowsablePath } = require('./file-service');
 const { PreferencesStore } = require('./preferences-store');
 const { TerminalManager } = require('./terminal-manager');
 const { TmuxService } = require('./tmux-service');
@@ -90,7 +90,15 @@ function installApplicationMenu() {
         { label: '新建会话', accelerator: 'CommandOrControl+N', click: () => sendCommand('new-session') },
         { label: '命令面板', accelerator: 'CommandOrControl+K', click: () => sendCommand('command-palette') },
         { type: 'separator' },
-        { label: '会话导入指南（给 AI Agent）…', click: () => sendCommand('api-guide') },
+        {
+          label: '会话导入',
+          submenu: [
+            { label: '从 Claude Code 导入…', click: () => sendCommand('import-codebases:claude') },
+            { label: '从 Codex 导入…', click: () => sendCommand('import-codebases:codex') },
+            { label: '从 IntelliJ IDEA 导入…', click: () => sendCommand('import-codebases:idea') },
+            { label: '从 VS Code 导入…', click: () => sendCommand('import-codebases:vscode') },
+          ],
+        },
         { type: 'separator' },
         { role: 'close' },
       ],
@@ -146,25 +154,30 @@ async function bootstrap() {
     fileBridge: {
       list: (dirPath) => listDirectory(dirPath),
       open: async (filePath) => {
-        const message = await shell.openPath(validatePath(filePath));
+        const message = await shell.openPath(await toBrowsablePath(filePath));
         if (message) throw new Error(message);
         return true;
       },
-      reveal: (filePath) => { shell.showItemInFolder(validatePath(filePath)); return true; },
+      reveal: async (filePath) => { shell.showItemInFolder(await toBrowsablePath(filePath)); return true; },
       openWith: async (filePath) => {
-        const target = validatePath(filePath);
+        const target = await toBrowsablePath(filePath);
+        const isWin = process.platform === 'win32';
         const result = await dialog.showOpenDialog(mainWindow, {
           title: '选择用于打开的应用',
-          defaultPath: '/Applications',
+          defaultPath: isWin ? 'C:\\Program Files' : '/Applications',
           properties: ['openFile'],
-          filters: [{ name: '应用程序', extensions: ['app'] }],
+          filters: isWin
+            ? [{ name: '应用程序', extensions: ['exe'] }]
+            : [{ name: '应用程序', extensions: ['app'] }],
         });
         const appPath = result.canceled ? null : result.filePaths[0] || null;
         if (!appPath) return { canceled: true };
         await new Promise((resolve, reject) => {
-          execFile('/usr/bin/open', ['-a', appPath, target], (error) => (error ? reject(error) : resolve()));
+          const done = (error) => (error ? reject(error) : resolve());
+          if (isWin) execFile(appPath, [target], done);
+          else execFile('/usr/bin/open', ['-a', appPath, target], done);
         });
-        return { canceled: false, app: path.basename(appPath, '.app') };
+        return { canceled: false, app: path.basename(appPath, isWin ? '.exe' : '.app') };
       },
     },
   });

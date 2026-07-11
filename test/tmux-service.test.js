@@ -255,3 +255,51 @@ test('tmux failures normalize to stable error codes and messages', async () => {
     });
   }
 });
+
+test('on Windows tmux runs inside WSL and cwd is translated to a WSL path', async () => {
+  const calls = [];
+  const service = new TmuxService({
+    platform: 'win32',
+    fsImpl: {
+      constants: { X_OK: 1 },
+      statSync: (p) => ({ isDirectory: () => p === 'C:\\Users\\me\\proj' }),
+    },
+    execFileImpl: async (file, args) => {
+      calls.push({ file, args });
+      return { stdout: '$7\n', stderr: '' };
+    },
+  });
+
+  const created = await service.createSession({ name: 'proj', cwd: 'C:\\Users\\me\\proj' });
+  assert.deepEqual(created, { id: '$7', name: 'proj' });
+  assert.equal(calls[0].file, 'wsl.exe');
+  // wsl.exe -e tmux new-session … -c /mnt/c/Users/me/proj
+  assert.equal(calls[0].args[0], '-e');
+  assert.equal(calls[0].args[1], 'tmux');
+  assert.equal(calls[0].args.at(-1), '/mnt/c/Users/me/proj');
+  assert.equal(calls[0].args.includes('new-session'), true);
+});
+
+test('getStatus reports WSL-missing vs tmux-missing reasons on Windows', async () => {
+  const wslMissing = new TmuxService({
+    platform: 'win32',
+    execFileImpl: async () => Promise.reject({ code: 'ENOENT' }),
+  });
+  assert.deepEqual(await wslMissing.getStatus(), {
+    installed: false, path: null, version: null, reason: 'WSL_NOT_FOUND',
+  });
+
+  const tmuxMissing = new TmuxService({
+    platform: 'win32',
+    execFileImpl: async () => Promise.reject({ stderr: 'bash: tmux: command not found' }),
+  });
+  assert.deepEqual(await tmuxMissing.getStatus(), {
+    installed: false, path: null, version: null, reason: 'TMUX_NOT_FOUND',
+  });
+
+  const ok = new TmuxService({
+    platform: 'win32',
+    execFileImpl: async () => ({ stdout: 'tmux 3.4\n', stderr: '' }),
+  });
+  assert.deepEqual(await ok.getStatus(), { installed: true, path: 'WSL:tmux', version: 'tmux 3.4' });
+});

@@ -1,5 +1,6 @@
 const os = require('node:os');
 const { withUtf8Locale } = require('./locale-env');
+const { buildTmuxInvocation } = require('./platform');
 
 const SESSION_TARGET = /^\$\d+$/;
 const MAX_INPUT_LENGTH = 1024 * 1024;
@@ -11,12 +12,13 @@ function validateDimensions(cols, rows) {
 }
 
 class TerminalManager {
-  constructor({ ptyModule, sendEvent, tmuxPath = 'tmux', socketName, env } = {}) {
+  constructor({ ptyModule, sendEvent, tmuxPath = 'tmux', socketName, env, platform } = {}) {
     this.pty = ptyModule || require('node-pty');
     this.sendEvent = typeof sendEvent === 'function' ? sendEvent : () => {};
     this.tmuxPath = tmuxPath;
     this.socketName = socketName || null;
     this.env = withUtf8Locale(env || process.env);
+    this.platform = platform || process.platform;
     this.active = null;
     this.nextTerminalId = 1;
   }
@@ -29,7 +31,7 @@ class TerminalManager {
     this.disposeActive();
 
     const terminalId = this.nextTerminalId++;
-    const args = [
+    const tmuxArgs = [
       ...(this.socketName ? ['-L', this.socketName] : []),
       // Declare clipboard + RGB terminal features for this client so tmux (with
       // set-clipboard external) emits OSC52 on selection/copy — otherwise tmux
@@ -38,7 +40,13 @@ class TerminalManager {
       '-T', 'clipboard,RGB',
       'attach-session', '-t', sessionId,
     ];
-    const process = this.pty.spawn(this.tmuxPath, args, {
+    // On Windows tmux runs inside WSL: spawn `wsl.exe -e tmux …` instead of a
+    // native tmux binary. On mac/linux this is just the tmux binary + args.
+    const { file, args } = buildTmuxInvocation(
+      { platform: this.platform, tmuxPath: this.tmuxPath, env: this.env },
+      tmuxArgs,
+    );
+    const process = this.pty.spawn(file, args, {
       name: 'xterm-256color',
       cols,
       rows,

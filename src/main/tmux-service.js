@@ -3,6 +3,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { withUtf8Locale } = require('./locale-env');
+const { isWindows, wslConfig, buildTmuxInvocation, toWslPath, toWindowsPath } = require('./platform');
 
 const execFileAsync = promisify(execFile);
 const SESSION_TARGET = /^\$\d+$/;
@@ -56,6 +57,26 @@ function errorFromTmux(error) {
   return new TmuxError('COMMAND_FAILED', `tmux 操作失败：${stderr || 'unknown error'}`);
 }
 
+function notFoundMessage(windows) {
+  return windows
+    ? '未找到 WSL 或其中的 tmux，请安装 WSL 并在其中运行 apt install tmux'
+    : '未找到 tmux，请先运行 brew install tmux';
+}
+
+// On Windows, tell apart "WSL itself is missing" from "tmux is missing inside a
+// working WSL" so the UI can point the user at the right fix.
+function windowsFailureReason(error) {
+  if (error && error.code === 'ENOENT') return 'WSL_NOT_FOUND';
+  const stderr = String(error && error.stderr || '').toLowerCase();
+  if (stderr.includes('command not found') || stderr.includes('not found') || stderr.includes('no such file')) {
+    return 'TMUX_NOT_FOUND';
+  }
+  if (stderr.includes('wsl') || stderr.includes('distribution') || stderr.includes('no installed distributions')) {
+    return 'WSL_NOT_FOUND';
+  }
+  return null;
+}
+
 function validateTarget(target, pattern, label) {
   if (typeof target !== 'string' || !pattern.test(target)) {
     throw new Error(`无效的 tmux ${label}目标`);
@@ -73,7 +94,14 @@ function validateName(name) {
 }
 
 class TmuxService {
-  constructor({ tmuxPath, execFileImpl, socketName, fsImpl, env } = {}) {
+  constructor({ tmuxPath, execFileImpl, socketName, fsImpl, env, platform } = {}) {
+    this.platform = platform || process.platform;
+    this.isWindows = isWindows(this.platform);
+    // Select path semantics by target platform, not the ambient module, so cwd
+    // validation is correct when a platform is injected (tests) or when tmux runs
+    // under WSL: a WSL path like /home/x is absolute under both, a Windows path
+    // like C:\x is only absolute under win32.
+    this.pathLib = this.isWindows ? path.win32 : path.posix;
     this.tmuxPath = tmuxPath || null;
     this.env = withUtf8Locale(env || process.env);
     this.execFileImpl = execFileImpl || ((file, args) => execFileAsync(file, args, { env: this.env }));
@@ -82,6 +110,14 @@ class TmuxService {
   }
 
   async resolveTmuxPath() {
+    // On Windows the "tmux path" is the command name run inside WSL; there is no
+    // Windows binary to probe. The WSL launcher (buildTmuxInvocation) prefixes it
+    // with wsl.exe when a command actually runs.
+    if (this.isWindows) {
+      // Ignore this.tmuxPath here: it is meant for the bundled mac binary and
+      // would be a Windows path that means nothing inside WSL.
+      return wslConfig(this.env).tmux;
+    }
     if (this.tmuxPath) {
       try {
         this.fs.accessSync(this.tmuxPath, this.fs.constants.X_OK);
@@ -113,9 +149,14 @@ class TmuxService {
     if (!tmuxPath) return { installed: false, path: null, version: null };
 
     try {
-      const { stdout } = await this.execFileImpl(tmuxPath, this.commandArgs(['-V']));
-      return { installed: true, path: tmuxPath, version: String(stdout || '').trim() || null };
+      const { stdout } = await this.execTmux(['-V']);
+      const version = String(stdout || '').trim() || null;
+      return { installed: true, path: this.isWindows ? `WSL:${tmuxPath}` : tmuxPath, version };
     } catch (error) {
+      if (this.isWindows) {
+        const reason = windowsFailureReason(error);
+        if (reason) return { installed: false, path: null, version: null, reason };
+      }
       throw errorFromTmux(error);
     }
   }
@@ -183,7 +224,7 @@ class TmuxService {
     }
 
     const { stdout } = await this.run([
-      'new-session', '-d', '-P', '-F', '#{session_id}', '-s', validName, '-c', cwd,
+      'new-session', '-d', '-P', '-F', '#{session_id}', '-s', validName, '-c', this.tmuxDir(cwd),
     ]);
     const id = String(stdout || '').trim();
     if (startupCommand) {
@@ -249,20 +290,45 @@ class TmuxService {
     await this.run(['select-pane', '-t', paneTarget]);
   }
 
-  safeDir(dir) {
+  // Translate a directory into the form tmux expects for `-c`. On Windows tmux
+  // runs inside WSL, so a Windows path (C:\… or \\wsl$\…) must become a WSL path;
+  // paths already in WSL form pass through unchanged.
+  tmuxDir(dir) {
+    return this.isWindows ? toWslPath(dir) : dir;
+  }
+
+  // Is `dir` a real directory? On Windows the incoming path may be a WSL path
+  // (from tmux) or a Windows path (from a dialog); check whichever form the
+  // Windows fs can see, but never fabricate a distro-dependent UNC.
+  dirExists(dir) {
+    if (typeof dir !== 'string' || !dir) return false;
+    let checkPath = dir;
+    if (this.isWindows) {
+      checkPath = /^[A-Za-z]:/.test(dir) || dir.startsWith('\\\\') ? dir : toWindowsPath(dir, null);
+      if (!checkPath) return false; // native WSL path with unknown distro — cannot verify here
+    }
     try {
-      if (typeof dir === 'string' && path.isAbsolute(dir) && this.fs.statSync(dir).isDirectory()) return dir;
-    } catch { /* fall through to null so tmux uses its default directory */ }
+      return this.fs.statSync(checkPath).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+
+  safeDir(dir) {
+    if (typeof dir !== 'string' || !this.pathLib.isAbsolute(dir)) return null;
+    if (this.dirExists(dir)) return dir;
     return null;
   }
 
   validateCwd(cwd) {
-    if (typeof cwd !== 'string' || cwd.length > 4096 || cwd.includes('\0') || !path.isAbsolute(cwd)) {
+    if (typeof cwd !== 'string' || cwd.length > 4096 || cwd.includes('\0') || !this.pathLib.isAbsolute(cwd)) {
       throw new Error('工作目录必须是绝对路径');
     }
-    try {
-      if (!this.fs.statSync(cwd).isDirectory()) throw new Error('not a directory');
-    } catch {
+    // On Windows a native WSL path (/home/…) can't be verified without the distro;
+    // accept it and let tmux surface a bad directory. /mnt and Windows paths are
+    // still verified below.
+    if (this.isWindows && cwd.startsWith('/') && !cwd.startsWith('/mnt/')) return;
+    if (!this.dirExists(cwd)) {
       throw new Error('工作目录必须是存在的目录');
     }
   }
@@ -271,12 +337,23 @@ class TmuxService {
     return this.socketName ? ['-L', this.socketName, ...args] : args;
   }
 
-  async run(args) {
+  // Resolve tmux, then build the concrete invocation — the tmux binary directly
+  // on mac/linux, or `wsl.exe -e tmux …` on Windows — and execute it.
+  async execTmux(args) {
     const tmuxPath = await this.resolveTmuxPath();
-    if (!tmuxPath) throw new TmuxError('TMUX_NOT_FOUND', '未找到 tmux，请先运行 brew install tmux');
+    if (!tmuxPath) throw new TmuxError('TMUX_NOT_FOUND', notFoundMessage(this.isWindows));
+    const invocation = buildTmuxInvocation(
+      { platform: this.platform, tmuxPath, env: this.env },
+      this.commandArgs(args),
+    );
+    return this.execFileImpl(invocation.file, invocation.args);
+  }
+
+  async run(args) {
     try {
-      return await this.execFileImpl(tmuxPath, this.commandArgs(args));
+      return await this.execTmux(args);
     } catch (error) {
+      if (error instanceof TmuxError) throw error;
       throw errorFromTmux(error);
     }
   }

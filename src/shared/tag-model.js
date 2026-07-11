@@ -32,9 +32,16 @@ function normalizeTags(value) {
     if (ids.has(id) || names.has(normalizedName) || !TAG_COLORS.includes(item.color)) continue;
     ids.add(id);
     names.add(normalizedName);
-    result.push({ id, name, color: item.color });
+    const tag = { id, name, color: item.color };
+    if (item.pinned === true) tag.pinned = true;
+    result.push(tag);
   }
-  return result;
+  // Pinned tags always sort ahead of the recency-ordered rest. A stable
+  // partition keeps each group's relative order, so pinning never depends on how
+  // the array happened to be persisted — the invariant holds after every load.
+  const pinned = result.filter((tag) => tag.pinned);
+  const rest = result.filter((tag) => !tag.pinned);
+  return pinned.length ? [...pinned, ...rest] : result;
 }
 
 function normalizeSessionKey(value) {

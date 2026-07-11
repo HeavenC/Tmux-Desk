@@ -269,8 +269,53 @@ class PreferencesStore {
     return this.update((current) => {
       const tag = current.tags.find((item) => item.id === tagId);
       if (!tag) throw new Error('Tag 不存在');
-      if (current.tags[0]?.id === tagId) return {};
+      // Pinned tags hold their manual order and never bubble up on use.
+      if (tag.pinned) return {};
+      // Move to the front of the unpinned region; normalizeTags re-partitions so
+      // this tag lands just below the pinned block, not above it.
+      const firstUnpinned = current.tags.find((item) => !item.pinned);
+      if (firstUnpinned?.id === tagId) return {};
       return { tags: [tag, ...current.tags.filter((item) => item.id !== tagId)] };
+    });
+  }
+
+  // Pin/unpin a tag. Pinning promotes it to the end of the pinned block;
+  // unpinning drops it to the top of the recency-ordered rest. The "only the
+  // topmost unpinned tag may be pinned" rule is enforced in the UI — the store
+  // just maintains the pinned/unpinned split.
+  async setTagPinned(id, pinned) {
+    const tagId = normalizeTagId(id);
+    const shouldPin = pinned === true;
+    return this.update((current) => {
+      const tag = current.tags.find((item) => item.id === tagId);
+      if (!tag) throw new Error('Tag 不存在');
+      if (Boolean(tag.pinned) === shouldPin) return {};
+      const tags = current.tags.map((item) => {
+        if (item.id !== tagId) return item;
+        const next = { ...item };
+        if (shouldPin) next.pinned = true;
+        else delete next.pinned;
+        return next;
+      });
+      return { tags };
+    });
+  }
+
+  // Reorder the pinned block to match orderedIds (which must be exactly the set
+  // of currently-pinned tags). The unpinned tail keeps its order.
+  async reorderPinnedTags(orderedIds) {
+    if (!Array.isArray(orderedIds)) throw new Error('Tag 顺序无效');
+    const ids = orderedIds.map((value) => normalizeTagId(value));
+    return this.update((current) => {
+      const pinned = current.tags.filter((tag) => tag.pinned);
+      const pinnedIds = new Set(pinned.map((tag) => tag.id));
+      if (ids.length !== pinned.length || new Set(ids).size !== ids.length
+        || !ids.every((tagId) => pinnedIds.has(tagId))) {
+        throw new Error('Tag 顺序无效');
+      }
+      const byId = new Map(current.tags.map((tag) => [tag.id, tag]));
+      const rest = current.tags.filter((tag) => !tag.pinned);
+      return { tags: [...ids.map((tagId) => byId.get(tagId)), ...rest] };
     });
   }
 

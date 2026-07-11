@@ -1,7 +1,6 @@
 const QRCode = require('qrcode');
 const { icon } = require('./icons');
 const { searchCommands } = require('./command-palette');
-const { sessionApiMarkdown } = require('./session-api-doc');
 const { filterAndGroupSessions, sessionsForView } = require('../shared/session-model');
 const { applyTheme, resolveTheme } = require('./theme');
 const { TerminalView } = require('./terminal-view');
@@ -46,7 +45,7 @@ function cacheElements() {
     'confirmKillButton', 'settingsModal', 'themeCards', 'tagSettingsList', 'settingsNewTagButton', 'settingsTmuxVersion', 'commandPalette',
     'commandInput', 'commandSearchIcon', 'commandResults',
     'duplicateModal', 'duplicateForm', 'duplicateInput', 'duplicateMessage',
-    'apiModal', 'apiMarkdown', 'apiCopyButton',
+    'importModal', 'importList', 'importTitle', 'importSubtitle', 'importSelectAll', 'importCreateButton',
     'mobileAccessButton', 'mobileAccessModal', 'mobileAccessBody',
     'tagEditorModal', 'tagEditorForm', 'tagEditorTitle', 'tagNameInput',
     'sessionTagsModal', 'sessionTagsForm', 'sessionTagsMessage', 'sessionTagsList',
@@ -409,6 +408,125 @@ function tagRailMatchesTags(tags) {
   });
 }
 
+// Pinned tags sit above the recency-ordered rest, in their own manual order.
+// This mirrors normalizeTags on the store side so optimistic client updates and
+// the persisted result agree.
+function orderTags(tags) {
+  const pinned = tags.filter((tag) => tag.pinned);
+  const rest = tags.filter((tag) => !tag.pinned);
+  return pinned.length ? [...pinned, ...rest] : tags;
+}
+
+// Promote a used tag to the top of the unpinned region (pinned tags never move).
+function withTagPromoted(tags, tagId) {
+  const tag = tags.find((item) => item.id === tagId);
+  if (!tag || tag.pinned) return tags;
+  const pinned = tags.filter((item) => item.pinned);
+  const rest = tags.filter((item) => !item.pinned && item.id !== tagId);
+  return [...pinned, tag, ...rest];
+}
+
+function tagOrderEqual(left, right) {
+  return left.length === right.length && left.every((tag, index) => tag.id === right[index].id);
+}
+
+function firstUnpinnedTag() {
+  return state.preferences.tags.find((tag) => !tag.pinned) || null;
+}
+
+async function reloadTagPreferences() {
+  try {
+    const preferences = await api.getPreferences();
+    state.preferences = { ...state.preferences, tags: preferences.tags };
+    renderTagRail();
+    renderTagSettings();
+  } catch { /* leave the optimistic view; the next refresh reconciles */ }
+}
+
+async function setTagPinned(tag, pinned) {
+  const previousPositions = tagRailPositions();
+  const updated = state.preferences.tags.map((item) => {
+    if (item.id !== tag.id) return item;
+    const next = { ...item };
+    if (pinned) next.pinned = true;
+    else delete next.pinned;
+    return next;
+  });
+  state.preferences = { ...state.preferences, tags: orderTags(updated) };
+  renderTagRail(previousPositions);
+  renderTagSettings();
+  try {
+    const preferences = await api.setTagPinned({ id: tag.id, pinned });
+    state.preferences = { ...state.preferences, tags: preferences.tags };
+    renderTagRail();
+    renderTagSettings();
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+    await reloadTagPreferences();
+  }
+}
+
+let pinnedDragId = null;
+
+function clearPinnedDropMarkers() {
+  for (const button of refs.tagRail.querySelectorAll('.drop-before, .drop-after')) {
+    button.classList.remove('drop-before', 'drop-after');
+  }
+}
+
+function handlePinnedDragStart(event, tag) {
+  pinnedDragId = tag.id;
+  event.dataTransfer.effectAllowed = 'move';
+  try { event.dataTransfer.setData('text/plain', tag.id); } catch { /* some engines disallow */ }
+}
+
+function handlePinnedDragOver(event, tag) {
+  if (!pinnedDragId || !tag.pinned) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  const rect = event.currentTarget.getBoundingClientRect();
+  const before = (event.clientY - rect.top) < rect.height / 2;
+  clearPinnedDropMarkers();
+  if (tag.id !== pinnedDragId) event.currentTarget.classList.add(before ? 'drop-before' : 'drop-after');
+}
+
+async function handlePinnedDrop(event, tag) {
+  if (!pinnedDragId || !tag.pinned) return;
+  event.preventDefault();
+  const rect = event.currentTarget.getBoundingClientRect();
+  const before = (event.clientY - rect.top) < rect.height / 2;
+  const dragId = pinnedDragId;
+  pinnedDragId = null;
+  clearPinnedDropMarkers();
+  await reorderPinnedByDrop(dragId, tag.id, before);
+}
+
+async function reorderPinnedByDrop(dragId, targetId, before) {
+  const tags = state.preferences.tags;
+  const pinnedIds = tags.filter((tag) => tag.pinned).map((tag) => tag.id);
+  if (dragId === targetId || !pinnedIds.includes(dragId) || !pinnedIds.includes(targetId)) return;
+  const without = pinnedIds.filter((id) => id !== dragId);
+  let index = without.indexOf(targetId);
+  if (index < 0) return;
+  if (!before) index += 1;
+  without.splice(index, 0, dragId);
+  if (without.length === pinnedIds.length && without.every((id, i) => id === pinnedIds[i])) return;
+
+  const previousPositions = tagRailPositions();
+  const byId = new Map(tags.map((tag) => [tag.id, tag]));
+  const rest = tags.filter((tag) => !tag.pinned);
+  state.preferences = { ...state.preferences, tags: [...without.map((id) => byId.get(id)), ...rest] };
+  renderTagRail(previousPositions);
+  renderTagSettings();
+  try {
+    const preferences = await api.reorderPinnedTags(without);
+    state.preferences = { ...state.preferences, tags: preferences.tags };
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+    await reloadTagPreferences();
+  }
+}
+
 function renderTagRail(previousPositions = null) {
   refs.tagRail.replaceChildren();
   document.querySelectorAll('[data-view]').forEach((button) => {
@@ -435,6 +553,18 @@ function renderTagRail(previousPositions = null) {
       badge.textContent = count > 99 ? '99+' : String(count);
       button.append(badge);
     }
+    if (tag.pinned) {
+      button.classList.add('pinned');
+      const pin = document.createElement('span');
+      pin.className = 'tag-pin';
+      pin.innerHTML = icon('star', 11);
+      button.append(pin);
+      button.draggable = true;
+      button.addEventListener('dragstart', (event) => handlePinnedDragStart(event, tag));
+      button.addEventListener('dragover', (event) => handlePinnedDragOver(event, tag));
+      button.addEventListener('drop', (event) => handlePinnedDrop(event, tag));
+      button.addEventListener('dragend', () => { pinnedDragId = null; clearPinnedDropMarkers(); });
+    }
     button.addEventListener('click', () => activateTag(tag));
     button.addEventListener('contextmenu', (event) => {
       event.preventDefault();
@@ -447,13 +577,11 @@ function renderTagRail(previousPositions = null) {
 
 async function activateTag(tag) {
   const token = ++tagActivationToken;
-  const index = state.preferences.tags.findIndex((item) => item.id === tag.id);
-  const previousPositions = index > 0 ? tagRailPositions() : null;
-  if (index > 0) {
-    state.preferences = {
-      ...state.preferences,
-      tags: [tag, ...state.preferences.tags.filter((item) => item.id !== tag.id)],
-    };
+  const promoted = withTagPromoted(state.preferences.tags, tag.id);
+  const reordered = !tagOrderEqual(promoted, state.preferences.tags);
+  const previousPositions = reordered ? tagRailPositions() : null;
+  if (reordered) {
+    state.preferences = { ...state.preferences, tags: promoted };
     renderTagSettings();
   }
   const touchResult = api.touchTag(tag.id).then(
@@ -1021,9 +1149,9 @@ async function refreshSessions({ initial = false, notify = false } = {}) {
   }
 }
 
-function menuButton({ iconName, title, action, danger = false, checked = false }) {
+function menuButton({ iconName, title, action, danger = false, checked = false, disabled = false }) {
   const button = document.createElement('button');
-  button.className = `menu-item ${danger ? 'danger' : ''}`;
+  button.className = `menu-item ${danger ? 'danger' : ''} ${disabled ? 'disabled' : ''}`.trim();
   button.innerHTML = icon(iconName, 15);
   const label = document.createElement('span');
   label.textContent = title;
@@ -1034,7 +1162,8 @@ function menuButton({ iconName, title, action, danger = false, checked = false }
     check.innerHTML = icon('check', 14);
     button.append(check);
   }
-  button.addEventListener('click', action);
+  if (disabled) button.disabled = true;
+  else button.addEventListener('click', action);
   return button;
 }
 
@@ -1093,9 +1222,19 @@ function openSessionMenu(session, anchor) {
 
 function openTagMenu(tag, x, y) {
   closeFloatingMenus();
+  const topUnpinned = firstUnpinnedTag();
+  let pinItem;
+  if (tag.pinned) {
+    pinItem = menuButton({ iconName: 'star', title: '取消固定', action: () => { closeFloatingMenus(); setTagPinned(tag, false); } });
+  } else if (topUnpinned && topUnpinned.id === tag.id) {
+    pinItem = menuButton({ iconName: 'star', title: '固定到顶部', action: () => { closeFloatingMenus(); setTagPinned(tag, true); } });
+  } else {
+    pinItem = menuButton({ iconName: 'star', title: '固定（仅可固定最上方的 Tag）', disabled: true });
+  }
   refs.contextMenu.replaceChildren(
     menuButton({ iconName: 'terminal', title: `打开 “${tag.name}”`, action: () => setView({ kind: 'tag', tagId: tag.id }) }),
     separator(),
+    pinItem,
     menuButton({ iconName: 'edit', title: '重命名 Tag…', action: () => { closeFloatingMenus(); openTagEditor(tag); } }),
     menuButton({ iconName: 'trash', title: '删除 Tag…', danger: true, action: () => { closeFloatingMenus(); openTagDeleteModal(tag); } }),
   );
@@ -1206,18 +1345,115 @@ function openSettings() {
   openModal(refs.settingsModal, refs.settingsModal.querySelector('.theme-card'));
 }
 
-function currentSessionApiMarkdown() {
-  return sessionApiMarkdown({ tmuxPath: state.systemStatus.path || 'tmux' });
+const IMPORT_TOOLS = [
+  { id: 'claude', label: 'Claude Code' },
+  { id: 'codex', label: 'Codex' },
+  { id: 'idea', label: 'IntelliJ IDEA' },
+  { id: 'vscode', label: 'VS Code' },
+];
+
+let importEntries = [];
+
+function uniqueSessionName(base, used) {
+  if (!used.has(base)) return base;
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${base}-${index}`;
+    if (!used.has(candidate)) return candidate;
+  }
+  return `${base}-${used.size}`;
 }
 
-function openApiModal() {
-  refs.apiMarkdown.textContent = currentSessionApiMarkdown();
-  openModal(refs.apiModal, refs.apiCopyButton);
+async function openImportModal(tool) {
+  const meta = IMPORT_TOOLS.find((item) => item.id === tool) || { id: tool, label: tool };
+  refs.importTitle.textContent = `从 ${meta.label} 导入会话`;
+  refs.importSubtitle.textContent = '正在扫描…';
+  refs.importList.replaceChildren();
+  importEntries = [];
+  openModal(refs.importModal, refs.importCreateButton);
+
+  let discovered = [];
+  try {
+    discovered = await api.discoverCodebases();
+  } catch (error) {
+    refs.importSubtitle.textContent = friendlyError(error);
+    return;
+  }
+  importEntries = (discovered || []).filter((entry) => entry.sources.includes(tool));
+  renderImportList();
 }
 
-async function copySessionApiMarkdown() {
-  try { await navigator.clipboard.writeText(currentSessionApiMarkdown()); toast('会话导入指南已复制'); }
-  catch (error) { toast(friendlyError(error), 'error'); }
+function renderImportList() {
+  refs.importList.replaceChildren();
+  if (!importEntries.length) {
+    refs.importSubtitle.textContent = '未发现可导入的代码库';
+    const empty = document.createElement('p');
+    empty.className = 'import-empty';
+    empty.textContent = '这个工具还没有可用的最近项目记录。';
+    refs.importList.append(empty);
+    return;
+  }
+  refs.importSubtitle.textContent = `发现 ${importEntries.length} 个代码库，勾选后点击“导入选中”。`;
+  const existing = new Set(state.sessions.map((session) => session.name));
+  refs.importList.replaceChildren(...importEntries.map((entry, index) => {
+    const row = document.createElement('label');
+    row.className = 'import-row';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.dataset.index = String(index);
+    checkbox.checked = !existing.has(entry.name);
+    const text = document.createElement('div');
+    text.className = 'import-row-text';
+    const name = document.createElement('div');
+    name.className = 'import-row-name';
+    name.textContent = entry.name;
+    if (existing.has(entry.name)) {
+      const badge = document.createElement('span');
+      badge.className = 'import-row-badge';
+      badge.textContent = '已存在';
+      name.append(badge);
+    }
+    const dir = document.createElement('div');
+    dir.className = 'import-row-path';
+    dir.textContent = entry.path;
+    text.append(name, dir);
+    row.append(checkbox, text);
+    return row;
+  }));
+}
+
+function toggleAllImports() {
+  const checkboxes = [...refs.importList.querySelectorAll('input[type="checkbox"]')];
+  const nextChecked = !checkboxes.every((checkbox) => checkbox.checked);
+  for (const checkbox of checkboxes) checkbox.checked = nextChecked;
+}
+
+async function runImport() {
+  const checkboxes = [...refs.importList.querySelectorAll('input[type="checkbox"]:checked')];
+  const chosen = checkboxes.map((checkbox) => importEntries[Number(checkbox.dataset.index)]).filter(Boolean);
+  if (!chosen.length) { toast('未选择任何代码库'); return; }
+
+  const used = new Set(state.sessions.map((session) => session.name));
+  let created = 0;
+  let skipped = 0;
+  let failed = 0;
+  for (const entry of chosen) {
+    const name = uniqueSessionName(entry.name, used);
+    try {
+      await api.createSession({ name, cwd: entry.path, startupCommand: '' });
+      used.add(name);
+      created += 1;
+    } catch (error) {
+      if (String(error && error.message || '').includes('已存在')) skipped += 1;
+      else failed += 1;
+    }
+  }
+
+  closeModal(refs.importModal);
+  await refreshSessions();
+  const parts = [`已创建 ${created} 个会话`];
+  if (skipped) parts.push(`跳过 ${skipped} 个已存在`);
+  if (failed) parts.push(`失败 ${failed} 个`);
+  toast(parts.join('，'), failed ? 'error' : 'info');
 }
 
 let mobileAccessBusy = false;
@@ -1439,7 +1675,14 @@ function commands() {
     { id: 'newTag', title: '新建 Tag', subtitle: '创建本地会话分组', icon: 'tag', action: () => openTagEditor() },
     { id: 'theme', title: '切换主题', subtitle: '亮色、暗色、跟随系统', shortcut: '⌘⇧T', keywords: ['light', 'dark'], icon: 'palette', action: cycleTheme },
     { id: 'settings', title: '打开设置', subtitle: '外观与本地环境信息', icon: 'settings', action: openSettings },
-    { id: 'apiGuide', title: '复制会话导入指南（给 AI Agent）', subtitle: '让 Claude Code 按工作目录把会话建进来', keywords: ['api', 'markdown', 'agent', 'claude'], icon: 'copy', action: openApiModal },
+    ...IMPORT_TOOLS.map((tool) => ({
+      id: `import-${tool.id}`,
+      title: `从 ${tool.label} 导入会话`,
+      subtitle: '按最近打开的代码库目录创建 tmux 会话',
+      keywords: ['import', 'codebase', '导入', '代码库', '项目', tool.id, tool.label.toLowerCase()],
+      icon: 'copy',
+      action: () => openImportModal(tool.id),
+    })),
     { id: 'mobileAccess', title: '手机访问（Web 服务）', subtitle: '扫码在手机浏览器中操作全部 tmux 会话', keywords: ['mobile', 'web', 'qrcode', '二维码'], icon: 'phone', action: openMobileAccessModal },
     ...(session ? [
       { id: 'rename', title: `重命名 “${session.name}”`, subtitle: '修改 tmux 会话名称', icon: 'edit', action: () => openRenameModal(session) },
@@ -1664,7 +1907,8 @@ function bindEvents() {
     finally { submit.disabled = false; }
   });
 
-  refs.apiCopyButton.addEventListener('click', copySessionApiMarkdown);
+  refs.importSelectAll.addEventListener('click', toggleAllImports);
+  refs.importCreateButton.addEventListener('click', runImport);
   refs.mobileAccessButton.addEventListener('click', openMobileAccessModal);
 
   refs.chooseDirectoryButton.addEventListener('click', async () => {
@@ -1781,7 +2025,9 @@ function handleAppCommand(command) {
   else if (command === 'command-palette') openCommandPalette();
   else if (command === 'refresh') refreshSessions({ notify: true });
   else if (command === 'search') focusSessionSearch();
-  else if (command === 'api-guide') openApiModal();
+  else if (typeof command === 'string' && command.startsWith('import-codebases:')) {
+    openImportModal(command.slice('import-codebases:'.length));
+  }
 }
 
 async function initialize() {

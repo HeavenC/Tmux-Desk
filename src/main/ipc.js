@@ -1,5 +1,6 @@
 const path = require('node:path');
 const { normalizeTagId, normalizeTagName } = require('../shared/tag-model');
+const { discoverCodebases } = require('./codebase-import');
 
 const TARGET_PATTERNS = {
   session: /^\$\d+$/,
@@ -18,10 +19,13 @@ const IPC_CHANNELS = Object.freeze([
   'sessions:kill',
   'sessions:toggle-favorite',
   'sessions:set-tags',
+  'codebases:discover',
   'tags:create',
   'tags:touch',
   'tags:rename',
   'tags:delete',
+  'tags:set-pinned',
+  'tags:reorder-pinned',
   'windows:select',
   'panes:select',
   'preferences:get',
@@ -224,6 +228,7 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       const { sessionName, tagIds } = validateSessionTags(input);
       return preferencesStore.setSessionTags(sessionName, tagIds);
     },
+    'codebases:discover': () => discoverCodebases(),
     'tags:create': (_event, name) => preferencesStore.createTag(validateTagMutation('create', name)),
     'tags:touch': (_event, id) => preferencesStore.touchTag(validateTagMutation('delete', id)),
     'tags:rename': (_event, input) => {
@@ -231,6 +236,15 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       return preferencesStore.renameTag(id, name);
     },
     'tags:delete': (_event, id) => preferencesStore.deleteTag(validateTagMutation('delete', id)),
+    'tags:set-pinned': (_event, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Tag 参数无效');
+      if (typeof input.pinned !== 'boolean') throw new Error('Tag 参数无效');
+      return preferencesStore.setTagPinned(normalizeTagId(input.id), input.pinned);
+    },
+    'tags:reorder-pinned': (_event, ids) => {
+      if (!Array.isArray(ids) || ids.length > 200) throw new Error('Tag 顺序无效');
+      return preferencesStore.reorderPinnedTags(ids.map((id) => normalizeTagId(id)));
+    },
     'windows:select': (_event, target) => tmuxService.selectWindow(validateTarget(target, 'window')),
     'panes:select': (_event, target) => tmuxService.selectPane(validateTarget(target, 'pane')),
     'preferences:get': () => preferencesStore.load(),

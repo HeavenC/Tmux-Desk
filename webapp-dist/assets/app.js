@@ -11703,6 +11703,7 @@ ${s3.join("\n")}
   var LIST_REFRESH_MS = 15e3;
   var PING_INTERVAL_MS = 25e3;
   var THEME_KEY = "tmux-desk-web-theme";
+  var CUSTOM_KEYS_KEY = "tmux-desk-web-custom-keys";
   var THEME_META_COLORS = { light: "#f2f4f7", dark: "#15191d" };
   var TOUCH_SCROLL_SLOP = 8;
   var TERMINAL_THEMES = {
@@ -11772,7 +11773,8 @@ ${s3.join("\n")}
     term: null,
     fitAddon: null,
     termTextarea: null,
-    keyboardActive: false
+    keyboardActive: false,
+    customKeys: []
   };
   var el = (id) => document.getElementById(id);
   function getToken() {
@@ -12356,7 +12358,142 @@ ${s3.join("\n")}
     } else {
       sendWsInput(TOOLBAR_SEQUENCES[key]);
     }
-    state.term?.focus();
+    if (state.keyboardActive) state.term?.focus();
+  }
+  function loadCustomKeys() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(CUSTOM_KEYS_KEY) || "[]");
+      state.customKeys = Array.isArray(parsed) ? parsed.filter((item) => item && typeof item.label === "string" && typeof item.text === "string").slice(0, 30).map((item) => ({ label: item.label.slice(0, 16), text: item.text.slice(0, 200), enter: item.enter !== false })) : [];
+    } catch {
+      state.customKeys = [];
+    }
+  }
+  function saveCustomKeys() {
+    try {
+      localStorage.setItem(CUSTOM_KEYS_KEY, JSON.stringify(state.customKeys));
+    } catch {
+    }
+  }
+  function renderCustomKeys() {
+    const container = el("custom-keys");
+    if (!container) return;
+    container.replaceChildren(...state.customKeys.map((key, index) => {
+      const button = document.createElement("button");
+      button.className = "key-btn custom";
+      button.type = "button";
+      button.textContent = key.label;
+      button.title = key.text + (key.enter ? " \u23CE" : "");
+      bindTap(button, () => runCustomKey(index));
+      return button;
+    }));
+  }
+  function runCustomKey(index) {
+    const key = state.customKeys[index];
+    if (!key) return;
+    sendWsInput(key.text);
+    if (key.enter) sendWsInput("\r");
+    if (state.keyboardActive) state.term?.focus();
+  }
+  function renderCustomKeysEditor() {
+    const list = el("custom-keys-list");
+    if (!list) return;
+    if (!state.customKeys.length) {
+      const empty = document.createElement("p");
+      empty.className = "custom-keys-empty";
+      empty.textContent = "\u8FD8\u6CA1\u6709\u81EA\u5B9A\u4E49\u5FEB\u6377\u952E\u3002";
+      list.replaceChildren(empty);
+      return;
+    }
+    list.replaceChildren(...state.customKeys.map((key, index) => {
+      const row = document.createElement("div");
+      row.className = "custom-keys-row";
+      const info = document.createElement("div");
+      info.className = "custom-keys-info";
+      const label = document.createElement("span");
+      label.className = "custom-keys-label";
+      label.textContent = key.label;
+      const text = document.createElement("span");
+      text.className = "custom-keys-text";
+      text.textContent = key.text + (key.enter ? " \u23CE" : "");
+      info.append(label, text);
+      const remove = document.createElement("button");
+      remove.className = "btn secondary btn-sm";
+      remove.type = "button";
+      remove.textContent = "\u5220\u9664";
+      remove.addEventListener("click", () => {
+        state.customKeys.splice(index, 1);
+        saveCustomKeys();
+        renderCustomKeys();
+        renderCustomKeysEditor();
+      });
+      row.append(info, remove);
+      return row;
+    }));
+  }
+  function openCustomKeysModal() {
+    renderCustomKeysEditor();
+    el("custom-keys-modal").hidden = false;
+  }
+  function closeCustomKeysModal() {
+    el("custom-keys-modal").hidden = true;
+  }
+  function addCustomKeyFromForm(event) {
+    event.preventDefault();
+    const label = el("custom-key-label").value.trim().slice(0, 16);
+    const text = el("custom-key-text").value.slice(0, 200);
+    if (!label || !text) {
+      showToast("\u8BF7\u586B\u5199\u6309\u94AE\u540D\u548C\u53D1\u9001\u5185\u5BB9");
+      return;
+    }
+    state.customKeys.push({ label, text, enter: el("custom-key-enter").checked });
+    saveCustomKeys();
+    renderCustomKeys();
+    renderCustomKeysEditor();
+    el("custom-key-label").value = "";
+    el("custom-key-text").value = "";
+    el("custom-key-enter").checked = true;
+    el("custom-key-label").focus();
+  }
+  function isStandalone() {
+    return window.navigator.standalone === true || window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
+  }
+  function fullscreenSupported() {
+    const root = document.documentElement;
+    return typeof root.requestFullscreen === "function" || typeof root.webkitRequestFullscreen === "function";
+  }
+  function setupFullscreen() {
+    const button = el("fullscreen-btn");
+    if (!button) return;
+    if (isStandalone()) {
+      button.hidden = true;
+      return;
+    }
+    button.hidden = false;
+    button.addEventListener("click", toggleFullscreen);
+    document.addEventListener("fullscreenchange", syncFullscreenButton);
+  }
+  function toggleFullscreen() {
+    const root = document.documentElement;
+    const active = document.fullscreenElement || document.webkitFullscreenElement;
+    if (active) {
+      (document.exitFullscreen || document.webkitExitFullscreen || (() => {
+      })).call(document);
+      return;
+    }
+    if (fullscreenSupported()) {
+      (root.requestFullscreen || root.webkitRequestFullscreen).call(root).catch(() => {
+        showToast("\u5168\u5C4F\u88AB\u6D4F\u89C8\u5668\u62D2\u7EDD");
+      });
+    } else {
+      showToast("\u5728 Safari \u4E2D\u70B9\u51FB\u5206\u4EAB \u2192 \u6DFB\u52A0\u5230\u4E3B\u5C4F\u5E55\uFF0C\u5373\u53EF\u5168\u5C4F\u4F7F\u7528");
+    }
+  }
+  function syncFullscreenButton() {
+    const button = el("fullscreen-btn");
+    if (!button) return;
+    const active = document.fullscreenElement || document.webkitFullscreenElement;
+    button.classList.toggle("active", Boolean(active));
+    button.setAttribute("aria-label", active ? "\u9000\u51FA\u5168\u5C4F" : "\u5168\u5C4F");
   }
   function bindTap(button, handler) {
     if (!button) return;
@@ -12374,6 +12511,17 @@ ${s3.join("\n")}
     });
     bindTap(el("copy-btn"), openCopyOverlay);
     bindTap(el("keyboard-btn"), toggleKeyboard);
+    bindTap(el("custom-keys-edit"), openCustomKeysModal);
+    bindTap(el("quickbar-toggle"), toggleQuickbar);
+    renderCustomKeys();
+  }
+  function toggleQuickbar() {
+    const quickbar = el("quickbar");
+    const collapsed = quickbar.classList.toggle("collapsed");
+    const toggle = el("quickbar-toggle");
+    toggle.innerHTML = collapsed ? "&#x2039;" : "&#x203A;";
+    toggle.setAttribute("aria-expanded", String(!collapsed));
+    toggle.setAttribute("aria-label", collapsed ? "\u5C55\u5F00\u5FEB\u6377\u952E" : "\u6536\u8D77\u5FEB\u6377\u952E");
   }
   function sendScrollLine(up, clientX, clientY, rect) {
     const term = state.term;
@@ -12461,19 +12609,27 @@ ${s3.join("\n")}
     el("copy-modal").addEventListener("click", (event) => {
       if (event.target === el("copy-modal")) closeCopyOverlay();
     });
+    el("custom-keys-close").addEventListener("click", closeCustomKeysModal);
+    el("custom-keys-add").addEventListener("submit", addCustomKeyFromForm);
+    el("custom-keys-modal").addEventListener("click", (event) => {
+      if (event.target === el("custom-keys-modal")) closeCustomKeysModal();
+    });
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
       if (!el("session-tags-modal").hidden) closeSessionTagsModal();
       if (!el("copy-modal").hidden) closeCopyOverlay();
+      if (!el("custom-keys-modal").hidden) closeCustomKeysModal();
     });
   }
   function bootstrap() {
     state.token = getToken();
     applyTheme(storedTheme());
+    loadCustomKeys();
     setupStaticHandlers();
     setupToolbar();
     setupTouchScroll();
     setupViewportHandling();
+    setupFullscreen();
     renderWorkspaceFilters();
     document.fonts?.load?.('13px "Tmux Desk Mono"', "Aa\u4E2D\u3002\uFF08\uFF09").catch(() => {
     });
