@@ -311,7 +311,7 @@ git commit -m "docs(tmux-desk): prepare 0.3.1 release"
 
 - [ ] **Step 2: 构建 arm64 安装包**
 
-Run: `npm run dist:mac`
+Run: `CSC_IDENTITY_AUTO_DISCOVERY=false npm run package:mac`
 
 Expected: 生成 0.3.1 DMG 与 ZIP，命令退出码为 0。
 
