@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('tmuxDesk', Object.freeze({
   reorderPinnedTags: (ids) => ipcRenderer.invoke('tags:reorder-pinned', ids),
   selectWindow: (target) => ipcRenderer.invoke('windows:select', target),
   selectPane: (target) => ipcRenderer.invoke('panes:select', target),
+  killPane: (target) => ipcRenderer.invoke('panes:kill', target),
   splitPane: (input) => ipcRenderer.invoke('panes:split', input),
   setAppLocale: (locale) => ipcRenderer.invoke('app:set-locale', locale),
   getPreferences: () => ipcRenderer.invoke('preferences:get'),

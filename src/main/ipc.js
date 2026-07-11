@@ -28,6 +28,7 @@ const IPC_CHANNELS = Object.freeze([
   'tags:reorder-pinned',
   'windows:select',
   'panes:select',
+  'panes:kill',
   'panes:split',
   'app:set-locale',
   'preferences:get',
@@ -249,6 +250,7 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
     },
     'windows:select': (_event, target) => tmuxService.selectWindow(validateTarget(target, 'window')),
     'panes:select': (_event, target) => tmuxService.selectPane(validateTarget(target, 'pane')),
+    'panes:kill': (_event, target) => tmuxService.killPane(validateTarget(target, 'pane')),
     'panes:split': (_event, input) => {
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('分割参数无效');
       const target = validateTarget(input.target, 'session');

@@ -202,8 +202,8 @@ class TmuxService {
       id, index: toNumber(index), name, active: toBoolean(active), panes: toNumber(panes),
     }));
     const panes = parseRecords((await this.run([
-      'list-panes', '-s', '-t', sessionTarget, '-F', '#{pane_id}\t#{window_id}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}',
-    ])).stdout).map(([id, windowId, windowIndex, index, active, panePath, command, title]) => ({
+      'list-panes', '-s', '-t', sessionTarget, '-F', '#{pane_id}\t#{window_id}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}',
+    ])).stdout).map(([id, windowId, windowIndex, index, active, panePath, command, title, left, top, width, height]) => ({
       id,
       windowId,
       windowIndex: toNumber(windowIndex),
@@ -212,6 +212,12 @@ class TmuxService {
       path: panePath,
       command,
       title,
+      // Cell-grid geometry within the (client-sized) tmux window, so the
+      // renderer can overlay a per-pane close button at the pane's top-right.
+      left: toNumber(left),
+      top: toNumber(top),
+      width: toNumber(width),
+      height: toNumber(height),
     }));
     return { windows, panes };
   }
@@ -288,6 +294,14 @@ class TmuxService {
   async selectPane(paneTarget) {
     validateTarget(paneTarget, PANE_TARGET, '面板');
     await this.run(['select-pane', '-t', paneTarget]);
+  }
+
+  // Close a single split pane (the inverse of splitPane). Killing panes until
+  // one is left restores the window to its unsplit state. The UI only offers
+  // this while a window has >=2 panes, so it never kills the last pane.
+  async killPane(paneTarget) {
+    validateTarget(paneTarget, PANE_TARGET, '面板');
+    await this.run(['kill-pane', '-t', paneTarget]);
   }
 
   // Split the session's active pane, iTerm-style. 'vertical' = side by side (a

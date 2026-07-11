@@ -38,7 +38,7 @@ function cacheElements() {
     'appShell', 'tagRail', 'newTagButton', 'sessionSummary', 'refreshButton', 'newSessionButton', 'searchIcon', 'sessionSearch', 'sessionList',
     'tmuxStatusDot', 'tmuxStatusText', 'themeButton', 'settingsButton', 'activeSessionName',
     'activeSessionPath', 'attachedBadge', 'workspaceViewBadge', 'panePickerWrap', 'panePicker', 'panePickerIcon',
-    'sessionMenuButton', 'sessionTabs', 'terminalSurface', 'terminalMount', 'terminalReconnect',
+    'sessionMenuButton', 'sessionTabs', 'terminalSurface', 'terminalMount', 'paneCloseLayer', 'terminalReconnect',
     'reconnectButton', 'emptyState', 'emptyTitle', 'emptyMessage', 'emptyActions', 'emptyNewButton',
     'emptyInstallButton', 'emptyRefreshButton', 'emptyAllButton', 'workspaceStatus', 'commandHint', 'themePopover', 'contextMenu', 'toastStack',
     'sessionModal', 'sessionForm', 'sessionNameInput', 'sessionCwdInput', 'startupCommandInput',
@@ -943,6 +943,88 @@ function renderDetail() {
     return option;
   }));
   refs.panePickerWrap.classList.toggle('hidden', state.detail.panes.length < 2);
+  renderPaneCloseButtons();
+}
+
+// Panes of the window currently shown in the terminal (the active window). Only
+// these carry meaningful pane_left/top geometry for the visible grid.
+function activeWindowPanes() {
+  const panes = state.detail.panes || [];
+  const activePane = panes.find((pane) => pane.active);
+  const activeWindowId = activePane
+    ? activePane.windowId
+    : (state.detail.windows || []).find((win) => win.active)?.id;
+  if (!activeWindowId) return [];
+  return panes.filter((pane) => pane.windowId === activeWindowId);
+}
+
+// iTerm-style per-pane close (×) buttons overlaid on the terminal. They only
+// appear once a window is split (>=2 panes); clicking one kills that pane, so
+// closing every extra pane restores the window to its unsplit state. Positions
+// are derived from tmux cell geometry mapped through the live grid metrics.
+function renderPaneCloseButtons() {
+  const layer = refs.paneCloseLayer;
+  if (!layer) return;
+  layer.replaceChildren();
+  const panes = activeWindowPanes();
+  if (!selectedSession() || panes.length < 2) return;
+  const metrics = terminalView?.getGridMetrics?.();
+  if (!metrics) return;
+  const layerRect = layer.getBoundingClientRect();
+  const MARGIN = 2;
+  const SIZE = 16;
+  for (const pane of panes) {
+    if (![pane.left, pane.top, pane.width].every((value) => Number.isFinite(value))) continue;
+    const right = metrics.left + (pane.left + pane.width) * metrics.cellWidth;
+    const top = metrics.top + pane.top * metrics.cellHeight;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'pane-close-button';
+    button.innerHTML = icon('close', 10);
+    button.title = t('pane.close');
+    button.setAttribute('aria-label', t('pane.close'));
+    button.style.left = `${Math.round(right - layerRect.left - SIZE - MARGIN)}px`;
+    button.style.top = `${Math.round(top - layerRect.top + MARGIN)}px`;
+    button.addEventListener('mousedown', (event) => event.preventDefault());
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closePane(pane.id);
+    });
+    layer.append(button);
+  }
+}
+
+// The terminal grid resized: re-place the close buttons immediately against the
+// new cell metrics (proportional layout keeps last-known cells close enough),
+// then refetch geometry once tmux has settled its reflow, debounced.
+let paneResizeTimer = null;
+function onTerminalResize() {
+  renderPaneCloseButtons();
+  clearTimeout(paneResizeTimer);
+  paneResizeTimer = setTimeout(() => {
+    if (selectedSession() && activeWindowPanes().length >= 2) refreshDetail();
+  }, 200);
+}
+
+// Close the pane tmux considers active (used by the command palette; the ×
+// overlay closes a specific pane instead).
+function closeActivePane() {
+  const active = (state.detail.panes || []).find((pane) => pane.active);
+  if (!active || activeWindowPanes().length < 2) { toast(t('toast.noSession')); return; }
+  closePane(active.id);
+}
+
+// Close (kill) a split pane, then refresh so the overlay and terminal reflect
+// the collapsed layout. tmux reflows the surviving panes to fill the space.
+async function closePane(paneId) {
+  try {
+    await api.killPane(paneId);
+    await refreshDetail();
+    terminalView?.focus();
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+  }
 }
 
 async function refreshDetail() {
@@ -1752,6 +1834,9 @@ function commands() {
     ...(session ? [
       { id: 'splitV', title: t('palette.splitVertical'), subtitle: t('palette.splitVerticalSubtitle'), shortcut: '⌘D', icon: 'panes', action: () => splitActivePane('vertical') },
       { id: 'splitH', title: t('palette.splitHorizontal'), subtitle: t('palette.splitHorizontalSubtitle'), shortcut: '⌘⇧D', icon: 'panes', action: () => splitActivePane('horizontal') },
+      ...(activeWindowPanes().length >= 2 ? [
+        { id: 'closePane', title: t('palette.closePane'), subtitle: t('palette.closePaneSubtitle'), icon: 'close', action: closeActivePane },
+      ] : []),
       { id: 'rename', title: t('palette.renameTitle', { name: session.name }), subtitle: t('palette.renameSubtitle'), icon: 'edit', action: () => openRenameModal(session) },
       { id: 'duplicate', title: t('palette.duplicateTitle', { name: session.name }), subtitle: t('palette.duplicateSubtitle'), icon: 'copy', action: () => openDuplicateModal(session) },
       { id: 'sessionTags', title: t('palette.manageTagsTitle', { name: session.name }), subtitle: t('palette.manageTagsSubtitle'), icon: 'tag', action: () => openSessionTagsModal(session) },
@@ -2142,6 +2227,7 @@ async function initialize() {
       refs.workspaceStatus.textContent = t('workspace.disconnected');
     },
     onError: (error) => toast(friendlyError(error), 'error'),
+    onResize: () => onTerminalResize(),
   });
   bindEvents();
   try {

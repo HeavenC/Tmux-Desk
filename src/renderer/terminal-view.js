@@ -46,10 +46,11 @@ const TERMINAL_THEMES = {
 };
 
 class TerminalView {
-  constructor({ container, api, onExit, onError }) {
+  constructor({ container, api, onExit, onError, onResize }) {
     this.api = api;
     this.onExit = onExit;
     this.onError = onError;
+    this.onResize = onResize;
     this.terminalId = null;
     this.attachRequest = 0;
     this.pendingData = new Map();
@@ -227,6 +228,9 @@ class TerminalView {
           return;
         }
         this.fitRetries = 0;
+        // The grid settled at a new size; tmux reflows its panes to match, so
+        // let the app re-place the per-pane close overlays against fresh cells.
+        this.onResize?.();
       } catch {
         // fit() can throw while the container is mid-transition or hidden; retry
         // once the layout settles instead of keeping a stale, oversized grid.
@@ -238,6 +242,26 @@ class TerminalView {
         }
       }
     });
+  }
+
+  // Pixel geometry of the character grid, so callers can map tmux cell
+  // coordinates (pane_left/top/width/height) onto screen pixels. Rect is in
+  // viewport coordinates; divide by cols/rows for a single cell's size.
+  getGridMetrics() {
+    const screen = this.terminal.element?.querySelector('.xterm-screen');
+    const cols = this.terminal.cols;
+    const rows = this.terminal.rows;
+    if (!screen || !cols || !rows) return null;
+    const rect = screen.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    return {
+      left: rect.left,
+      top: rect.top,
+      cellWidth: rect.width / cols,
+      cellHeight: rect.height / rows,
+      cols,
+      rows,
+    };
   }
 
   gridOverflows() {

@@ -386,6 +386,22 @@ kbd {
 .terminal-stage { position: relative; min-height: 0; flex: 1; background: var(--terminal-bg); }
 .terminal-surface { position: absolute; inset: 0; padding: 10px 8px 8px 12px; }
 #terminalMount { width: 100%; height: 100%; }
+/* Overlay layer that paints a small close button at each split pane's top-right
+   corner (positioned in JS from tmux cell geometry). The layer itself is
+   click-through; only the buttons capture pointer events. */
+.pane-close-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.pane-close-button {
+  position: absolute; display: flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; padding: 0; margin: 0;
+  border: none; border-radius: 4px; cursor: pointer; pointer-events: auto;
+  color: var(--text, #d8dde7);
+  background: color-mix(in srgb, var(--terminal-bg, #111318) 62%, transparent);
+  opacity: 0.34; transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+}
+.terminal-surface:hover .pane-close-button,
+.pane-close-button:focus-visible { opacity: 0.7; }
+.pane-close-button:hover { opacity: 1; background: var(--danger, #c9343f); color: #fff; }
+.pane-close-button svg { width: 10px; height: 10px; display: block; }
 #terminalMount .xterm { height: 100%; }
 #terminalMount .xterm-viewport { scrollbar-color: var(--border-strong) transparent; }
 /* Match the hidden IME textarea to the cell metrics so the input-method

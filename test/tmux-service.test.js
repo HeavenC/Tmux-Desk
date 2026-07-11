@@ -124,14 +124,15 @@ test('getSessionDetail parses windows and panes with typed fields', async () => 
       if (args.includes('list-windows')) {
         return { stdout: '@1\t0\teditor\t1\t2\n', stderr: '' };
       }
-      return { stdout: '%1\t@1\t0\t0\t1\t/Users/liwei/work\tnvim\tmain\n', stderr: '' };
+      return { stdout: '%1\t@1\t0\t0\t1\t/Users/liwei/work\tnvim\tmain\t0\t0\t120\t40\n', stderr: '' };
     },
   });
 
   assert.deepEqual(await service.getSessionDetail('$3'), {
     windows: [{ id: '@1', index: 0, name: 'editor', active: true, panes: 2 }],
     panes: [{ id: '%1', windowId: '@1', windowIndex: 0, index: 0, active: true,
-      path: '/Users/liwei/work', command: 'nvim', title: 'main' }],
+      path: '/Users/liwei/work', command: 'nvim', title: 'main',
+      left: 0, top: 0, width: 120, height: 40 }],
   });
 });
 
@@ -201,15 +202,18 @@ test('session, window, and pane controls use validated exact argument arrays', a
   await service.killSession('$1');
   await service.selectWindow('@2');
   await service.selectPane('%3');
+  await service.killPane('%3');
   assert.deepEqual(calls, [
     ['-L', 'isolated', 'rename-session', '-t', '$1', 'renamed'],
     ['-L', 'isolated', 'kill-session', '-t', '$1'],
     ['-L', 'isolated', 'select-window', '-t', '@2'],
     ['-L', 'isolated', 'select-pane', '-t', '%3'],
+    ['-L', 'isolated', 'kill-pane', '-t', '%3'],
   ]);
   await assert.rejects(() => service.killSession('named-session'), /无效的 tmux 会话目标/);
   await assert.rejects(() => service.selectWindow('%3'), /无效的 tmux 窗口目标/);
   await assert.rejects(() => service.selectPane('@2'), /无效的 tmux 面板目标/);
+  await assert.rejects(() => service.killPane('@2'), /无效的 tmux 面板目标/);
 });
 
 test('listSessions treats only no-server errors as an empty result', async () => {
