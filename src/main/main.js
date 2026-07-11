@@ -3,6 +3,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 
 const { registerIpc } = require('./ipc');
+const { menuText, normalizeMenuLocale } = require('./menu-i18n');
 const { listDirectory, toBrowsablePath } = require('./file-service');
 const { PreferencesStore } = require('./preferences-store');
 const { TerminalManager } = require('./terminal-manager');
@@ -71,7 +72,10 @@ function sendCommand(command) {
   sendToRenderer('app:command', command);
 }
 
+let menuLocale = normalizeMenuLocale(app.getLocale());
+
 function installApplicationMenu() {
+  const m = menuText(menuLocale);
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       label: app.name,
@@ -85,18 +89,18 @@ function installApplicationMenu() {
       ],
     },
     {
-      label: '文件',
+      label: m.file,
       submenu: [
-        { label: '新建会话', accelerator: 'CommandOrControl+N', click: () => sendCommand('new-session') },
-        { label: '命令面板', accelerator: 'CommandOrControl+K', click: () => sendCommand('command-palette') },
+        { label: m.newSession, accelerator: 'CommandOrControl+N', click: () => sendCommand('new-session') },
+        { label: m.commandPalette, accelerator: 'CommandOrControl+K', click: () => sendCommand('command-palette') },
         { type: 'separator' },
         {
-          label: '会话导入',
+          label: m.importSessions,
           submenu: [
-            { label: '从 Claude Code 导入…', click: () => sendCommand('import-codebases:claude') },
-            { label: '从 Codex 导入…', click: () => sendCommand('import-codebases:codex') },
-            { label: '从 IntelliJ IDEA 导入…', click: () => sendCommand('import-codebases:idea') },
-            { label: '从 VS Code 导入…', click: () => sendCommand('import-codebases:vscode') },
+            { label: m.importClaude, click: () => sendCommand('import-codebases:claude') },
+            { label: m.importCodex, click: () => sendCommand('import-codebases:codex') },
+            { label: m.importIdea, click: () => sendCommand('import-codebases:idea') },
+            { label: m.importVscode, click: () => sendCommand('import-codebases:vscode') },
           ],
         },
         { type: 'separator' },
@@ -104,17 +108,20 @@ function installApplicationMenu() {
       ],
     },
     {
-      label: '编辑',
+      label: m.edit,
       submenu: [
         { role: 'undo' }, { role: 'redo' }, { type: 'separator' },
         { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' },
       ],
     },
     {
-      label: '显示',
+      label: m.view,
       submenu: [
-        { label: '刷新会话', accelerator: 'CommandOrControl+R', click: () => sendCommand('refresh') },
-        { label: '搜索会话', accelerator: 'CommandOrControl+F', click: () => sendCommand('search') },
+        { label: m.refresh, accelerator: 'CommandOrControl+R', click: () => sendCommand('refresh') },
+        { label: m.search, accelerator: 'CommandOrControl+F', click: () => sendCommand('search') },
+        { type: 'separator' },
+        { label: m.splitVertical, accelerator: 'CommandOrControl+D', click: () => sendCommand('split:vertical') },
+        { label: m.splitHorizontal, accelerator: 'CommandOrControl+Shift+D', click: () => sendCommand('split:horizontal') },
         { type: 'separator' },
         { role: 'toggleDevTools' },
         { role: 'togglefullscreen' },
@@ -122,6 +129,15 @@ function installApplicationMenu() {
     },
     { role: 'windowMenu' },
   ]));
+}
+
+// The renderer owns the language preference (localStorage); it pushes the
+// effective locale here so the native menu matches.
+function setMenuLocale(locale) {
+  const next = normalizeMenuLocale(locale);
+  if (next === menuLocale) return;
+  menuLocale = next;
+  installApplicationMenu();
 }
 
 async function bootstrap() {
@@ -140,6 +156,7 @@ async function bootstrap() {
   webControl = createWebControl({ preferencesStore });
   registerIpc({
     ipcMain,
+    setAppLocale: setMenuLocale,
     tmuxService,
     terminalManager,
     preferencesStore,

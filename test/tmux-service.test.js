@@ -303,3 +303,21 @@ test('getStatus reports WSL-missing vs tmux-missing reasons on Windows', async (
   });
   assert.deepEqual(await ok.getStatus(), { installed: true, path: 'WSL:tmux', version: 'tmux 3.4' });
 });
+
+test('splitPane maps orientation to tmux -h/-v and opens in the current dir', async () => {
+  const calls = [];
+  const service = new TmuxService({
+    tmuxPath: '/opt/homebrew/bin/tmux',
+    fsImpl: executableFs(['/opt/homebrew/bin/tmux']),
+    execFileImpl: async (file, args) => { calls.push(args); return { stdout: '%9\n', stderr: '' }; },
+  });
+
+  const vertical = await service.splitPane('$3', 'vertical');
+  assert.deepEqual(vertical, { id: '%9' });
+  assert.deepEqual(calls[0], ['split-window', '-h', '-P', '-F', '#{pane_id}', '-t', '$3', '-c', '#{pane_current_path}']);
+
+  await service.splitPane('$3', 'horizontal');
+  assert.equal(calls[1][1], '-v');
+
+  await assert.rejects(() => service.splitPane('nope', 'vertical'), /无效的 tmux/);
+});

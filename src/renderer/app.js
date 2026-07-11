@@ -4,7 +4,7 @@ const { searchCommands } = require('./command-palette');
 const { filterAndGroupSessions, sessionsForView } = require('../shared/session-model');
 const { applyTheme, resolveTheme } = require('./theme');
 const { TerminalView } = require('./terminal-view');
-const { t, applyStaticI18n, setLocale, resolveLocale, loadStoredLanguage, saveLanguage } = require('./i18n');
+const { t, applyStaticI18n, setLocale, getLocale, resolveLocale, loadStoredLanguage, saveLanguage } = require('./i18n');
 
 const api = window.tmuxDesk;
 const $ = (selector) => document.querySelector(selector);
@@ -365,6 +365,8 @@ function relocalize() {
   renderDetail();
   if (refs.commandPalette && !refs.commandPalette.classList.contains('hidden')) renderCommandResults();
   if (refs.mobileAccessModal && !refs.mobileAccessModal.classList.contains('hidden')) loadMobileAccessStatus();
+  // Keep the native application menu (main process) in the same language.
+  if (api && api.setAppLocale) api.setAppLocale(getLocale());
 }
 
 function renderTagSettings() {
@@ -1748,6 +1750,8 @@ function commands() {
     })),
     { id: 'mobileAccess', title: t('action.mobileAccess'), subtitle: t('palette.mobileAccessSubtitle'), keywords: ['mobile', 'web', 'qrcode', '二维码'], icon: 'phone', action: openMobileAccessModal },
     ...(session ? [
+      { id: 'splitV', title: t('palette.splitVertical'), subtitle: t('palette.splitVerticalSubtitle'), shortcut: '⌘D', icon: 'panes', action: () => splitActivePane('vertical') },
+      { id: 'splitH', title: t('palette.splitHorizontal'), subtitle: t('palette.splitHorizontalSubtitle'), shortcut: '⌘⇧D', icon: 'panes', action: () => splitActivePane('horizontal') },
       { id: 'rename', title: t('palette.renameTitle', { name: session.name }), subtitle: t('palette.renameSubtitle'), icon: 'edit', action: () => openRenameModal(session) },
       { id: 'duplicate', title: t('palette.duplicateTitle', { name: session.name }), subtitle: t('palette.duplicateSubtitle'), icon: 'copy', action: () => openDuplicateModal(session) },
       { id: 'sessionTags', title: t('palette.manageTagsTitle', { name: session.name }), subtitle: t('palette.manageTagsSubtitle'), icon: 'tag', action: () => openSessionTagsModal(session) },
@@ -2088,8 +2092,24 @@ function handleAppCommand(command) {
   else if (command === 'command-palette') openCommandPalette();
   else if (command === 'refresh') refreshSessions({ notify: true });
   else if (command === 'search') focusSessionSearch();
-  else if (typeof command === 'string' && command.startsWith('import-codebases:')) {
+  else if (command === 'split:vertical' || command === 'split:horizontal') {
+    splitActivePane(command.slice('split:'.length));
+  } else if (typeof command === 'string' && command.startsWith('import-codebases:')) {
     openImportModal(command.slice('import-codebases:'.length));
+  }
+}
+
+// Split the attached session's active pane (tmux handles nesting, so repeated
+// splits keep subdividing). The terminal reflects it since we attach to the
+// whole window.
+async function splitActivePane(orientation) {
+  const session = selectedSession();
+  if (!session) { toast(t('toast.noSession')); return; }
+  try {
+    await api.splitPane({ target: session.id, orientation });
+    await refreshDetail();
+  } catch (error) {
+    toast(friendlyError(error), 'error');
   }
 }
 
@@ -2107,6 +2127,7 @@ async function initialize() {
     refs.emptyActions.classList.add('hidden');
     return;
   }
+  if (api.setAppLocale) api.setAppLocale(getLocale());
   // The composite "Tmux Desk Mono" @font-face (local Menlo + PingFang SC by
   // unicode-range) loads lazily; xterm measures and caches per-char cell
   // widths at open, so make both faces ready before the terminal exists.

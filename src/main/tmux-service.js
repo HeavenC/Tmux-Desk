@@ -290,6 +290,18 @@ class TmuxService {
     await this.run(['select-pane', '-t', paneTarget]);
   }
 
+  // Split the session's active pane, iTerm-style. 'vertical' = side by side (a
+  // vertical divider) = tmux -h; 'horizontal' = stacked = tmux -v. The new pane
+  // opens in the current pane's directory. Splitting again just nests further.
+  async splitPane(sessionTarget, orientation) {
+    validateTarget(sessionTarget, SESSION_TARGET, '会话');
+    const flag = orientation === 'horizontal' ? '-v' : '-h';
+    const { stdout } = await this.run([
+      'split-window', flag, '-P', '-F', '#{pane_id}', '-t', sessionTarget, '-c', '#{pane_current_path}',
+    ]);
+    return { id: String(stdout || '').trim() };
+  }
+
   // Translate a directory into the form tmux expects for `-c`. On Windows tmux
   // runs inside WSL, so a Windows path (C:\… or \\wsl$\…) must become a WSL path;
   // paths already in WSL form pass through unchanged.

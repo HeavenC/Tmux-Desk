@@ -28,6 +28,8 @@ const IPC_CHANNELS = Object.freeze([
   'tags:reorder-pinned',
   'windows:select',
   'panes:select',
+  'panes:split',
+  'app:set-locale',
   'preferences:get',
   'preferences:save',
   'files:list',
@@ -183,7 +185,7 @@ function validateFilePath(value) {
   return value;
 }
 
-function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, chooseDirectory, fileBridge, webControl }) {
+function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, chooseDirectory, fileBridge, webControl, setAppLocale }) {
   const requireWebControl = () => {
     if (!webControl) throw new Error('Web 服务不可用');
     return webControl;
@@ -247,6 +249,16 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
     },
     'windows:select': (_event, target) => tmuxService.selectWindow(validateTarget(target, 'window')),
     'panes:select': (_event, target) => tmuxService.selectPane(validateTarget(target, 'pane')),
+    'panes:split': (_event, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('分割参数无效');
+      const target = validateTarget(input.target, 'session');
+      const orientation = input.orientation === 'horizontal' ? 'horizontal' : 'vertical';
+      return tmuxService.splitPane(target, orientation);
+    },
+    'app:set-locale': (_event, locale) => {
+      if (typeof setAppLocale === 'function') setAppLocale(locale === 'en' ? 'en' : 'zh');
+      return true;
+    },
     'preferences:get': () => preferencesStore.load(),
     'preferences:save': (_event, patch) => preferencesStore.save(validatePreferencesPatch(patch)),
     'files:list': (_event, dirPath) => fileBridge.list(validateFilePath(dirPath)),
