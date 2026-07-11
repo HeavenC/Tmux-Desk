@@ -18,94 +18,103 @@
       <header class="topbar">
         <h1 class="topbar-title">Tmux Desk</h1>
         <div class="topbar-actions">
-          <button id="fullscreen-btn" class="icon-btn" aria-label="全屏" type="button" hidden>&#x26F6;</button>
-          <button id="theme-btn-list" class="icon-btn theme-btn" aria-label="切换主题" type="button">&#x263E;</button>
-          <button id="refresh-btn" class="icon-btn" aria-label="刷新" type="button">&#x21bb;</button>
+          <button id="lang-btn" class="icon-btn lang-btn" aria-label="切换语言" type="button">中</button>
+          <button id="fullscreen-btn" class="icon-btn" data-i18n-aria="fullscreen.enter" aria-label="全屏" type="button" hidden>&#x26F6;</button>
+          <button id="theme-btn-list" class="icon-btn theme-btn" data-i18n-aria="theme.toggle" aria-label="切换主题" type="button">&#x263E;</button>
+          <button id="refresh-btn" class="icon-btn" data-i18n-aria="list.refresh" aria-label="刷新" type="button">&#x21bb;</button>
         </div>
       </header>
-      <nav id="workspace-filters" class="workspace-filters" aria-label="会话工作区"></nav>
+      <nav id="workspace-filters" class="workspace-filters" data-i18n-aria="list.workspaceAria" aria-label="会话工作区"></nav>
       <div id="list-content" class="list-content">
         <ul id="session-list" class="session-list"></ul>
         <div id="list-empty" class="state-message" hidden>
-          <p>暂无 tmux 会话</p>
+          <p data-i18n="list.emptyAll">暂无 tmux 会话</p>
         </div>
         <div id="list-loading" class="state-message">
-          <p>加载中&hellip;</p>
+          <p data-i18n="common.loading">加载中&hellip;</p>
         </div>
         <div id="list-error" class="state-message" hidden>
-          <p id="list-error-text">加载失败</p>
-          <button id="list-retry-btn" class="btn" type="button">重试</button>
+          <p id="list-error-text" data-i18n="error.loadFailed">加载失败</p>
+          <button id="list-retry-btn" class="btn" data-i18n="common.retry" type="button">重试</button>
         </div>
       </div>
     </section>
 
     <section id="view-terminal" class="view" hidden>
       <div id="disconnect-banner" class="banner" hidden>
-        <span>连接已断开</span>
-        <button id="reconnect-btn" class="btn btn-sm" type="button">重连</button>
+        <span data-i18n="reconnect.disconnected">连接已断开</span>
+        <button id="reconnect-btn" class="btn btn-sm" data-i18n="common.reconnect" type="button">重连</button>
       </div>
       <header class="term-topbar">
-        <button id="back-btn" class="icon-btn" aria-label="返回" type="button">&#x2039;</button>
+        <button id="back-btn" class="icon-btn" data-i18n-aria="common.back" aria-label="返回" type="button">&#x2039;</button>
         <span id="term-title" class="term-title"></span>
-        <button id="theme-btn-term" class="icon-btn theme-btn" aria-label="切换主题" type="button">&#x263E;</button>
-        <select id="window-picker" class="window-picker" aria-label="tmux 窗口" hidden></select>
+        <button id="theme-btn-term" class="icon-btn theme-btn" data-i18n-aria="theme.toggle" aria-label="切换主题" type="button">&#x263E;</button>
+        <select id="window-picker" class="window-picker" data-i18n-aria="term.windowAria" aria-label="tmux 窗口" hidden></select>
       </header>
       <div id="terminal-container" class="terminal-container"></div>
-      <div id="quickbar" class="quickbar collapsed">
-        <div id="toolbar" class="toolbar">
-          <button class="key-btn" data-key="esc" type="button">Esc</button>
-          <button class="key-btn" data-key="tab" type="button">Tab</button>
-          <button id="ctrl-btn" class="key-btn" data-key="ctrl" type="button">Ctrl</button>
-          <button class="key-btn" data-key="prefix" type="button">&#x2303;B</button>
-          <button class="key-btn" data-key="ctrl-c" type="button">&#x2303;C</button>
-          <button class="key-btn" data-key="left" type="button">&#x2190;</button>
-          <button class="key-btn" data-key="down" type="button">&#x2193;</button>
-          <button class="key-btn" data-key="up" type="button">&#x2191;</button>
-          <button class="key-btn" data-key="right" type="button">&#x2192;</button>
-          <span id="custom-keys" class="custom-keys"></span>
-          <button id="custom-keys-edit" class="key-btn" type="button" aria-label="编辑快捷键">&#xFF0B;</button>
-          <button id="copy-btn" class="key-btn" type="button" aria-label="选择并复制终端内容">&#x29C9;</button>
-          <button id="keyboard-btn" class="key-btn" type="button" aria-label="呼出键盘">&#x2328;</button>
-        </div>
-        <button id="quickbar-toggle" class="quickbar-toggle" type="button" aria-label="展开快捷键" aria-expanded="false">&#x2039;</button>
-      </div>
     </section>
+
+    <!-- Floating quick bar lives at the app root (not inside a view) so its
+         fixed positioning never interacts with the terminal's flex layout or
+         resize observer. Shown only while the terminal view is active. -->
+    <div id="quickpanel" class="quickpanel" hidden>
+      <div id="quickpanel-keys" class="quickpanel-keys"></div>
+      <div class="quickpanel-actions">
+        <button id="keyboard-btn" class="qp-action" data-i18n="quick.keyboard" type="button">键盘</button>
+        <button id="copy-btn" class="qp-action" data-i18n="quick.copy" type="button">复制</button>
+        <button id="quickedit-open" class="qp-action" data-i18n="quick.edit" type="button">编辑</button>
+      </div>
+    </div>
+    <button id="quickball" class="quickball" type="button" data-i18n-aria="quick.ballAria" aria-label="快捷键" aria-expanded="false" hidden>&#x2328;</button>
 
     <div id="session-tags-modal" class="sheet-backdrop" role="dialog" aria-modal="true" aria-labelledby="session-tags-title" hidden>
       <form id="session-tags-form" class="sheet-panel">
         <div class="sheet-handle" aria-hidden="true"></div>
         <header class="sheet-header">
           <div>
-            <h2 id="session-tags-title">管理 Tag</h2>
+            <h2 id="session-tags-title" data-i18n="sheet.manageTagTitle">管理 Tag</h2>
             <p id="session-tags-message"></p>
           </div>
         </header>
         <div id="session-tags-list" class="tag-check-list"></div>
         <footer class="sheet-footer">
-          <button id="session-tags-cancel" class="btn secondary" type="button">取消</button>
-          <button id="session-tags-save" class="btn primary" type="submit">保存</button>
+          <button id="session-tags-cancel" class="btn secondary" data-i18n="common.cancel" type="button">取消</button>
+          <button id="session-tags-save" class="btn primary" data-i18n="common.save" type="submit">保存</button>
         </footer>
       </form>
     </div>
 
-    <div id="custom-keys-modal" class="sheet-backdrop" role="dialog" aria-modal="true" aria-labelledby="custom-keys-title" hidden>
+    <div id="quickedit-modal" class="sheet-backdrop" role="dialog" aria-modal="true" aria-labelledby="quickedit-title" hidden>
       <div class="sheet-panel">
         <div class="sheet-handle" aria-hidden="true"></div>
         <header class="sheet-header">
           <div>
-            <h2 id="custom-keys-title">编辑快捷键</h2>
-            <p>添加常用命令（如 /usage、/export），点按即发送。</p>
+            <h2 id="quickedit-title" data-i18n="quick.editTitle">编辑快捷栏</h2>
+            <p data-i18n="quick.editHint">点按下方按键添加，或自定义文本；已添加的可删除。</p>
           </div>
         </header>
-        <div id="custom-keys-list" class="custom-keys-list"></div>
-        <form id="custom-keys-add" class="custom-keys-add">
-          <input id="custom-key-label" class="custom-key-input" type="text" placeholder="按钮名（如 usage）" maxlength="16" autocomplete="off">
-          <input id="custom-key-text" class="custom-key-input" type="text" placeholder="发送内容（如 /usage）" maxlength="200" autocomplete="off">
-          <label class="custom-key-enter"><input id="custom-key-enter" type="checkbox" checked> 回车</label>
-          <button class="btn primary btn-sm" type="submit">添加</button>
-        </form>
+        <div class="qk-scroll">
+          <section class="qk-section">
+            <h3 class="qk-section-title" data-i18n="quick.presetSectionTitle">常用按键 / 组合键</h3>
+            <div id="qk-presets" class="qk-presets"></div>
+          </section>
+          <section class="qk-section">
+            <h3 class="qk-section-title" data-i18n="quick.customSectionTitle">自定义文本（如 /usage、!、任意命令）</h3>
+            <form id="qk-add-text" class="qk-add-text">
+              <input id="qk-text-label" class="qk-input" type="text" data-i18n-ph="quick.labelPlaceholder" placeholder="按钮名" maxlength="16" autocomplete="off">
+              <input id="qk-text-value" class="qk-input" type="text" data-i18n-ph="quick.textPlaceholder" placeholder="发送文本" maxlength="200" autocomplete="off">
+              <label class="qk-enter"><input id="qk-text-enter" type="checkbox"> <span data-i18n="quick.enterLabel">回车</span></label>
+              <button class="btn primary btn-sm" data-i18n="common.add" type="submit">添加</button>
+            </form>
+          </section>
+          <section class="qk-section">
+            <h3 class="qk-section-title" data-i18n="quick.currentSectionTitle">当前快捷键</h3>
+            <div id="qk-current" class="qk-current"></div>
+          </section>
+        </div>
         <footer class="sheet-footer">
-          <button id="custom-keys-close" class="btn secondary" type="button">完成</button>
+          <button id="qk-reset" class="btn secondary" data-i18n="quick.resetDefault" type="button">恢复默认</button>
+          <button id="quickedit-close" class="btn primary" data-i18n="common.done" type="button">完成</button>
         </footer>
       </div>
     </div>
@@ -113,12 +122,12 @@
     <div id="copy-modal" class="copy-backdrop" role="dialog" aria-modal="true" aria-labelledby="copy-modal-title" hidden>
       <div class="copy-panel">
         <header class="copy-header">
-          <h2 id="copy-modal-title">选择并复制</h2>
-          <button id="copy-modal-close" class="btn secondary btn-sm" type="button">关闭</button>
+          <h2 id="copy-modal-title" data-i18n="sheet.copyTitle">选择并复制</h2>
+          <button id="copy-modal-close" class="btn secondary btn-sm" data-i18n="common.close" type="button">关闭</button>
         </header>
         <pre id="copy-modal-text" class="copy-text"></pre>
         <footer class="copy-footer">
-          <button id="copy-modal-selectall" class="btn primary" type="button">全选复制</button>
+          <button id="copy-modal-selectall" class="btn primary" data-i18n="common.selectAllCopy" type="button">全选复制</button>
         </footer>
       </div>
     </div>
