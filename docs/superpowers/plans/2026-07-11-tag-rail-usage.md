@@ -4,7 +4,7 @@
 
 **Goal:** 让桌面 Tag 列铺满可用高度、按最近使用顺序排列，并可持久化展开显示完整 Tag 名称。
 
-**Architecture:** 复用 `preferences.tags` 的数组顺序表示最近使用顺序，通过受限 `tags:touch` IPC 原子地移动 Tag；新增 `tagRailExpanded` 桌面偏好。偏好完整读改写使用原子文件锁跨桌面/Web 进程串行化；renderer 只合并 touch 返回的 Tag 顺序并丢弃过期响应。网格宽度与紧凑/响应式兼容全部由 CSS 变量控制。
+**Architecture:** 复用 `preferences.tags` 的数组顺序表示最近使用顺序，通过受限 `tags:touch` IPC 原子地移动 Tag；新增 `tagRailExpanded` 桌面偏好。偏好完整读改写使用 `proper-lockfile` 的 owner/heartbeat 锁跨桌面/Web 进程串行化；renderer 不合并成功 touch 的旧快照，失败重读由统一 Tag mutation token 防止过期响应。网格宽度与紧凑/响应式兼容全部由 CSS 变量控制。
 
 **Tech Stack:** Electron、CommonJS、原生 DOM/CSS、Node.js `node:test`、electron-builder。
 
@@ -215,7 +215,7 @@ function applyTagRailExpanded() {
 }
 ```
 
-toggle 点击时先更新 UI，再 `savePreferences({ tagRailExpanded })`。Tag 点击时把目标本地移到首位、重绘并调用 `api.touchTag(tag.id)`；响应仅合并 `tags`，activation token 忽略快速连续点击的旧响应，失败时只重新读取并合并 Tag 顺序后 toast。
+toggle 点击时先更新 UI，再 `savePreferences({ tagRailExpanded })`。Tag 点击时把目标本地移到首位、重绘并调用 `api.touchTag(tag.id)`；成功响应不合并快照，失败时只在统一 Tag mutation token 未变化时重读 Tag 顺序后 toast。
 
 设置弹窗把三个 section 包进 `#settingsScroll.settings-scroll`。`.settings-modal` 使用纵向 flex、`max-height: min(760px, calc(100vh - 56px))` 和 `overflow: hidden`；`.settings-scroll` 使用 `min-height: 0; overflow-y: auto; overscroll-behavior: contain`，header/footer 留在滚动区外。
 

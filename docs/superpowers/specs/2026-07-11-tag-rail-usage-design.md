@@ -24,7 +24,7 @@
 
 桌面展开状态新增布尔偏好 `tagRailExpanded`，默认 `false`。它由现有受限 `preferences:save` 通道保存，并在 normalization 与 IPC 校验中只接受布尔值。
 
-桌面 App 与外部 Web 守护进程可能同时写同一偏好文件。每次完整读改写都必须先获取同路径的原子文件锁，跨 `PreferencesStore` 实例和跨进程串行执行；锁异常退出后按超时清理，写入完成后立即释放。
+桌面 App 与外部 Web 守护进程可能同时写同一偏好文件。每次完整读改写都通过 `proper-lockfile` 获取同路径的 owner lock，跨 `PreferencesStore` 实例和跨进程串行执行；持锁期间续租，异常退出后按 stale 规则安全回收，并在 release 时校验所有权。
 
 ## 桌面结构与样式
 
@@ -37,7 +37,7 @@
 
 ## 事件与同步
 
-桌面点击 Tag 时先立即更新本地顺序并重绘，让 UI 无等待地反馈；随后通过 `tags:touch` 串行持久化。touch 响应只合并 `tags`，不能用完整快照覆盖更晚完成的主题、展开状态或上次会话；递增 activation token 负责忽略快速连续点击产生的过期响应。持久化失败时提示错误并只重新校准 Tag 顺序。
+桌面点击 Tag 时先立即更新本地顺序并重绘，让 UI 无等待地反馈；随后通过 `tags:touch` 串行持久化。touch 成功响应不再合并任何偏好快照；失败时才重读 Tag 顺序，并在重读前后校验统一 mutation token。新建、重命名、删除和再次激活 Tag 都会推进 token，旧请求不能复活已删除 Tag 或覆盖更晚的顺序。
 
 新建 Tag 的 store 返回值已经把新 Tag 放在首位；现有创建后自动进入该 Tag 的流程不需要二次 touch。
 

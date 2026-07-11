@@ -54,9 +54,10 @@ test('renderer controller uses explicit all, favorites, and tag workspace state'
   assert.match(app, /function renderTagRail\(/);
   assert.match(app, /api\.touchTag\(/);
   assert.match(app, /tagRailExpanded/);
-  assert.match(app, /state\.preferences\s*=\s*\{\s*\.\.\.state\.preferences,\s*tags:\s*result\.preferences\.tags\s*\}/s);
+  assert.doesNotMatch(app, /result\.preferences/);
   assert.match(app, /const token\s*=\s*\+\+tagActivationToken/);
-  assert.match(app, /token\s*===\s*tagActivationToken/);
+  assert.ok((app.match(/token\s*!==\s*tagActivationToken/g) || []).length >= 2);
+  assert.ok((app.match(/\+\+tagActivationToken/g) || []).length >= 3);
   assert.doesNotMatch(app, /favoritesOnly/);
   assert.doesNotMatch(app, /windowTabs/);
   assert.doesNotMatch(app, /setAttribute\(['"]role['"],\s*['"]listitem['"]\)/);

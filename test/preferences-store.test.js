@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { mkdtemp, mkdir, readFile, rm, writeFile, access } = require('node:fs/promises');
+const { mkdtemp, mkdir, readFile, rm, writeFile, access, utimes } = require('node:fs/promises');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const test = require('node:test');
@@ -253,4 +253,29 @@ test('concurrent mutations from desktop and web store instances preserve both up
     assert.deepEqual(preferences.tags.map((tag) => tag.id), [dms.id, k8s.id]);
     assert.deepEqual(preferences.sessionTags, { api: [k8s.id] });
   }, { createId: () => ids.shift(), fsImpl: delayedFs });
+});
+
+test('multiple store instances safely recover one stale cross-process lock', async () => {
+  const ids = ['one', 'two'];
+  await withStore(async (desktopStore, filePath) => {
+    let preferences = await desktopStore.createTag('DMS');
+    const dms = preferences.tags[0];
+    preferences = await desktopStore.createTag('K8S');
+    const k8s = preferences.tags[0];
+    const staleLockPath = `${filePath}.lock`;
+    await mkdir(staleLockPath);
+    const staleTime = new Date(Date.now() - 60_000);
+    await utimes(staleLockPath, staleTime, staleTime);
+
+    const firstWebStore = new PreferencesStore({ filePath });
+    const secondWebStore = new PreferencesStore({ filePath });
+    await Promise.all([
+      firstWebStore.touchTag(dms.id),
+      secondWebStore.setSessionTags('api', [k8s.id]),
+    ]);
+
+    preferences = await desktopStore.load();
+    assert.deepEqual(preferences.tags.map((tag) => tag.id), [dms.id, k8s.id]);
+    assert.deepEqual(preferences.sessionTags, { api: [k8s.id] });
+  }, { createId: () => ids.shift() });
 });

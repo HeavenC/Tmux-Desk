@@ -350,24 +350,20 @@ async function activateTag(tag) {
     renderTagSettings();
   }
   const touchResult = api.touchTag(tag.id).then(
-    (preferences) => ({ preferences }),
+    () => ({ ok: true }),
     (error) => ({ error }),
   );
   await setView({ kind: 'tag', tagId: tag.id });
   const result = await touchResult;
-  if (result.preferences && token === tagActivationToken) {
-    state.preferences = { ...state.preferences, tags: result.preferences.tags };
-    renderTagRail();
-    renderTagSettings();
-  } else if (result.error && token === tagActivationToken) {
-    try {
-      const preferences = await api.getPreferences();
-      state.preferences = { ...state.preferences, tags: preferences.tags };
-    } catch {}
-    renderTagRail();
-    renderTagSettings();
-    toast(friendlyError(result.error), 'error');
-  }
+  if (!result.error || token !== tagActivationToken) return;
+  try {
+    const preferences = await api.getPreferences();
+    if (token !== tagActivationToken) return;
+    state.preferences = { ...state.preferences, tags: preferences.tags };
+  } catch {}
+  renderTagRail();
+  renderTagSettings();
+  toast(friendlyError(result.error), 'error');
 }
 
 function renderSessionList() {
@@ -1386,6 +1382,7 @@ function bindEvents() {
   });
   refs.tagEditorForm.addEventListener('submit', async (event) => {
     event.preventDefault();
+    ++tagActivationToken;
     const submit = refs.tagEditorForm.querySelector('[type="submit"]');
     submit.disabled = true;
     try {
@@ -1423,6 +1420,7 @@ function bindEvents() {
     } catch (error) { toast(friendlyError(error), 'error'); }
   });
   refs.confirmTagDeleteButton.addEventListener('click', async () => {
+    ++tagActivationToken;
     const tagId = refs.tagDeleteModal.dataset.tagId;
     refs.confirmTagDeleteButton.disabled = true;
     try {
