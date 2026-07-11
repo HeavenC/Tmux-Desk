@@ -188,6 +188,8 @@ CSC_IDENTITY_AUTO_DISCOVERY=false npm run package:mac:universal # Universal
 | `⌘B` | 收起/展开文件浏览器 |
 | `⌘⇧T` | 在亮色、暗色、跟随系统之间切换 |
 | `⌘1…9` | 切换当前会话的 tmux window |
+| `⌘←/→` | 在当前 Tag/收藏工作区内切换相邻会话页签（同 iTerm） |
+| `⌘⇧←/→` | 在手动排序中移动当前会话页签 |
 | `Esc` | 关闭菜单或对话框 |
 
 ## 本地数据与隐私
