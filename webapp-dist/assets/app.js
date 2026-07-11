@@ -12097,7 +12097,16 @@ ${s3.join("\n")}
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
-    term.loadAddon(new ClipboardAddon());
+    term.loadAddon(new ClipboardAddon(void 0, {
+      async readText(selection) {
+        if (selection !== "c" && selection !== "") return "";
+        return navigator.clipboard.readText();
+      },
+      async writeText(selection, text) {
+        if (selection !== "c" && selection !== "" && selection !== "p" && selection !== "s") return;
+        return navigator.clipboard.writeText(text);
+      }
+    }));
     term.open(el("terminal-container"));
     term.onData((data) => handleTerminalInput(data));
     state.term = term;

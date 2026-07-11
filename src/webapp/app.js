@@ -415,8 +415,19 @@ function ensureTerminalCreated() {
   term.loadAddon(fitAddon);
   // Lets tmux's OSC52 (set-clipboard external + the "clipboard" terminal
   // feature TerminalManager.attach() now requests) reach the phone's system
-  // clipboard — xterm.js otherwise ignores OSC52 entirely.
-  term.loadAddon(new ClipboardAddon());
+  // clipboard — xterm.js otherwise ignores OSC52 entirely. tmux sends the
+  // OSC52 selection parameter as an EMPTY string, which the addon's default
+  // provider drops (it only acts on "c"), so accept both here.
+  term.loadAddon(new ClipboardAddon(undefined, {
+    async readText(selection) {
+      if (selection !== 'c' && selection !== '') return '';
+      return navigator.clipboard.readText();
+    },
+    async writeText(selection, text) {
+      if (selection !== 'c' && selection !== '' && selection !== 'p' && selection !== 's') return;
+      return navigator.clipboard.writeText(text);
+    },
+  }));
   term.open(el('terminal-container'));
   term.onData((data) => handleTerminalInput(data));
   state.term = term;

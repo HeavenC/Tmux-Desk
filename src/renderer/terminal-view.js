@@ -13,6 +13,21 @@ const SELECTION_COPY_DEBOUNCE_MS = 200;
 // placed before Menlo would also capture Latin with proportional glyphs.)
 const TERMINAL_FONT_FAMILY = '"Tmux Desk Mono", Menlo, Monaco, Consolas, monospace';
 
+// tmux emits OSC52 with an EMPTY selection parameter (\e]52;;<base64>), but
+// the addon's default BrowserClipboardProvider only acts on selection "c" and
+// silently drops everything else — tmux copies never reached the clipboard.
+class TmuxClipboardProvider {
+  async readText(selection) {
+    if (selection !== 'c' && selection !== '') return '';
+    return navigator.clipboard.readText();
+  }
+
+  async writeText(selection, text) {
+    if (selection !== 'c' && selection !== '' && selection !== 'p' && selection !== 's') return;
+    return navigator.clipboard.writeText(text);
+  }
+}
+
 const TERMINAL_THEMES = {
   light: {
     background: '#fbfbfc', foreground: '#20242c', cursor: '#1769e0', cursorAccent: '#ffffff',
@@ -58,7 +73,7 @@ class TerminalView {
     // Lets tmux's OSC52 (set-clipboard external, emitted because attach() now
     // requests the "clipboard" terminal feature) reach the system clipboard —
     // xterm.js otherwise ignores OSC52 entirely.
-    this.clipboardAddon = new ClipboardAddon();
+    this.clipboardAddon = new ClipboardAddon(undefined, new TmuxClipboardProvider());
     this.terminal.loadAddon(this.clipboardAddon);
     this.terminal.open(container);
     // WebGL renderer: besides speed, its canvas-based glyph measurement honors

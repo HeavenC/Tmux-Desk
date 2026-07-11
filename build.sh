@@ -72,7 +72,7 @@ ok "构建完成，产物在 dist/："
 ls -1 dist/*.dmg dist/*.zip 2>/dev/null | sed 's/^/   /'
 echo
 info "分发给别人：请发 dist/ 里的 .dmg（不要发裸 .app —— 经微信/邮件拷贝的 .app 里的软链接会坏，导致“已损坏”）。"
-warn "App 已 ad-hoc 签名但未公证，同事首次打开仍会被 Gatekeeper 拦（提示“无法验证开发者”）。二选一："
+warn "App 已 ad-hoc 签名但未公证，首次打开仍会被 Gatekeeper 拦（提示“无法验证开发者”）。二选一："
 echo "   • 在“应用程序”里右键该 App → 打开 → 再点“打开”；或"
 echo "   • 终端执行：xattr -cr \"/Applications/Tmux Desk.app\""
 echo
