@@ -62,7 +62,7 @@ test('attach uses exact tmux socket arguments and terminal environment', () => {
     env: { PATH: '/bin', TERM: 'old' },
   });
   manager.attach({ sessionId: '$7', cols: 90, rows: 28 });
-  assert.deepEqual(calls[0].args, ['-L', 'isolated', 'attach-session', '-t', '$7']);
+  assert.deepEqual(calls[0].args, ['-L', 'isolated', '-T', 'clipboard,RGB', 'attach-session', '-t', '$7']);
   assert.equal(calls[0].file, '/custom/tmux');
   assert.equal(calls[0].options.name, 'xterm-256color');
   assert.equal(calls[0].options.env.TERM, 'xterm-256color');

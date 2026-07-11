@@ -11389,6 +11389,215 @@ ${s3.join("\n")}
     }
   });
 
+  // node_modules/@xterm/addon-clipboard/lib/addon-clipboard.js
+  var require_addon_clipboard = __commonJS({
+    "node_modules/@xterm/addon-clipboard/lib/addon-clipboard.js"(exports, module) {
+      !(function(t, e) {
+        "object" == typeof exports && "object" == typeof module ? module.exports = e() : "function" == typeof define && define.amd ? define([], e) : "object" == typeof exports ? exports.ClipboardAddon = e() : t.ClipboardAddon = e();
+      })(self, (() => (() => {
+        var t = { 812: function(t2, e2, r2) {
+          "undefined" != typeof self ? self : "undefined" != typeof window ? window : void 0 !== r2.g && r2.g, t2.exports = (function() {
+            "use strict";
+            var t3, e3 = "3.7.8", r3 = e3, n2 = "function" == typeof Buffer, o = "function" == typeof TextDecoder ? new TextDecoder() : void 0, i = "function" == typeof TextEncoder ? new TextEncoder() : void 0, u = Array.prototype.slice.call("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="), a = (t3 = {}, u.forEach((function(e4, r4) {
+              return t3[e4] = r4;
+            })), t3), c = /^(?:[A-Za-z\d+\/]{4})*?(?:[A-Za-z\d+\/]{2}(?:==)?|[A-Za-z\d+\/]{3}=?)?$/, s = String.fromCharCode.bind(String), f = "function" == typeof Uint8Array.from ? Uint8Array.from.bind(Uint8Array) : function(t4) {
+              return new Uint8Array(Array.prototype.slice.call(t4, 0));
+            }, d = function(t4) {
+              return t4.replace(/=/g, "").replace(/[+\/]/g, (function(t5) {
+                return "+" == t5 ? "-" : "_";
+              }));
+            }, l = function(t4) {
+              return t4.replace(/[^A-Za-z0-9\+\/]/g, "");
+            }, p = function(t4) {
+              for (var e4, r4, n3, o2, i2 = "", a2 = t4.length % 3, c2 = 0; c2 < t4.length; ) {
+                if ((r4 = t4.charCodeAt(c2++)) > 255 || (n3 = t4.charCodeAt(c2++)) > 255 || (o2 = t4.charCodeAt(c2++)) > 255) throw new TypeError("invalid character found");
+                i2 += u[(e4 = r4 << 16 | n3 << 8 | o2) >> 18 & 63] + u[e4 >> 12 & 63] + u[e4 >> 6 & 63] + u[63 & e4];
+              }
+              return a2 ? i2.slice(0, a2 - 3) + "===".substring(a2) : i2;
+            }, h = "function" == typeof btoa ? function(t4) {
+              return btoa(t4);
+            } : n2 ? function(t4) {
+              return Buffer.from(t4, "binary").toString("base64");
+            } : p, b = n2 ? function(t4) {
+              return Buffer.from(t4).toString("base64");
+            } : function(t4) {
+              for (var e4 = [], r4 = 0, n3 = t4.length; r4 < n3; r4 += 4096) e4.push(s.apply(null, t4.subarray(r4, r4 + 4096)));
+              return h(e4.join(""));
+            }, y = function(t4, e4) {
+              return void 0 === e4 && (e4 = false), e4 ? d(b(t4)) : b(t4);
+            }, x = function(t4) {
+              if (t4.length < 2) return (e4 = t4.charCodeAt(0)) < 128 ? t4 : e4 < 2048 ? s(192 | e4 >>> 6) + s(128 | 63 & e4) : s(224 | e4 >>> 12 & 15) + s(128 | e4 >>> 6 & 63) + s(128 | 63 & e4);
+              var e4 = 65536 + 1024 * (t4.charCodeAt(0) - 55296) + (t4.charCodeAt(1) - 56320);
+              return s(240 | e4 >>> 18 & 7) + s(128 | e4 >>> 12 & 63) + s(128 | e4 >>> 6 & 63) + s(128 | 63 & e4);
+            }, A = /[\uD800-\uDBFF][\uDC00-\uDFFFF]|[^\x00-\x7F]/g, g = function(t4) {
+              return t4.replace(A, x);
+            }, v = n2 ? function(t4) {
+              return Buffer.from(t4, "utf8").toString("base64");
+            } : i ? function(t4) {
+              return b(i.encode(t4));
+            } : function(t4) {
+              return h(g(t4));
+            }, B = function(t4, e4) {
+              return void 0 === e4 && (e4 = false), e4 ? d(v(t4)) : v(t4);
+            }, C = function(t4) {
+              return B(t4, true);
+            }, m = /[\xC0-\xDF][\x80-\xBF]|[\xE0-\xEF][\x80-\xBF]{2}|[\xF0-\xF7][\x80-\xBF]{3}/g, w = function(t4) {
+              switch (t4.length) {
+                case 4:
+                  var e4 = ((7 & t4.charCodeAt(0)) << 18 | (63 & t4.charCodeAt(1)) << 12 | (63 & t4.charCodeAt(2)) << 6 | 63 & t4.charCodeAt(3)) - 65536;
+                  return s(55296 + (e4 >>> 10)) + s(56320 + (1023 & e4));
+                case 3:
+                  return s((15 & t4.charCodeAt(0)) << 12 | (63 & t4.charCodeAt(1)) << 6 | 63 & t4.charCodeAt(2));
+                default:
+                  return s((31 & t4.charCodeAt(0)) << 6 | 63 & t4.charCodeAt(1));
+              }
+            }, T = function(t4) {
+              return t4.replace(m, w);
+            }, _ = function(t4) {
+              if (t4 = t4.replace(/\s+/g, ""), !c.test(t4)) throw new TypeError("malformed base64.");
+              var e4, r4, n3;
+              t4 += "==".slice(2 - (3 & t4.length));
+              for (var o2 = [], i2 = 0; i2 < t4.length; ) e4 = a[t4.charAt(i2++)] << 18 | a[t4.charAt(i2++)] << 12 | (r4 = a[t4.charAt(i2++)]) << 6 | (n3 = a[t4.charAt(i2++)]), 64 === r4 ? o2.push(s(e4 >> 16 & 255)) : 64 === n3 ? o2.push(s(e4 >> 16 & 255, e4 >> 8 & 255)) : o2.push(s(e4 >> 16 & 255, e4 >> 8 & 255, 255 & e4));
+              return o2.join("");
+            }, F = "function" == typeof atob ? function(t4) {
+              return atob(l(t4));
+            } : n2 ? function(t4) {
+              return Buffer.from(t4, "base64").toString("binary");
+            } : _, U = n2 ? function(t4) {
+              return f(Buffer.from(t4, "base64"));
+            } : function(t4) {
+              return f(F(t4).split("").map((function(t5) {
+                return t5.charCodeAt(0);
+              })));
+            }, j = function(t4) {
+              return U(S(t4));
+            }, P = n2 ? function(t4) {
+              return Buffer.from(t4, "base64").toString("utf8");
+            } : o ? function(t4) {
+              return o.decode(U(t4));
+            } : function(t4) {
+              return T(F(t4));
+            }, S = function(t4) {
+              return l(t4.replace(/[-_]/g, (function(t5) {
+                return "-" == t5 ? "+" : "/";
+              })));
+            }, E = function(t4) {
+              return P(S(t4));
+            }, R = function(t4) {
+              return { value: t4, enumerable: false, writable: true, configurable: true };
+            }, O = function() {
+              var t4 = function(t5, e4) {
+                return Object.defineProperty(String.prototype, t5, R(e4));
+              };
+              t4("fromBase64", (function() {
+                return E(this);
+              })), t4("toBase64", (function(t5) {
+                return B(this, t5);
+              })), t4("toBase64URI", (function() {
+                return B(this, true);
+              })), t4("toBase64URL", (function() {
+                return B(this, true);
+              })), t4("toUint8Array", (function() {
+                return j(this);
+              }));
+            }, D = function() {
+              var t4 = function(t5, e4) {
+                return Object.defineProperty(Uint8Array.prototype, t5, R(e4));
+              };
+              t4("toBase64", (function(t5) {
+                return y(this, t5);
+              })), t4("toBase64URI", (function() {
+                return y(this, true);
+              })), t4("toBase64URL", (function() {
+                return y(this, true);
+              }));
+            }, z = { version: e3, VERSION: r3, atob: F, atobPolyfill: _, btoa: h, btoaPolyfill: p, fromBase64: E, toBase64: B, encode: B, encodeURI: C, encodeURL: C, utob: g, btou: T, decode: E, isValid: function(t4) {
+              if ("string" != typeof t4) return false;
+              var e4 = t4.replace(/\s+/g, "").replace(/={0,2}$/, "");
+              return !/[^\s0-9a-zA-Z\+/]/.test(e4) || !/[^\s0-9a-zA-Z\-_]/.test(e4);
+            }, fromUint8Array: y, toUint8Array: j, extendString: O, extendUint8Array: D, extendBuiltins: function() {
+              O(), D();
+            }, Base64: {} };
+            return Object.keys(z).forEach((function(t4) {
+              return z.Base64[t4] = z[t4];
+            })), z;
+          })();
+        } }, e = {};
+        function r(n2) {
+          var o = e[n2];
+          if (void 0 !== o) return o.exports;
+          var i = e[n2] = { exports: {} };
+          return t[n2].call(i.exports, i, i.exports, r), i.exports;
+        }
+        r.g = (function() {
+          if ("object" == typeof globalThis) return globalThis;
+          try {
+            return this || new Function("return this")();
+          } catch (t2) {
+            if ("object" == typeof window) return window;
+          }
+        })();
+        var n = {};
+        return (() => {
+          "use strict";
+          var t2 = n;
+          Object.defineProperty(t2, "__esModule", { value: true }), t2.Base64 = t2.BrowserClipboardProvider = t2.ClipboardAddon = void 0;
+          const e2 = r(812);
+          t2.ClipboardAddon = class {
+            constructor(t3 = new i(), e3 = new o()) {
+              this._base64 = t3, this._provider = e3;
+            }
+            activate(t3) {
+              this._terminal = t3, this._disposable = t3.parser.registerOscHandler(52, ((t4) => this._setOrReportClipboard(t4)));
+            }
+            dispose() {
+              return this._disposable?.dispose();
+            }
+            _readText(t3, e3) {
+              const r2 = this._base64.encodeText(e3);
+              this._terminal?.input(`\x1B]52;${t3};${r2}\x07`, false);
+            }
+            _setOrReportClipboard(t3) {
+              const e3 = t3.split(";");
+              if (e3.length < 2) return true;
+              const r2 = e3[0], n2 = e3[1];
+              if ("?" === n2) {
+                const t4 = this._provider.readText(r2);
+                return t4 instanceof Promise ? t4.then(((t5) => (this._readText(r2, t5), true))) : (this._readText(r2, t4), true);
+              }
+              let o2 = "";
+              try {
+                o2 = this._base64.decodeText(n2);
+              } catch {
+              }
+              const i2 = this._provider.writeText(r2, o2);
+              return !(i2 instanceof Promise) || i2.then((() => true));
+            }
+          };
+          class o {
+            async readText(t3) {
+              return "c" !== t3 ? Promise.resolve("") : navigator.clipboard.readText();
+            }
+            async writeText(t3, e3) {
+              return "c" !== t3 ? Promise.resolve() : navigator.clipboard.writeText(e3);
+            }
+          }
+          t2.BrowserClipboardProvider = o;
+          class i {
+            encodeText(t3) {
+              return e2.Base64.encode(t3);
+            }
+            decodeText(t3) {
+              const r2 = e2.Base64.decode(t3);
+              return e2.Base64.isValid(t3) && e2.Base64.encode(r2) === t3 ? r2 : "";
+            }
+          }
+          t2.Base64 = i;
+        })(), n;
+      })()));
+    }
+  });
+
   // src/shared/session-model.js
   var require_session_model = __commonJS({
     "src/shared/session-model.js"(exports, module) {
@@ -11410,25 +11619,41 @@ ${s3.join("\n")}
         const ordinarySessions = favoritesOnly ? [] : filtered.filter((session) => !favoriteOrder.has(session.name)).sort(byRecentActivity);
         return { favorites: favoriteSessions, sessions: ordinarySessions };
       }
+      function sortByTabOrder(sessions, order) {
+        const rank = new Map((Array.isArray(order) ? order : []).map((name, index) => [name, index]));
+        const ordered = [];
+        const unordered = [];
+        for (const session of sessions) {
+          (rank.has(session.name) ? ordered : unordered).push(session);
+        }
+        ordered.sort((left, right) => rank.get(left.name) - rank.get(right.name));
+        unordered.sort((left, right) => String(left.name || "").localeCompare(String(right.name || ""), "zh-CN"));
+        return [...ordered, ...unordered];
+      }
       function sessionsForView(sessions, preferences, view) {
         const items = Array.isArray(sessions) ? sessions : [];
         if (!view || view.kind === "all") return [];
         const stored = preferences && typeof preferences === "object" ? preferences : {};
         let includedNames;
+        let viewKey;
         if (view.kind === "favorites") {
           includedNames = new Set(Array.isArray(stored.favorites) ? stored.favorites : []);
+          viewKey = "favorites";
         } else if (view.kind === "tag" && typeof view.tagId === "string") {
           const sessionTags = stored.sessionTags && typeof stored.sessionTags === "object" && !Array.isArray(stored.sessionTags) ? stored.sessionTags : {};
           includedNames = new Set(Object.entries(sessionTags).filter(([, tagIds]) => Array.isArray(tagIds) && tagIds.includes(view.tagId)).map(([name]) => name));
+          viewKey = view.tagId;
         } else {
           return [];
         }
         const seen = /* @__PURE__ */ new Set();
-        return items.filter((session) => {
+        const matched = items.filter((session) => {
           if (!session || !includedNames.has(session.name) || seen.has(session.name)) return false;
           seen.add(session.name);
           return true;
-        }).sort(byRecentActivity);
+        });
+        const tabOrders = stored.tabOrders && typeof stored.tabOrders === "object" && !Array.isArray(stored.tabOrders) ? stored.tabOrders : {};
+        return sortByTabOrder(matched, tabOrders[viewKey]);
       }
       module.exports = { filterAndGroupSessions, sessionsForView };
     }
@@ -11473,6 +11698,7 @@ ${s3.join("\n")}
   // src/webapp/app.js
   var { Terminal } = require_xterm();
   var { FitAddon } = require_addon_fit();
+  var { ClipboardAddon } = require_addon_clipboard();
   var { liveCountForView, mobileSessionsForView } = require_mobile_session_model();
   var LIST_REFRESH_MS = 15e3;
   var PING_INTERVAL_MS = 25e3;
@@ -11531,7 +11757,7 @@ ${s3.join("\n")}
     token: "",
     currentView: "list",
     sessions: [],
-    preferences: { tags: [], favorites: [], sessionTags: {} },
+    preferences: { tags: [], favorites: [], sessionTags: {}, tabOrders: {} },
     listView: { kind: "all" },
     currentSession: null,
     grouped: null,
@@ -11544,7 +11770,9 @@ ${s3.join("\n")}
     manualClose: false,
     theme: "light",
     term: null,
-    fitAddon: null
+    fitAddon: null,
+    termTextarea: null,
+    keyboardActive: false
   };
   var el = (id) => document.getElementById(id);
   function getToken() {
@@ -11611,7 +11839,8 @@ ${s3.join("\n")}
     return {
       tags: Array.isArray(preferences.tags) ? preferences.tags.filter((tag) => tag && typeof tag.id === "string" && typeof tag.name === "string" && typeof tag.color === "string") : [],
       favorites: Array.isArray(preferences.favorites) ? preferences.favorites.filter((name) => typeof name === "string") : [],
-      sessionTags: preferences.sessionTags && typeof preferences.sessionTags === "object" && !Array.isArray(preferences.sessionTags) ? preferences.sessionTags : {}
+      sessionTags: preferences.sessionTags && typeof preferences.sessionTags === "object" && !Array.isArray(preferences.sessionTags) ? preferences.sessionTags : {},
+      tabOrders: preferences.tabOrders && typeof preferences.tabOrders === "object" && !Array.isArray(preferences.tabOrders) ? preferences.tabOrders : {}
     };
   }
   function sameListView(left, right) {
@@ -11861,17 +12090,51 @@ ${s3.join("\n")}
     if (state.term) return;
     const term = new Terminal({
       fontSize: 13,
-      fontFamily: "Menlo, Monaco, monospace",
+      fontFamily: '"Tmux Desk Mono", Menlo, Monaco, monospace',
       cursorBlink: true,
       scrollback: 3e3,
       theme: TERMINAL_THEMES[state.theme]
     });
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
+    term.loadAddon(new ClipboardAddon());
     term.open(el("terminal-container"));
     term.onData((data) => handleTerminalInput(data));
     state.term = term;
     state.fitAddon = fitAddon;
+    setupKeyboardGate();
+  }
+  function setupKeyboardGate() {
+    const textarea = state.term?.element?.querySelector(".xterm-helper-textarea");
+    if (!textarea) return;
+    state.termTextarea = textarea;
+    lockKeyboard();
+    textarea.addEventListener("blur", lockKeyboard);
+  }
+  function lockKeyboard() {
+    const textarea = state.termTextarea;
+    if (!textarea) return;
+    textarea.setAttribute("readonly", "readonly");
+    textarea.setAttribute("inputmode", "none");
+    state.keyboardActive = false;
+    el("keyboard-btn")?.classList.remove("active");
+  }
+  function unlockKeyboard() {
+    const textarea = state.termTextarea;
+    if (!textarea) return;
+    textarea.removeAttribute("readonly");
+    textarea.removeAttribute("inputmode");
+    state.keyboardActive = true;
+    el("keyboard-btn")?.classList.add("active");
+  }
+  function toggleKeyboard() {
+    if (!state.term) return;
+    if (state.keyboardActive) {
+      state.term.blur();
+    } else {
+      unlockKeyboard();
+      state.term.focus();
+    }
   }
   function handleTerminalInput(data) {
     if (state.ctrlActive && data.length === 1 && /[a-zA-Z]/.test(data)) {
@@ -11885,6 +12148,43 @@ ${s3.join("\n")}
   function setCtrlActive(active) {
     state.ctrlActive = active;
     el("ctrl-btn").classList.toggle("active", active);
+  }
+  var COPY_OVERLAY_MAX_LINES = 2e3;
+  function getTerminalBufferText(term, maxLines = COPY_OVERLAY_MAX_LINES) {
+    const buffer = term?.buffer?.active;
+    if (!buffer) return "";
+    const total = buffer.length;
+    const start = Math.max(0, total - maxLines);
+    const lines = [];
+    for (let y = start; y < total; y += 1) {
+      const line = buffer.getLine(y);
+      if (!line) continue;
+      lines.push(line.translateToString(true));
+    }
+    return lines.join("\n").replace(/\s+$/, "");
+  }
+  function openCopyOverlay() {
+    if (!state.term) return;
+    el("copy-modal-text").textContent = getTerminalBufferText(state.term);
+    el("copy-modal").hidden = false;
+  }
+  function closeCopyOverlay() {
+    el("copy-modal").hidden = true;
+  }
+  async function copyOverlayText() {
+    const pre = el("copy-modal-text");
+    const text = pre.textContent || "";
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("\u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F");
+    } catch {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(pre);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      showToast("\u65E0\u6CD5\u81EA\u52A8\u590D\u5236\uFF0C\u5DF2\u4E3A\u4F60\u9009\u4E2D\u5185\u5BB9\uFF0C\u8BF7\u624B\u52A8\u590D\u5236");
+    }
   }
   function sendWsJson(payload) {
     if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify(payload));
@@ -12035,6 +12335,7 @@ ${s3.join("\n")}
     esc: "\x1B",
     tab: "	",
     prefix: "",
+    "ctrl-c": "",
     left: "\x1B[D",
     down: "\x1B[B",
     up: "\x1B[A",
@@ -12048,17 +12349,22 @@ ${s3.join("\n")}
     }
     state.term?.focus();
   }
-  function setupToolbar() {
-    document.querySelectorAll(".key-btn").forEach((button) => {
-      const key = button.dataset.key;
-      button.addEventListener("mousedown", (event) => event.preventDefault());
-      button.addEventListener("touchstart", (event) => event.preventDefault(), { passive: false });
-      button.addEventListener("touchend", (event) => {
-        event.preventDefault();
-        runToolbarKey(key);
-      });
-      button.addEventListener("click", () => runToolbarKey(key));
+  function bindTap(button, handler) {
+    if (!button) return;
+    button.addEventListener("mousedown", (event) => event.preventDefault());
+    button.addEventListener("touchstart", (event) => event.preventDefault(), { passive: false });
+    button.addEventListener("touchend", (event) => {
+      event.preventDefault();
+      handler();
     });
+    button.addEventListener("click", () => handler());
+  }
+  function setupToolbar() {
+    document.querySelectorAll(".key-btn[data-key]").forEach((button) => {
+      bindTap(button, () => runToolbarKey(button.dataset.key));
+    });
+    bindTap(el("copy-btn"), openCopyOverlay);
+    bindTap(el("keyboard-btn"), toggleKeyboard);
   }
   function sendScrollLine(up, clientX, clientY, rect) {
     const term = state.term;
@@ -12141,8 +12447,15 @@ ${s3.join("\n")}
     el("session-tags-modal").addEventListener("click", (event) => {
       if (event.target === el("session-tags-modal")) closeSessionTagsModal();
     });
+    bindTap(el("copy-modal-close"), closeCopyOverlay);
+    bindTap(el("copy-modal-selectall"), copyOverlayText);
+    el("copy-modal").addEventListener("click", (event) => {
+      if (event.target === el("copy-modal")) closeCopyOverlay();
+    });
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && !el("session-tags-modal").hidden) closeSessionTagsModal();
+      if (event.key !== "Escape") return;
+      if (!el("session-tags-modal").hidden) closeSessionTagsModal();
+      if (!el("copy-modal").hidden) closeCopyOverlay();
     });
   }
   function bootstrap() {
@@ -12153,6 +12466,8 @@ ${s3.join("\n")}
     setupTouchScroll();
     setupViewportHandling();
     renderWorkspaceFilters();
+    document.fonts?.load?.('13px "Tmux Desk Mono"', "Aa\u4E2D\u3002\uFF08\uFF09").catch(() => {
+    });
     if (!state.token) {
       setListState({ loading: false, error: "\u7F3A\u5C11 token \u53C2\u6570\uFF0C\u8BF7\u901A\u8FC7\u6B63\u786E\u94FE\u63A5\u8BBF\u95EE" });
       return;

@@ -5,3 +5,4 @@ renderer-dist/
 dist/
 coverage/
 .DS_Store
+.deploy-stamp

@@ -5,12 +5,16 @@ class FakeTerminal {
   constructor() {
     this.cols = 80;
     this.rows = 24;
+    this.selection = '';
   }
 
   loadAddon() {}
   open() {}
   attachCustomKeyEventHandler(handler) { this.customKeyHandler = handler; }
   onData(handler) { this.dataHandler = handler; return { dispose() {} }; }
+  onSelectionChange(handler) { this.selectionChangeHandler = handler; return { dispose() { this.disposed = true; } }; }
+  hasSelection() { return this.selection.length > 0; }
+  getSelection() { return this.selection; }
   dispatchKeyEvent(event) {
     const handled = this.customKeyHandler(event);
     if (!event.defaultPrevented && event.type === 'keydown' && event.key === 'Enter') {
@@ -25,18 +29,35 @@ class FakeFitAddon {
   fit() {}
 }
 
+class FakeClipboardAddon {}
+
+class FakeWebglAddon {
+  onContextLoss() { return { dispose() {} }; }
+  dispose() {}
+}
+
 function loadTerminalView() {
   const xtermPath = require.resolve('@xterm/xterm');
   const fitAddonPath = require.resolve('@xterm/addon-fit');
+  const clipboardAddonPath = require.resolve('@xterm/addon-clipboard');
+  const webglAddonPath = require.resolve('@xterm/addon-webgl');
   const terminalViewPath = require.resolve('../src/renderer/terminal-view');
   const saved = new Map([
     [xtermPath, require.cache[xtermPath]],
     [fitAddonPath, require.cache[fitAddonPath]],
+    [clipboardAddonPath, require.cache[clipboardAddonPath]],
+    [webglAddonPath, require.cache[webglAddonPath]],
     [terminalViewPath, require.cache[terminalViewPath]],
   ]);
 
   require.cache[xtermPath] = { id: xtermPath, filename: xtermPath, loaded: true, exports: { Terminal: FakeTerminal } };
   require.cache[fitAddonPath] = { id: fitAddonPath, filename: fitAddonPath, loaded: true, exports: { FitAddon: FakeFitAddon } };
+  require.cache[clipboardAddonPath] = {
+    id: clipboardAddonPath, filename: clipboardAddonPath, loaded: true, exports: { ClipboardAddon: FakeClipboardAddon },
+  };
+  require.cache[webglAddonPath] = {
+    id: webglAddonPath, filename: webglAddonPath, loaded: true, exports: { WebglAddon: FakeWebglAddon },
+  };
   delete require.cache[terminalViewPath];
   const loaded = require(terminalViewPath);
 

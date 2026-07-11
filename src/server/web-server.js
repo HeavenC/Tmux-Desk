@@ -91,6 +91,9 @@ function publicPreferences(value) {
     tags: preferences.tags,
     favorites: preferences.favorites,
     sessionTags: preferences.sessionTags,
+    // Mobile has no drag UI, but it should still show the desktop's manual
+    // tab order rather than falling back to activity/alphabetical sorting.
+    tabOrders: preferences.tabOrders,
   };
 }
 

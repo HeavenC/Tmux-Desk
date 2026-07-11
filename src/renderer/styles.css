@@ -318,6 +318,11 @@ kbd {
 .session-tab-state { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--text-tertiary); }
 .session-tab-state.attached { background: var(--success); }
 .session-tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.session-tab.drop-before::after, .session-tab.drop-after::after {
+  content: ""; position: absolute; top: 4px; bottom: 4px; width: 2px; border-radius: 2px; background: var(--accent);
+}
+.session-tab.drop-before::after { left: -1px; }
+.session-tab.drop-after::after { right: -1px; }
 
 .terminal-stage { position: relative; min-height: 0; flex: 1; background: var(--terminal-bg); }
 .terminal-surface { position: absolute; inset: 0; padding: 10px 8px 8px 12px; }
@@ -327,10 +332,45 @@ kbd {
 /* Match the hidden IME textarea to the cell metrics so the input-method
    candidate window anchors on the real cursor (xterm only sets its position,
    not its font, during composition). */
+/* Composite terminal font. "SFMono-Regular" never actually resolved (it's a
+   PostScript name, not a family), so Latin has always been Menlo — but Menlo
+   also owns half-width glyphs for fullwidth CJK punctuation （）。「」, which
+   xterm then pads to two cells with ~9px letter-spacing. Route the wide-CJK
+   ranges (ideographs, kana, CJK punctuation, fullwidth forms — deliberately
+   NOT ambiguous-width chars like “”·, which xterm sizes as one cell) to
+   PingFang so they fill their double cell like iTerm does. */
+@font-face {
+  font-family: "Tmux Desk Mono";
+  /* local() only matches PostScript/full names in Chromium — local("Menlo")
+     and local("PingFang SC") both fail silently. */
+  src: local("Menlo-Regular");
+}
+@font-face {
+  font-family: "Tmux Desk Mono";
+  src: local("PingFangSC-Regular");
+  unicode-range: U+1100-115F, U+2E80-2FDF, U+3000-303F, U+3041-33FF,
+    U+3400-4DBF, U+4E00-9FFF, U+A000-A4CF, U+AC00-D7A3, U+F900-FAFF,
+    U+FE30-FE4F, U+FF01-FF60, U+FFE0-FFE6, U+20000-2FFFD, U+30000-3FFFD;
+}
 #terminalMount .xterm-helper-textarea {
-  font-family: SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+  font-family: "Tmux Desk Mono", Menlo, Monaco, Consolas, monospace !important;
   font-size: 13px !important;
   line-height: 16px !important;
+}
+/* iTerm-style IME preedit (terminal-view.js hides xterm's opaque
+   .composition-view and mirrors its cursor position here): underlined preedit
+   followed by the rest of the line, so composing pushes content rightward
+   instead of covering it. Colors come inline from the terminal theme. */
+#terminalMount .composition-shift {
+  position: absolute; z-index: 2; display: none;
+  white-space: pre; overflow: hidden; pointer-events: none;
+  font-family: "Tmux Desk Mono", Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+}
+#terminalMount .composition-shift.active { display: block; }
+#terminalMount .composition-shift-preedit {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .terminal-reconnect {
   position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);

@@ -12,7 +12,7 @@ const refs = {};
 const state = {
   systemStatus: { installed: false, path: null, version: null },
   preferences: {
-    theme: 'light', favorites: [], tags: [], sessionTags: {}, lastSession: null, windowBounds: null, sidebarWidth: null,
+    theme: 'light', favorites: [], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null, sidebarWidth: null,
   },
   sessions: [],
   selectedSessionId: null,
@@ -28,6 +28,7 @@ const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
 let terminalView = null;
 let pollTimer = null;
 let selectionToken = 0;
+let draggedTabName = null;
 
 function cacheElements() {
   for (const id of [
@@ -82,6 +83,14 @@ function currentTag() {
 
 function compactSessions() {
   return sessionsForView(state.sessions, state.preferences, state.view);
+}
+
+// Key into preferences.tabOrders for the currently active compact view, or
+// null when tab order has no meaning (the "all sessions" left-hand list).
+function currentViewKey() {
+  if (state.view.kind === 'favorites') return 'favorites';
+  if (state.view.kind === 'tag') return state.view.tagId;
+  return null;
 }
 
 function tagsForSession(name) {
@@ -460,6 +469,7 @@ function renderSessionTabs() {
     button.setAttribute('role', 'tab');
     button.setAttribute('aria-selected', String(active));
     button.title = session.name;
+    button.draggable = true;
     const stateDot = document.createElement('span');
     stateDot.className = `session-tab-state ${session.attached ? 'attached' : ''}`;
     const name = document.createElement('span');
@@ -467,8 +477,89 @@ function renderSessionTabs() {
     name.textContent = session.name;
     button.append(stateDot, name);
     button.addEventListener('click', () => selectSession(session));
+    button.addEventListener('dragstart', (event) => handleTabDragStart(event, session));
+    button.addEventListener('dragover', handleTabDragOver);
+    button.addEventListener('dragleave', handleTabDragLeave);
+    button.addEventListener('drop', (event) => handleTabDrop(event, session));
+    button.addEventListener('dragend', clearTabDragState);
     refs.sessionTabs.append(button);
   }
+}
+
+function handleTabDragStart(event, session) {
+  draggedTabName = session.name;
+  event.dataTransfer.effectAllowed = 'move';
+  try { event.dataTransfer.setData('text/plain', session.name); } catch { /* Safari needs no data set to drag */ }
+}
+
+function handleTabDragOver(event) {
+  if (!draggedTabName) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  const button = event.currentTarget;
+  for (const other of refs.sessionTabs.querySelectorAll('.session-tab')) {
+    if (other !== button) other.classList.remove('drop-before', 'drop-after');
+  }
+  const rect = button.getBoundingClientRect();
+  const before = event.clientX < rect.left + rect.width / 2;
+  button.classList.toggle('drop-before', before);
+  button.classList.toggle('drop-after', !before);
+}
+
+function handleTabDragLeave(event) {
+  event.currentTarget.classList.remove('drop-before', 'drop-after');
+}
+
+async function handleTabDrop(event, targetSession) {
+  event.preventDefault();
+  const button = event.currentTarget;
+  const before = button.classList.contains('drop-before');
+  const draggedName = draggedTabName;
+  clearTabDragState();
+  if (!draggedName || draggedName === targetSession.name) return;
+  const names = compactSessions().map((session) => session.name);
+  const fromIndex = names.indexOf(draggedName);
+  if (fromIndex === -1) return;
+  names.splice(fromIndex, 1);
+  let targetIndex = names.indexOf(targetSession.name);
+  if (targetIndex === -1) return;
+  if (!before) targetIndex += 1;
+  names.splice(targetIndex, 0, draggedName);
+  await persistTabOrder(names);
+}
+
+function clearTabDragState() {
+  draggedTabName = null;
+  for (const button of refs.sessionTabs.querySelectorAll('.session-tab')) {
+    button.classList.remove('drop-before', 'drop-after');
+  }
+}
+
+// Writes the full manual order for the active view and re-renders — used by
+// both drag-and-drop and the Cmd+Option+Arrow keyboard reorder.
+async function persistTabOrder(names) {
+  const viewKey = currentViewKey();
+  if (!viewKey) return;
+  try {
+    state.preferences = await api.savePreferences({
+      tabOrders: { ...state.preferences.tabOrders, [viewKey]: names },
+    });
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+  }
+  renderSessionTabs();
+}
+
+async function moveSelectedTab(direction) {
+  const session = selectedSession();
+  if (!session) return;
+  const names = compactSessions().map((item) => item.name);
+  const index = names.indexOf(session.name);
+  if (index === -1) return;
+  const targetIndex = index + direction;
+  if (targetIndex < 0 || targetIndex >= names.length) return;
+  [names[index], names[targetIndex]] = [names[targetIndex], names[index]];
+  await persistTabOrder(names);
 }
 
 function renderDetail() {
@@ -1493,6 +1584,10 @@ function handleKeyboard(event) {
   else if (meta && /^[1-9]$/.test(event.key)) {
     const windowInfo = state.detail.windows[Number(event.key) - 1];
     if (windowInfo) { event.preventDefault(); api.selectWindow(windowInfo.id).then(refreshDetail).catch((error) => toast(friendlyError(error), 'error')); }
+  } else if (event.metaKey && event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
+    && state.view.kind !== 'all' && selectedSession()) {
+    event.preventDefault();
+    moveSelectedTab(event.key === 'ArrowLeft' ? -1 : 1);
   } else if (event.key === 'Escape') {
     closeFloatingMenus();
     const openModalElement = [...document.querySelectorAll('.modal-backdrop:not(.hidden)')].pop();
@@ -1517,6 +1612,12 @@ async function initialize() {
     refs.emptyActions.classList.add('hidden');
     return;
   }
+  // The composite "Tmux Desk Mono" @font-face (local Menlo + PingFang SC by
+  // unicode-range) loads lazily; xterm measures and caches per-char cell
+  // widths at open, so make both faces ready before the terminal exists.
+  try {
+    await document.fonts.load('13px "Tmux Desk Mono"', 'Aa中。（）');
+  } catch {}
   terminalView = new TerminalView({
     container: refs.terminalMount,
     api,
