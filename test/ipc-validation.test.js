@@ -48,11 +48,13 @@ test('preference patches allow only local UI preference fields', () => {
     theme: 'system', lastSession: 'api', windowBounds: { x: 1, y: 2, width: 1200, height: 800 }, sidebarWidth: 280,
   });
   assert.deepEqual(validatePreferencesPatch({ sidebarWidth: null }), { sidebarWidth: null });
+  assert.deepEqual(validatePreferencesPatch({ tagRailExpanded: true }), { tagRailExpanded: true });
   assert.throws(() => validatePreferencesPatch({ theme: 'sepia' }), /主题/);
   assert.throws(() => validatePreferencesPatch({ token: 'secret' }), /偏好字段/);
   assert.throws(() => validatePreferencesPatch({ windowBounds: { width: 2 } }), /窗口尺寸/);
   assert.throws(() => validatePreferencesPatch({ sidebarWidth: 50 }), /侧栏宽度/);
   assert.throws(() => validatePreferencesPatch({ sidebarWidth: 1001 }), /侧栏宽度/);
+  assert.throws(() => validatePreferencesPatch({ tagRailExpanded: 'yes' }), /Tag 栏展开状态/);
 });
 
 test('tag mutations validate names, ids, and deduplicated session associations', () => {
@@ -103,6 +105,7 @@ test('tag and session lifecycle handlers update preferences after tmux succeeds'
       createTag: async (name) => { calls.push(['createTag', name]); return { tags: [] }; },
       renameTag: async (id, name) => { calls.push(['renameTag', id, name]); return { tags: [] }; },
       deleteTag: async (id) => { calls.push(['deleteTag', id]); return { tags: [] }; },
+      touchTag: async (id) => { calls.push(['touchTag', id]); return { tags: [] }; },
       setSessionTags: async (name, ids) => { calls.push(['setSessionTags', name, ids]); return { tags: [] }; },
       copySessionTags: async (source, target) => calls.push(['copySessionTags', source, target]),
       renameSessionReferences: async (oldName, newName) => calls.push(['renameSessionReferences', oldName, newName]),
@@ -114,6 +117,7 @@ test('tag and session lifecycle handlers update preferences after tmux succeeds'
   assert.deepEqual(await handlers.get('tags:create')(null, ' DMS '), { tags: [] });
   await handlers.get('tags:rename')(null, { id: 'tag-one', name: '渠道' });
   await handlers.get('tags:delete')(null, 'tag-one');
+  await handlers.get('tags:touch')(null, 'tag-one');
   await handlers.get('sessions:set-tags')(null, { sessionName: 'api', tagIds: ['tag-one', 'tag-one'] });
   assert.deepEqual(await handlers.get('sessions:duplicate')(null, {
     source: '$1', sourceName: 'api', name: 'api-copy',
@@ -125,6 +129,7 @@ test('tag and session lifecycle handlers update preferences after tmux succeeds'
     ['createTag', 'DMS'],
     ['renameTag', 'tag-one', '渠道'],
     ['deleteTag', 'tag-one'],
+    ['touchTag', 'tag-one'],
     ['setSessionTags', 'api', ['tag-one']],
     ['duplicate', '$1', 'api-copy'],
     ['copySessionTags', 'api', 'api-copy'],

@@ -19,6 +19,7 @@ const IPC_CHANNELS = Object.freeze([
   'sessions:toggle-favorite',
   'sessions:set-tags',
   'tags:create',
+  'tags:touch',
   'tags:rename',
   'tags:delete',
   'windows:select',
@@ -126,7 +127,7 @@ function validateWindowBounds(value) {
 
 function validatePreferencesPatch(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('偏好设置无效');
-  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth']);
+  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new Error('偏好字段无效');
   }
@@ -145,6 +146,10 @@ function validatePreferencesPatch(value) {
       throw new Error('侧栏宽度无效');
     }
     result.sidebarWidth = value.sidebarWidth === null ? null : Math.round(value.sidebarWidth);
+  }
+  if ('tagRailExpanded' in value) {
+    if (typeof value.tagRailExpanded !== 'boolean') throw new Error('Tag 栏展开状态无效');
+    result.tagRailExpanded = value.tagRailExpanded;
   }
   return result;
 }
@@ -202,6 +207,7 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       return preferencesStore.setSessionTags(sessionName, tagIds);
     },
     'tags:create': (_event, name) => preferencesStore.createTag(validateTagMutation('create', name)),
+    'tags:touch': (_event, id) => preferencesStore.touchTag(validateTagMutation('delete', id)),
     'tags:rename': (_event, input) => {
       const { id, name } = validateTagMutation('rename', input);
       return preferencesStore.renameTag(id, name);

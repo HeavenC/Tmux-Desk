@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('tmuxDesk', Object.freeze({
   toggleFavorite: (name) => ipcRenderer.invoke('sessions:toggle-favorite', name),
   setSessionTags: (input) => ipcRenderer.invoke('sessions:set-tags', input),
   createTag: (name) => ipcRenderer.invoke('tags:create', name),
+  touchTag: (id) => ipcRenderer.invoke('tags:touch', id),
   renameTag: (input) => ipcRenderer.invoke('tags:rename', input),
   deleteTag: (id) => ipcRenderer.invoke('tags:delete', id),
   selectWindow: (target) => ipcRenderer.invoke('windows:select', target),

@@ -18,6 +18,7 @@ const DEFAULT_PREFERENCES = Object.freeze({
   lastSession: null,
   windowBounds: null,
   sidebarWidth: null,
+  tagRailExpanded: false,
 });
 const SIDEBAR_WIDTH_RANGE = Object.freeze({ min: 200, max: 420 });
 
@@ -62,6 +63,9 @@ function normalizePreferences(value = {}) {
       : null,
     windowBounds: normalizeBounds(value.windowBounds),
     sidebarWidth: normalizeSidebarWidth(value.sidebarWidth),
+    tagRailExpanded: typeof value.tagRailExpanded === 'boolean'
+      ? value.tagRailExpanded
+      : DEFAULT_PREFERENCES.tagRailExpanded,
   };
 }
 
@@ -187,7 +191,17 @@ class PreferencesStore {
       const id = normalizeTagId(`tag-${this.createId()}`);
       if (current.tags.some((tag) => tag.id === id)) throw new Error('Tag 编号冲突');
       const tag = { id, name, color: TAG_COLORS[current.tags.length % TAG_COLORS.length] };
-      return { tags: [...current.tags, tag] };
+      return { tags: [tag, ...current.tags] };
+    });
+  }
+
+  async touchTag(id) {
+    const tagId = normalizeTagId(id);
+    return this.update((current) => {
+      const tag = current.tags.find((item) => item.id === tagId);
+      if (!tag) throw new Error('Tag 不存在');
+      if (current.tags[0]?.id === tagId) return {};
+      return { tags: [tag, ...current.tags.filter((item) => item.id !== tagId)] };
     });
   }
 

@@ -38,7 +38,7 @@ test('malformed and invalid preferences fall back to normalized defaults', async
     }), 'utf8');
     assert.deepEqual(await store.load(), {
       theme: 'light', favorites: ['api'], tags: [], sessionTags: {}, lastSession: null, windowBounds: null,
-      sidebarWidth: null,
+      sidebarWidth: null, tagRailExpanded: false,
     });
   });
 });
@@ -98,7 +98,7 @@ test('tag lifecycle persists associations and migrates session references', asyn
     let preferences = await store.createTag('DMS');
     const first = preferences.tags[0];
     preferences = await store.createTag('K8S');
-    const second = preferences.tags[1];
+    const second = preferences.tags.find((tag) => tag.name === 'K8S');
     assert.deepEqual([first.id, first.color, second.id, second.color], ['tag-one', 'blue', 'tag-two', 'green']);
 
     await store.setSessionTags('api', [first.id, second.id, first.id]);
@@ -110,6 +110,21 @@ test('tag lifecycle persists associations and migrates session references', asyn
 
     assert.equal(preferences.tags[0].name, '渠道');
     assert.deepEqual(preferences.sessionTags, { backend: [first.id] });
+  }, { createId: () => ids.shift() });
+});
+
+test('new and recently used tags move to the front', async () => {
+  const ids = ['one', 'two', 'three'];
+  await withStore(async (store) => {
+    await store.createTag('DMS');
+    await store.createTag('K8S');
+    let preferences = await store.createTag('PROD');
+    assert.deepEqual(preferences.tags.map((tag) => tag.name), ['PROD', 'K8S', 'DMS']);
+
+    preferences = await store.touchTag('tag-one');
+    assert.deepEqual(preferences.tags.map((tag) => tag.name), ['DMS', 'PROD', 'K8S']);
+    assert.deepEqual((await store.touchTag('tag-one')).tags, preferences.tags);
+    await assert.rejects(() => store.touchTag('tag-missing'), /Tag 不存在/);
   }, { createId: () => ids.shift() });
 });
 
@@ -129,7 +144,7 @@ test('renaming a session merges tag references already stored on the target name
     let preferences = await store.createTag('DMS');
     const first = preferences.tags[0];
     preferences = await store.createTag('K8S');
-    const second = preferences.tags[1];
+    const second = preferences.tags.find((tag) => tag.name === 'K8S');
     await store.setSessionTags('api', [first.id]);
     await store.setSessionTags('backend', [second.id]);
     preferences = await store.renameSessionReferences('api', 'backend');
@@ -184,7 +199,7 @@ test('concurrent tag mutations on one store preserve updates from multiple devic
     let preferences = await store.createTag('DMS');
     const first = preferences.tags[0];
     preferences = await store.createTag('K8S');
-    const second = preferences.tags[1];
+    const second = preferences.tags.find((tag) => tag.name === 'K8S');
     maximumWrites = 0;
 
     await Promise.all([
