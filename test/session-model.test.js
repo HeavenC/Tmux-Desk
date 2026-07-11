@@ -34,7 +34,7 @@ test('ordinary sessions are sorted by recent activity without mutating input', (
   assert.deepEqual(sessions.map((item) => item.name), original);
 });
 
-test('tag view returns each associated live session once by recent activity', () => {
+test('tag view returns each associated live session once, name-sorted without a stored tab order', () => {
   const preferences = {
     favorites: [],
     sessionTags: { api: ['tag-a', 'tag-a'], db: ['tag-b'], '☸️ K8S-UAT': ['tag-a', 'tag-b'] },
@@ -45,7 +45,7 @@ test('tag view returns each associated live session once by recent activity', ()
   );
 });
 
-test('favorites view is activity sorted and all view has no compact tabs', () => {
+test('favorites view is name-sorted without a stored tab order and all view has no compact tabs', () => {
   const preferences = { favorites: ['db', 'api', 'missing'], sessionTags: {} };
   assert.deepEqual(
     sessionsForView(sessions, preferences, { kind: 'favorites' }).map((item) => item.name),
@@ -60,4 +60,34 @@ test('compact view selection tolerates malformed preferences without mutating se
   assert.deepEqual(sessionsForView(sessions, { favorites: [], sessionTags: [] }, { kind: 'tag', tagId: 'tag-a' }), []);
   assert.deepEqual(sessionsForView(sessions, {}, { kind: 'tag' }), []);
   assert.deepEqual(sessions.map((item) => item.name), original);
+});
+
+test('a stored tab order wins over both activity and name, ignoring activity entirely', () => {
+  const preferences = { favorites: ['db', 'api'], sessionTags: {}, tabOrders: { favorites: ['db', 'api'] } };
+  // api has higher activity (20) than db (10) — if activity still influenced
+  // ordering this would come back ['api', 'db'] instead of the stored order.
+  assert.deepEqual(
+    sessionsForView(sessions, preferences, { kind: 'favorites' }).map((item) => item.name),
+    ['db', 'api'],
+  );
+});
+
+test('sessions absent from the stored tab order are appended at the end, name-sorted', () => {
+  const preferences = {
+    favorites: [],
+    sessionTags: { api: ['tag-a'], db: ['tag-a'], '☸️ K8S-UAT': ['tag-a'] },
+    tabOrders: { 'tag-a': ['db'] },
+  };
+  assert.deepEqual(
+    sessionsForView(sessions, preferences, { kind: 'tag', tagId: 'tag-a' }).map((item) => item.name),
+    ['db', '☸️ K8S-UAT', 'api'],
+  );
+});
+
+test('stale names in the stored tab order are ignored when the session is no longer in view', () => {
+  const preferences = { favorites: ['api'], sessionTags: {}, tabOrders: { favorites: ['ghost', 'api'] } };
+  assert.deepEqual(
+    sessionsForView(sessions, preferences, { kind: 'favorites' }).map((item) => item.name),
+    ['api'],
+  );
 });

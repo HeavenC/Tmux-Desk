@@ -1,5 +1,17 @@
 const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
+const { ClipboardAddon } = require('@xterm/addon-clipboard');
+const { WebglAddon } = require('@xterm/addon-webgl');
+
+const SELECTION_COPY_DEBOUNCE_MS = 200;
+
+// "Tmux Desk Mono" is a composite @font-face defined in styles.css: Menlo for
+// everything except the wide-CJK unicode ranges, which go to PingFang SC.
+// Without it, Menlo's own half-width glyphs win for fullwidth punctuation
+// （）。「」 and xterm pads them to two cells with ~9px of letter-spacing —
+// the "中文标点特别宽" complaint. (A flat font list can't fix this: PingFang
+// placed before Menlo would also capture Latin with proportional glyphs.)
+const TERMINAL_FONT_FAMILY = '"Tmux Desk Mono", Menlo, Monaco, Consolas, monospace';
 
 const TERMINAL_THEMES = {
   light: {
@@ -31,16 +43,50 @@ class TerminalView {
       cursorBlink: true,
       cursorStyle: 'block',
       convertEol: false,
-      fontFamily: 'SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      fontFamily: TERMINAL_FONT_FAMILY,
       fontSize: 13,
       lineHeight: 1.22,
       letterSpacing: 0,
       scrollback: 10000,
       theme: TERMINAL_THEMES.light,
+      // iTerm habit: Option+drag always yields a local xterm.js selection even
+      // while tmux mouse mode owns the drag, so it can be auto-copied below.
+      macOptionClickForcesSelection: true,
     });
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
+    // Lets tmux's OSC52 (set-clipboard external, emitted because attach() now
+    // requests the "clipboard" terminal feature) reach the system clipboard —
+    // xterm.js otherwise ignores OSC52 entirely.
+    this.clipboardAddon = new ClipboardAddon();
+    this.terminal.loadAddon(this.clipboardAddon);
     this.terminal.open(container);
+    // WebGL renderer: besides speed, its canvas-based glyph measurement honors
+    // the composite "Tmux Desk Mono" @font-face. Chromium's DOM layout path
+    // ignores unicode-range on local() faces, so the DOM renderer would keep
+    // Menlo's narrow fullwidth-punctuation glyphs plus ~9px letter-spacing.
+    try {
+      this.webglAddon = new WebglAddon();
+      this.webglAddon.onContextLoss(() => {
+        this.webglAddon?.dispose();
+        this.webglAddon = null;
+      });
+      this.terminal.loadAddon(this.webglAddon);
+    } catch {
+      this.webglAddon = null; // DOM renderer fallback
+    }
+    this.setupCompositionShift();
+    // The composite local() @font-face can finish loading after first paint,
+    // and the DOM renderer caches each char's measured width forever — once
+    // the font is definitely in, toggle fontFamily to drop xterm's WidthCache
+    // and re-measure, or CJK punctuation keeps its pre-load Menlo width.
+    if (typeof document !== 'undefined' && document.fonts?.load) {
+      document.fonts.load('13px "Tmux Desk Mono"', 'Aa中。（）').then(() => {
+        const family = this.terminal.options.fontFamily;
+        this.terminal.options.fontFamily = 'monospace';
+        this.terminal.options.fontFamily = family;
+      }).catch(() => {});
+    }
     // Terminals send \r for both Enter and Shift+Enter, so a TUI can't tell them
     // apart. Cancel the hidden textarea's native Enter action, then send one bare
     // LF byte. Without preventDefault(), Chromium emits an extra CR after our LF,
@@ -62,6 +108,27 @@ class TerminalView {
       if (this.terminalId === null) return;
       this.api.writeTerminal({ terminalId: this.terminalId, data }).catch((error) => this.onError?.(error));
     });
+    // iTerm-style select-to-copy: debounced so a multi-cell drag doesn't fire a
+    // clipboard write per row; covers Shift+drag / Option+drag local selections
+    // that bypass tmux's own mouse-mode copy-on-release.
+    this.selectionChangeTimer = null;
+    this.selectionChangeDisposable = this.terminal.onSelectionChange(() => {
+      clearTimeout(this.selectionChangeTimer);
+      this.selectionChangeTimer = setTimeout(() => this.copySelectionToClipboard(), SELECTION_COPY_DEBOUNCE_MS);
+    });
+    // Electron's Cmd+C menu item is the `copy` role, which issues the DOM copy
+    // command — but xterm.js keeps its selection off the DOM, so that command
+    // finds nothing to copy. Intercept it and fill clipboardData ourselves.
+    this.onCopyEvent = (event) => {
+      if (!this.terminal.hasSelection()) return;
+      const text = this.terminal.getSelection();
+      if (!text) return;
+      event.clipboardData?.setData('text/plain', text);
+      event.preventDefault();
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('copy', this.onCopyEvent);
+    }
     this.unsubscribeData = api.onTerminalData((payload) => this.handleData(payload));
     this.unsubscribeExit = api.onTerminalExit((payload) => this.handleExit(payload));
     this.container = container;
@@ -164,6 +231,82 @@ class TerminalView {
     return screen.getBoundingClientRect().right > this.container.getBoundingClientRect().right + 1;
   }
 
+  // xterm.js shows the IME preedit as an opaque box that simply covers whatever
+  // sits after the cursor. Replace it with iTerm's presentation: the preedit is
+  // drawn underlined at the cursor and the rest of the line is pushed to the
+  // right while composing (the real buffer is untouched until the IME commits).
+  setupCompositionShift() {
+    const root = this.terminal.element;
+    const view = root?.querySelector('.composition-view');
+    const textarea = root?.querySelector('.xterm-helper-textarea');
+    if (!view || !textarea || !view.parentElement) return;
+    // Keep xterm's own composition view in the layout (its rect still anchors
+    // the IME candidate window and tells us where the cursor is), just unseen.
+    view.style.visibility = 'hidden';
+    this.compositionView = view;
+    this.compositionTextarea = textarea;
+    const overlay = document.createElement('div');
+    overlay.className = 'composition-shift';
+    this.compositionPreedit = document.createElement('span');
+    this.compositionPreedit.className = 'composition-shift-preedit';
+    this.compositionTrail = document.createElement('span');
+    overlay.append(this.compositionPreedit, this.compositionTrail);
+    view.parentElement.append(overlay);
+    this.compositionOverlay = overlay;
+    this.onCompositionUpdate = (event) => this.renderCompositionShift(String(event.data ?? ''));
+    this.onCompositionEnd = () => this.hideCompositionShift();
+    textarea.addEventListener('compositionstart', this.onCompositionUpdate);
+    textarea.addEventListener('compositionupdate', this.onCompositionUpdate);
+    textarea.addEventListener('compositionend', this.onCompositionEnd);
+    textarea.addEventListener('blur', this.onCompositionEnd);
+  }
+
+  renderCompositionShift(preedit) {
+    if (!this.compositionOverlay) return;
+    // xterm's CompositionHelper re-places .composition-view on a macrotask
+    // after each composition event; defer the same way, then mirror it.
+    clearTimeout(this.compositionShiftTimer);
+    this.compositionShiftTimer = setTimeout(() => {
+      const overlay = this.compositionOverlay;
+      const root = this.terminal.element;
+      if (!overlay || !root) return;
+      const buffer = this.terminal.buffer.active;
+      const line = buffer.getLine(buffer.baseY + buffer.cursorY);
+      const trail = line ? line.translateToString(true, buffer.cursorX) : '';
+      const theme = this.terminal.options.theme || {};
+      const row = root.querySelector('.xterm-rows > div');
+      overlay.style.left = this.compositionView.style.left || '0px';
+      overlay.style.top = this.compositionView.style.top || '0px';
+      overlay.style.lineHeight = row ? getComputedStyle(row).height : 'normal';
+      overlay.style.background = theme.background || '';
+      overlay.style.color = theme.foreground || '';
+      const screen = root.querySelector('.xterm-screen');
+      if (screen) {
+        overlay.style.maxWidth = `${Math.max(0, screen.clientWidth - (parseFloat(overlay.style.left) || 0))}px`;
+      }
+      this.compositionPreedit.textContent = preedit;
+      this.compositionTrail.textContent = trail;
+      overlay.classList.toggle('active', preedit.length > 0);
+    }, 0);
+  }
+
+  hideCompositionShift() {
+    clearTimeout(this.compositionShiftTimer);
+    this.compositionOverlay?.classList.remove('active');
+  }
+
+  copySelectionToClipboard() {
+    if (!this.terminal.hasSelection()) return;
+    const text = this.terminal.getSelection();
+    if (!text) return;
+    // navigator.clipboard.writeText rejects (or throws in some engines) when
+    // the window/document isn't focused — fail silently rather than surface
+    // an error for what's meant to be an invisible convenience copy.
+    try {
+      navigator.clipboard?.writeText(text)?.catch(() => {});
+    } catch {}
+  }
+
   focus() { this.terminal.focus(); }
 
   async detach() {
@@ -175,9 +318,22 @@ class TerminalView {
 
   dispose() {
     cancelAnimationFrame(this.fitFrame);
+    clearTimeout(this.selectionChangeTimer);
+    clearTimeout(this.compositionShiftTimer);
+    if (this.compositionTextarea) {
+      this.compositionTextarea.removeEventListener('compositionstart', this.onCompositionUpdate);
+      this.compositionTextarea.removeEventListener('compositionupdate', this.onCompositionUpdate);
+      this.compositionTextarea.removeEventListener('compositionend', this.onCompositionEnd);
+      this.compositionTextarea.removeEventListener('blur', this.onCompositionEnd);
+    }
+    this.compositionOverlay?.remove();
     this.dprMedia?.removeEventListener('change', this.onDprChange);
     this.resizeObserver.disconnect();
     this.dataDisposable.dispose();
+    this.selectionChangeDisposable?.dispose();
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('copy', this.onCopyEvent);
+    }
     this.unsubscribeData?.();
     this.unsubscribeExit?.();
     this.terminal.dispose();

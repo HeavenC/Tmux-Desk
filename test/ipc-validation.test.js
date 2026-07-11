@@ -57,6 +57,16 @@ test('preference patches allow only local UI preference fields', () => {
   assert.throws(() => validatePreferencesPatch({ tagRailExpanded: 'yes' }), /Tag 栏展开状态/);
 });
 
+test('preference patches shape-check tabOrders but leave deep validation to the store', () => {
+  assert.deepEqual(validatePreferencesPatch({ tabOrders: { favorites: ['api', 3, 'worker'] } }), {
+    tabOrders: { favorites: ['api', 'worker'] },
+  });
+  assert.deepEqual(validatePreferencesPatch({ tabOrders: {} }), { tabOrders: {} });
+  assert.throws(() => validatePreferencesPatch({ tabOrders: null }), /页签顺序/);
+  assert.throws(() => validatePreferencesPatch({ tabOrders: { favorites: 'api' } }), /页签顺序/);
+  assert.throws(() => validatePreferencesPatch({ tabOrders: { favorites: Array(201).fill('x') } }), /页签顺序/);
+});
+
 test('tag mutations validate names, ids, and deduplicated session associations', () => {
   assert.equal(validateTagMutation('create', ' DMS 渠道 '), 'DMS 渠道');
   assert.deepEqual(validateTagMutation('rename', { id: 'tag-abc', name: ' DMS ' }), {

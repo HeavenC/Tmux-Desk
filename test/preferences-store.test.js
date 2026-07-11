@@ -37,7 +37,7 @@ test('malformed and invalid preferences fall back to normalized defaults', async
       windowBounds: { x: 10, y: 10, width: 'wide', height: 700 },
     }), 'utf8');
     assert.deepEqual(await store.load(), {
-      theme: 'light', favorites: ['api'], tags: [], sessionTags: {}, lastSession: null, windowBounds: null,
+      theme: 'light', favorites: ['api'], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null,
       sidebarWidth: null, tagRailExpanded: false,
     });
   });
@@ -89,6 +89,53 @@ test('tag preferences normalize definitions and remove duplicate or stale associ
     const preferences = await store.load();
     assert.deepEqual(preferences.tags, [{ id: 'tag-one', name: 'DMS', color: 'blue' }]);
     assert.deepEqual(preferences.sessionTags, { api: ['tag-one'] });
+  });
+});
+
+test('tab order preferences normalize view keys, dedupe names, and drop invalid entries', async () => {
+  await withStore(async (store, filePath) => {
+    await mkdir(join(filePath, '..'), { recursive: true });
+    await writeFile(filePath, JSON.stringify({
+      tags: [{ id: 'tag-one', name: 'DMS', color: 'blue' }],
+      tabOrders: {
+        favorites: ['api', 'api', '  worker  ', '', 4],
+        'tag-one': ['db'],
+        'tag-missing': ['db'],
+        'not-a-view': 'nope',
+      },
+    }), 'utf8');
+    const preferences = await store.load();
+    assert.deepEqual(preferences.tabOrders, {
+      favorites: ['api', 'worker'],
+      'tag-one': ['db'],
+    });
+  });
+});
+
+test('deleting a tag also discards its stored tab order', async () => {
+  await withStore(async (store) => {
+    let preferences = await store.createTag('DMS');
+    const tag = preferences.tags[0];
+    preferences = await store.save({ tabOrders: { favorites: ['api', 'worker'], [tag.id]: ['api'] } });
+    assert.deepEqual(preferences.tabOrders, { favorites: ['api', 'worker'], [tag.id]: ['api'] });
+    preferences = await store.deleteTag(tag.id);
+    assert.deepEqual(preferences.tabOrders, { favorites: ['api', 'worker'] });
+  }, { createId: () => 'one' });
+});
+
+test('renaming a session updates its position in every stored tab order', async () => {
+  await withStore(async (store) => {
+    await store.save({ tabOrders: { favorites: ['api', 'worker'] } });
+    const renamed = await store.renameSessionReferences('api', 'backend');
+    assert.deepEqual(renamed.tabOrders, { favorites: ['backend', 'worker'] });
+  });
+});
+
+test('renaming a session onto an existing name dedupes its tab order entry', async () => {
+  await withStore(async (store) => {
+    await store.save({ tabOrders: { favorites: ['api', 'worker'] } });
+    const renamed = await store.renameSessionReferences('worker', 'api');
+    assert.deepEqual(renamed.tabOrders, { favorites: ['api'] });
   });
 });
 

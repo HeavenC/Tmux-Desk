@@ -125,9 +125,20 @@ function validateWindowBounds(value) {
   return Object.fromEntries(['x', 'y', 'width', 'height'].map((key) => [key, Math.round(value[key])]));
 }
 
+function validateTabOrders(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('页签顺序无效');
+  const result = {};
+  for (const [viewKey, order] of Object.entries(value)) {
+    if (typeof viewKey !== 'string' || !viewKey) throw new Error('页签顺序无效');
+    if (!Array.isArray(order) || order.length > 200) throw new Error('页签顺序无效');
+    result[viewKey] = order.filter((item) => typeof item === 'string');
+  }
+  return result;
+}
+
 function validatePreferencesPatch(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('偏好设置无效');
-  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded']);
+  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tabOrders']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new Error('偏好字段无效');
   }
@@ -151,6 +162,7 @@ function validatePreferencesPatch(value) {
     if (typeof value.tagRailExpanded !== 'boolean') throw new Error('Tag 栏展开状态无效');
     result.tagRailExpanded = value.tagRailExpanded;
   }
+  if ('tabOrders' in value) result.tabOrders = validateTabOrders(value.tabOrders);
   return result;
 }
 

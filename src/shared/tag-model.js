@@ -61,6 +61,7 @@ function normalizeSessionTags(value, tags) {
 module.exports = {
   TAG_COLORS,
   TAG_ID_PATTERN,
+  normalizeSessionKey,
   normalizeSessionTags,
   normalizeTagId,
   normalizeTagName,

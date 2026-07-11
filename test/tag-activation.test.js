@@ -42,6 +42,9 @@ async function loadTagController(api) {
     'module.exports = { activateTag, state, refs };',
   );
   const localRequire = createRequire(appPath);
+  const testRequire = (request) => (
+    request === './terminal-view' ? { TerminalView: class {} } : localRequire(request)
+  );
   const module = { exports: {} };
   const document = {
     documentElement: fakeElement(),
@@ -56,13 +59,13 @@ async function loadTagController(api) {
     document,
     module,
     navigator: { clipboard: { writeText: async () => {} } },
-    require: localRequire,
+    require: testRequire,
     setInterval,
     setTimeout,
     window: { matchMedia: () => ({ matches: false }), tmuxDesk: api },
   });
   const script = new vm.Script(`(function (require, module) { ${instrumented}\n})`);
-  script.runInContext(context)(localRequire, module);
+  script.runInContext(context)(testRequire, module);
   for (const match of source.matchAll(/'([A-Za-z][A-Za-z0-9]+)'/g)) {
     module.exports.refs[match[1]] = fakeElement();
   }

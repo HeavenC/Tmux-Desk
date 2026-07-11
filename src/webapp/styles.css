@@ -442,6 +442,37 @@ body {
   background: var(--term-bg);
 }
 
+/* xterm hardcodes the IME preedit box (.composition-view) to black-on-white,
+   which is invisible against a light terminal theme — the "输入框的字跟主题
+   颜色相同看不到" complaint. Bind it to the terminal's own colors so composing
+   text reads like inline text, underlined to mark it as pending, in both
+   themes. */
+#terminal-container .composition-view {
+  background: var(--term-bg);
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+/* Composite terminal font, matching the desktop renderer: Latin stays on
+   Menlo, but the wide-CJK ranges route to PingFang SC so ideographs and
+   fullwidth punctuation fill their double cell like a real terminal.
+   local() needs both the family name (iOS WebKit) and the PostScript name
+   (Chromium) — either one alone fails silently on the other engine. */
+@font-face {
+  font-family: "Tmux Desk Mono";
+  src: local("Menlo"), local("Menlo-Regular");
+}
+@font-face {
+  font-family: "Tmux Desk Mono";
+  src: local("PingFang SC"), local("PingFangSC-Regular");
+  unicode-range: U+1100-115F, U+2E80-2FDF, U+3000-303F, U+3041-33FF,
+    U+3400-4DBF, U+4E00-9FFF, U+A000-A4CF, U+AC00-D7A3, U+F900-FAFF,
+    U+FE30-FE4F, U+FF01-FF60, U+FFE0-FFE6, U+20000-2FFFD, U+30000-3FFFD;
+}
+
 .banner {
   display: flex;
   align-items: center;
@@ -514,10 +545,17 @@ body {
   background: var(--surface);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.toolbar::-webkit-scrollbar {
+  display: none;
 }
 
 .key-btn {
-  flex: 1;
+  flex: 1 0 40px;
   min-width: 40px;
   min-height: 44px;
   border: 1px solid var(--chip-border);
@@ -525,6 +563,11 @@ body {
   background: var(--chip);
   color: var(--text);
   font-size: 14px;
+}
+
+#copy-btn,
+#keyboard-btn {
+  font-size: 17px;
 }
 
 /* ---- Tag assignment sheet ---- */
@@ -643,6 +686,75 @@ body {
   background: var(--key-active-bg);
   border-color: var(--key-active-border);
   color: var(--key-active-text);
+}
+
+/* ---- 复制/选择浮层 ---- */
+
+.copy-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.copy-backdrop[hidden] {
+  display: none;
+}
+
+.copy-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.copy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: max(env(safe-area-inset-top), 12px) 16px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.copy-header h2 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-strong);
+}
+
+.copy-text {
+  flex: 1;
+  margin: 0;
+  padding: 14px 16px;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: "Tmux Desk Mono", Menlo, Monaco, monospace;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--card);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.copy-footer {
+  display: flex;
+  gap: 10px;
+  padding: 10px 16px max(16px, env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.copy-footer .btn {
+  flex: 1;
 }
 
 /* ---- toast ---- */

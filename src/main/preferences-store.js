@@ -5,6 +5,7 @@ const { randomUUID } = require('node:crypto');
 const lockfile = require('proper-lockfile');
 const {
   TAG_COLORS,
+  normalizeSessionKey,
   normalizeSessionTags,
   normalizeTagId,
   normalizeTagName,
@@ -16,6 +17,7 @@ const DEFAULT_PREFERENCES = Object.freeze({
   favorites: [],
   tags: [],
   sessionTags: {},
+  tabOrders: {},
   lastSession: null,
   windowBounds: null,
   sidebarWidth: null,
@@ -52,6 +54,45 @@ function normalizeSidebarWidth(value) {
   return Math.round(Math.min(SIDEBAR_WIDTH_RANGE.max, Math.max(SIDEBAR_WIDTH_RANGE.min, value)));
 }
 
+// tabOrders keys are view identifiers: 'favorites' or a tag id that must
+// still exist in `tags` — an order for a deleted tag is dead weight, drop it.
+function normalizeTabOrders(value, tags) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const availableViewKeys = new Set(['favorites', ...tags.map((tag) => tag.id)]);
+  const result = {};
+  for (const [viewKey, order] of Object.entries(value)) {
+    if (!availableViewKeys.has(viewKey) || !Array.isArray(order)) continue;
+    const seen = new Set();
+    const names = [];
+    for (const item of order) {
+      const name = normalizeSessionKey(item);
+      if (!name || seen.has(name)) continue;
+      seen.add(name);
+      names.push(name);
+    }
+    if (names.length) result[viewKey] = names;
+  }
+  return result;
+}
+
+// On rename, replay the old→new substitution into every stored order so a
+// renamed session keeps the position the user dragged it to.
+function renameInTabOrders(tabOrders, oldValue, newValue) {
+  const result = {};
+  for (const [viewKey, order] of Object.entries(tabOrders || {})) {
+    const seen = new Set();
+    const renamed = [];
+    for (const item of order) {
+      const name = item === oldValue ? newValue : item;
+      if (seen.has(name)) continue;
+      seen.add(name);
+      renamed.push(name);
+    }
+    if (renamed.length) result[viewKey] = renamed;
+  }
+  return result;
+}
+
 function normalizePreferences(value = {}) {
   const tags = normalizeTags(value.tags);
   return {
@@ -59,6 +100,7 @@ function normalizePreferences(value = {}) {
     favorites: normalizeFavorites(value.favorites),
     tags,
     sessionTags: normalizeSessionTags(value.sessionTags, tags),
+    tabOrders: normalizeTabOrders(value.tabOrders, tags),
     lastSession: typeof value.lastSession === 'string' && value.lastSession.trim()
       ? value.lastSession.trim()
       : null,
@@ -180,6 +222,7 @@ class PreferencesStore {
         item === oldValue ? newValue : item
       )));
       const sessionTags = { ...current.sessionTags };
+      let tabOrders = current.tabOrders;
       if (oldValue !== newValue) {
         const merged = [...new Set([
           ...(sessionTags[newValue] || []),
@@ -187,10 +230,12 @@ class PreferencesStore {
         ])];
         delete sessionTags[oldValue];
         if (merged.length) sessionTags[newValue] = merged;
+        tabOrders = renameInTabOrders(current.tabOrders, oldValue, newValue);
       }
       return {
         favorites,
         sessionTags,
+        tabOrders,
         lastSession: current.lastSession === oldValue ? newValue : current.lastSession,
       };
     });
@@ -242,9 +287,12 @@ class PreferencesStore {
         const remaining = ids.filter((item) => item !== tagId);
         if (remaining.length) sessionTags[name] = remaining;
       }
+      const tabOrders = { ...current.tabOrders };
+      delete tabOrders[tagId];
       return {
         tags: current.tags.filter((tag) => tag.id !== tagId),
         sessionTags,
+        tabOrders,
       };
     });
   }

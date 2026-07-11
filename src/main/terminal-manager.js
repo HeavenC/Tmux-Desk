@@ -31,6 +31,11 @@ class TerminalManager {
     const terminalId = this.nextTerminalId++;
     const args = [
       ...(this.socketName ? ['-L', this.socketName] : []),
+      // Declare clipboard + RGB terminal features for this client so tmux (with
+      // set-clipboard external) emits OSC52 on selection/copy — otherwise tmux
+      // only sends it to clients whose terminfo/terminal-features already claim
+      // clipboard support (xterm.js's "xterm-256color" advertises neither).
+      '-T', 'clipboard,RGB',
       'attach-session', '-t', sessionId,
     ];
     const process = this.pty.spawn(this.tmuxPath, args, {

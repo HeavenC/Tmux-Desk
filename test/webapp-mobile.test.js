@@ -35,7 +35,7 @@ test('mobile all view keeps the newest copy of each session without mutating inp
   assert.deepEqual(sessions, before);
 });
 
-test('mobile favorites and tag views share activity ordering and deduplicate names', () => {
+test('mobile favorites and tag views fall back to a name sort without a stored tab order, deduplicating names', () => {
   assert.deepEqual(
     mobileSessionsForView(sessions, preferences, { kind: 'favorites' }).map((session) => session.name),
     ['api', 'worker'],
@@ -49,6 +49,18 @@ test('mobile favorites and tag views share activity ordering and deduplicate nam
     ['worker'],
   );
   assert.equal(liveCountForView(sessions, preferences, { kind: 'tag', tagId: 'tag-a' }), 2);
+});
+
+test('mobile favorites and tag views honor a stored tab order, same as the desktop compact view', () => {
+  const ordered = { ...preferences, tabOrders: { favorites: ['worker', 'api'], 'tag-a': ['worker', 'api'] } };
+  assert.deepEqual(
+    mobileSessionsForView(sessions, ordered, { kind: 'favorites' }).map((session) => session.name),
+    ['worker', 'api'],
+  );
+  assert.deepEqual(
+    mobileSessionsForView(sessions, ordered, { kind: 'tag', tagId: 'tag-a' }).map((session) => session.name),
+    ['worker', 'api'],
+  );
 });
 
 test('mobile selector tolerates malformed payloads and unknown views', () => {

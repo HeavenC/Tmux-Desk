@@ -1,5 +1,6 @@
 const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
+const { ClipboardAddon } = require('@xterm/addon-clipboard');
 const { liveCountForView, mobileSessionsForView } = require('./mobile-session-model');
 
 const LIST_REFRESH_MS = 15000;
@@ -28,7 +29,7 @@ const state = {
   token: '',
   currentView: 'list',
   sessions: [],
-  preferences: { tags: [], favorites: [], sessionTags: {} },
+  preferences: { tags: [], favorites: [], sessionTags: {}, tabOrders: {} },
   listView: { kind: 'all' },
   currentSession: null,
   grouped: null,
@@ -42,6 +43,8 @@ const state = {
   theme: 'light',
   term: null,
   fitAddon: null,
+  termTextarea: null,
+  keyboardActive: false,
 };
 
 const el = (id) => document.getElementById(id);
@@ -119,6 +122,11 @@ function normalizePreferenceProjection(value) {
       && typeof preferences.sessionTags === 'object'
       && !Array.isArray(preferences.sessionTags)
       ? preferences.sessionTags
+      : {},
+    tabOrders: preferences.tabOrders
+      && typeof preferences.tabOrders === 'object'
+      && !Array.isArray(preferences.tabOrders)
+      ? preferences.tabOrders
       : {},
   };
 }
@@ -398,17 +406,65 @@ function ensureTerminalCreated() {
   if (state.term) return;
   const term = new Terminal({
     fontSize: 13,
-    fontFamily: 'Menlo, Monaco, monospace',
+    fontFamily: '"Tmux Desk Mono", Menlo, Monaco, monospace',
     cursorBlink: true,
     scrollback: 3000,
     theme: TERMINAL_THEMES[state.theme],
   });
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+  // Lets tmux's OSC52 (set-clipboard external + the "clipboard" terminal
+  // feature TerminalManager.attach() now requests) reach the phone's system
+  // clipboard — xterm.js otherwise ignores OSC52 entirely.
+  term.loadAddon(new ClipboardAddon());
   term.open(el('terminal-container'));
   term.onData((data) => handleTerminalInput(data));
   state.term = term;
   state.fitAddon = fitAddon;
+  setupKeyboardGate();
+}
+
+// iOS only shows the on-screen keyboard for a focus() call when the focused
+// field is actually editable at that moment — readonly + inputmode="none"
+// together suppress it (inputmode alone isn't reliably honored on older
+// Safari) while still letting a physical/Bluetooth keyboard reach xterm via
+// keydown, and without touching the input path used by the toolbar keys
+// (those call sendWsInput() directly over the websocket, never through this
+// textarea). Toggled explicitly via the keyboard-btn toolbar button.
+function setupKeyboardGate() {
+  const textarea = state.term?.element?.querySelector('.xterm-helper-textarea');
+  if (!textarea) return;
+  state.termTextarea = textarea;
+  lockKeyboard();
+  textarea.addEventListener('blur', lockKeyboard);
+}
+
+function lockKeyboard() {
+  const textarea = state.termTextarea;
+  if (!textarea) return;
+  textarea.setAttribute('readonly', 'readonly');
+  textarea.setAttribute('inputmode', 'none');
+  state.keyboardActive = false;
+  el('keyboard-btn')?.classList.remove('active');
+}
+
+function unlockKeyboard() {
+  const textarea = state.termTextarea;
+  if (!textarea) return;
+  textarea.removeAttribute('readonly');
+  textarea.removeAttribute('inputmode');
+  state.keyboardActive = true;
+  el('keyboard-btn')?.classList.add('active');
+}
+
+function toggleKeyboard() {
+  if (!state.term) return;
+  if (state.keyboardActive) {
+    state.term.blur();
+  } else {
+    unlockKeyboard();
+    state.term.focus();
+  }
 }
 
 function handleTerminalInput(data) {
@@ -424,6 +480,54 @@ function handleTerminalInput(data) {
 function setCtrlActive(active) {
   state.ctrlActive = active;
   el('ctrl-btn').classList.toggle('active', active);
+}
+
+// xterm.js has no native long-press text selection on touch, and tmux runs
+// with mouse mode on globally so touches drive tmux's own mouse tracking
+// instead of producing a local xterm selection. This dumps the visible
+// scrollback into a plain <pre> the OS can natively select/copy from.
+const COPY_OVERLAY_MAX_LINES = 2000;
+
+function getTerminalBufferText(term, maxLines = COPY_OVERLAY_MAX_LINES) {
+  const buffer = term?.buffer?.active;
+  if (!buffer) return '';
+  const total = buffer.length;
+  const start = Math.max(0, total - maxLines);
+  const lines = [];
+  for (let y = start; y < total; y += 1) {
+    const line = buffer.getLine(y);
+    if (!line) continue;
+    lines.push(line.translateToString(true));
+  }
+  return lines.join('\n').replace(/\s+$/, '');
+}
+
+function openCopyOverlay() {
+  if (!state.term) return;
+  el('copy-modal-text').textContent = getTerminalBufferText(state.term);
+  el('copy-modal').hidden = false;
+}
+
+function closeCopyOverlay() {
+  el('copy-modal').hidden = true;
+}
+
+async function copyOverlayText() {
+  const pre = el('copy-modal-text');
+  const text = pre.textContent || '';
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('已复制到剪贴板');
+  } catch {
+    // Clipboard API unavailable/denied: select the text so the user can
+    // still copy it manually (long-press → 拷贝 on iOS/Android).
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(pre);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    showToast('无法自动复制，已为你选中内容，请手动复制');
+  }
 }
 
 function sendWsJson(payload) {
@@ -587,6 +691,7 @@ const TOOLBAR_SEQUENCES = {
   esc: '\x1b',
   tab: '\t',
   prefix: '\x02',
+  'ctrl-c': '\x03',
   left: '\x1b[D',
   down: '\x1b[B',
   up: '\x1b[A',
@@ -602,18 +707,27 @@ function runToolbarKey(key) {
   state.term?.focus();
 }
 
-function setupToolbar() {
-  document.querySelectorAll('.key-btn').forEach((button) => {
-    const key = button.dataset.key;
-    button.addEventListener('mousedown', (event) => event.preventDefault());
-    button.addEventListener('touchstart', (event) => event.preventDefault(), { passive: false });
-    // iOS：touchstart 已 preventDefault，不会再合成 click，动作在 touchend 执行
-    button.addEventListener('touchend', (event) => {
-      event.preventDefault();
-      runToolbarKey(key);
-    });
-    button.addEventListener('click', () => runToolbarKey(key));
+// Shared tap binding for toolbar-style buttons: avoids the ~300ms synthetic
+// click delay and the double-fire some mobile browsers produce for
+// touchend+click on the same tap.
+function bindTap(button, handler) {
+  if (!button) return;
+  button.addEventListener('mousedown', (event) => event.preventDefault());
+  button.addEventListener('touchstart', (event) => event.preventDefault(), { passive: false });
+  // iOS：touchstart 已 preventDefault，不会再合成 click，动作在 touchend 执行
+  button.addEventListener('touchend', (event) => {
+    event.preventDefault();
+    handler();
   });
+  button.addEventListener('click', () => handler());
+}
+
+function setupToolbar() {
+  document.querySelectorAll('.key-btn[data-key]').forEach((button) => {
+    bindTap(button, () => runToolbarKey(button.dataset.key));
+  });
+  bindTap(el('copy-btn'), openCopyOverlay);
+  bindTap(el('keyboard-btn'), toggleKeyboard);
 }
 
 function sendScrollLine(up, clientX, clientY, rect) {
@@ -702,8 +816,15 @@ function setupStaticHandlers() {
   el('session-tags-modal').addEventListener('click', (event) => {
     if (event.target === el('session-tags-modal')) closeSessionTagsModal();
   });
+  bindTap(el('copy-modal-close'), closeCopyOverlay);
+  bindTap(el('copy-modal-selectall'), copyOverlayText);
+  el('copy-modal').addEventListener('click', (event) => {
+    if (event.target === el('copy-modal')) closeCopyOverlay();
+  });
   document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !el('session-tags-modal').hidden) closeSessionTagsModal();
+    if (event.key !== 'Escape') return;
+    if (!el('session-tags-modal').hidden) closeSessionTagsModal();
+    if (!el('copy-modal').hidden) closeCopyOverlay();
   });
 }
 
@@ -715,6 +836,10 @@ function bootstrap() {
   setupTouchScroll();
   setupViewportHandling();
   renderWorkspaceFilters();
+  // Warm the composite terminal font ahead of the first term.open() so the
+  // very first paint doesn't fall back to the browser default monospace
+  // font while "Tmux Desk Mono" is still resolving.
+  document.fonts?.load?.('13px "Tmux Desk Mono"', 'Aa中。（）').catch(() => {});
   if (!state.token) {
     setListState({ loading: false, error: '缺少 token 参数，请通过正确链接访问' });
     return;
