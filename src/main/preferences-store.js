@@ -23,6 +23,7 @@ const DEFAULT_PREFERENCES = Object.freeze({
   sidebarWidth: null,
   tagRailExpanded: false,
   tagRailWidth: null,
+  webQuickKeys: [],
 });
 const SIDEBAR_WIDTH_RANGE = Object.freeze({ min: 200, max: 420 });
 const TAG_RAIL_WIDTH_RANGE = Object.freeze({ min: 180, max: 420 });
@@ -117,7 +118,28 @@ function normalizePreferences(value = {}) {
       ? value.tagRailExpanded
       : DEFAULT_PREFERENCES.tagRailExpanded,
     tagRailWidth: normalizeTagRailWidth(value.tagRailWidth),
+    webQuickKeys: normalizeWebQuickKeys(value.webQuickKeys),
   };
+}
+
+// The mobile web toolbar's user-defined keys, stored on this machine so every
+// phone that connects shares them. Validated structurally; the web client drops
+// any preset id it no longer recognizes.
+function normalizeWebQuickKeys(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    if (item.type === 'preset' && typeof item.id === 'string' && item.id && item.id.length <= 40) {
+      out.push({ type: 'preset', id: item.id });
+    } else if (item.type === 'text' && typeof item.label === 'string' && typeof item.text === 'string') {
+      const label = item.label.slice(0, 16);
+      const text = item.text.slice(0, 200);
+      if (label && text) out.push({ type: 'text', label, text, enter: item.enter === true });
+    }
+    if (out.length >= 40) break;
+  }
+  return out;
 }
 
 function normalizeSessionName(value) {
@@ -348,6 +370,11 @@ class PreferencesStore {
         tabOrders,
       };
     });
+  }
+
+  async setWebQuickKeys(keys) {
+    const webQuickKeys = normalizeWebQuickKeys(keys);
+    return this.update(() => ({ webQuickKeys }));
   }
 
   async setSessionTags(name, ids) {

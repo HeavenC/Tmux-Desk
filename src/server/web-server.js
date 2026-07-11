@@ -94,6 +94,8 @@ function publicPreferences(value) {
     // Mobile has no drag UI, but it should still show the desktop's manual
     // tab order rather than falling back to activity/alphabetical sorting.
     tabOrders: preferences.tabOrders,
+    // Shared across every phone that connects to this machine.
+    webQuickKeys: preferences.webQuickKeys,
   };
 }
 
@@ -211,6 +213,17 @@ function startWebServer({
         ok: true,
         preferences: publicPreferences(preferences),
       });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/quick-keys') {
+      const preferences = await preferencesStore.load();
+      return sendJson(res, 200, { ok: true, keys: preferences.webQuickKeys });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/quick-keys') {
+      const body = await readJsonBody(req);
+      const keys = Array.isArray(body) ? body : (body && Array.isArray(body.keys) ? body.keys : null);
+      if (!keys) return sendError(res, 400, '快捷键格式无效');
+      const preferences = await preferencesStore.setWebQuickKeys(keys);
+      return sendJson(res, 200, { ok: true, preferences: publicPreferences(preferences) });
     }
     if (req.method === 'GET' && url.pathname === '/api/session-detail') {
       const detail = await service.getSessionDetail(url.searchParams.get('session'));

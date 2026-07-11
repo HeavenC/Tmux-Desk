@@ -38,7 +38,7 @@ test('malformed and invalid preferences fall back to normalized defaults', async
     }), 'utf8');
     assert.deepEqual(await store.load(), {
       theme: 'light', favorites: ['api'], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null,
-      sidebarWidth: null, tagRailExpanded: false, tagRailWidth: null,
+      sidebarWidth: null, tagRailExpanded: false, tagRailWidth: null, webQuickKeys: [],
     });
   });
 });
@@ -218,6 +218,22 @@ test('pinning holds order above the recency list and supports manual reorder', a
     assert.deepEqual(prefs.tags.map((tag) => tag.name), ['APP', 'PROD', 'DMS', 'K8S']);
     assert.equal(prefs.tags.find((tag) => tag.name === 'PROD').pinned, undefined);
   }, { createId: () => ids.shift() });
+});
+
+test('web quick keys persist and normalize preset and text entries', async () => {
+  await withStore(async (store) => {
+    const saved = await store.setWebQuickKeys([
+      { type: 'preset', id: 'esc' },
+      { type: 'text', label: 'usage', text: '/usage', enter: true },
+      { type: 'text', label: '', text: 'dropped' }, // no label → dropped
+      { type: 'bogus' }, // unknown → dropped
+    ]);
+    assert.deepEqual(saved.webQuickKeys, [
+      { type: 'preset', id: 'esc' },
+      { type: 'text', label: 'usage', text: '/usage', enter: true },
+    ]);
+    assert.deepEqual((await store.load()).webQuickKeys, saved.webQuickKeys);
+  });
 });
 
 test('persisted pinned tags are partitioned above the rest on load', async () => {

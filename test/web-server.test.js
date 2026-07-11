@@ -79,6 +79,7 @@ test('web API projects shared tags and validates mobile session assignments', as
       favorites: ['worker'],
       sessionTags: { api: [first.id] },
       tabOrders: {},
+      webQuickKeys: [],
     });
     assert.equal('theme' in list.body.preferences, false);
     assert.deepEqual(killed, ['$9']);
