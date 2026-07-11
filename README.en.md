@@ -68,7 +68,7 @@ Tmux Desk's terminal *is* your local tmux, and it **reads `~/.tmux.conf` as usua
 |---|---|---|
 | Mouse wheel scrolls history, drag-to-select works in the terminal | tmux | `set -g mouse on` |
 | How many lines you can scroll back | tmux | `set -g history-limit 50000` |
-| **Shift+Enter inserts a newline** (isn't swallowed) in Claude Code etc. | tmux + terminal features | `set -s extended-keys on` / `set -as terminal-features 'xterm*:extkeys'` |
+| **Shift+Enter inserts a newline** (isn't swallowed) in some TUI / REPL programs | tmux + terminal features | `set -s extended-keys on` / `set -as terminal-features 'xterm*:extkeys'` |
 | `⌘1…9` window numbers start at **1**; numbers renumber after you close a window | tmux | `set -g base-index 1` / `setw -g pane-base-index 1` / `set -g renumber-windows on` (tmux defaults to 0-based, no renumber) |
 | Closing the **last pane** of a session doesn't exit tmux but switches to another session | tmux | `set -g detach-on-destroy off` |
 | Releasing a mouse drag copies to the system clipboard | tmux (this path) | e.g. `bind -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-no-clear "pbcopy"` |

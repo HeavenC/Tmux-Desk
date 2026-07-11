@@ -741,7 +741,7 @@ function openSocket(sessionId) {
   ws.onerror = () => {};
 }
 
-// Auto-reconnect on an unexpected drop, Claude Code-style: retry with growing
+// Auto-reconnect on an unexpected drop: retry with growing
 // delay up to RECONNECT_MAX times, surfacing progress; only after all attempts
 // fail do we fall back to a manual "重连" button.
 function scheduleReconnect(sessionId) {

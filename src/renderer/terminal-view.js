@@ -106,7 +106,7 @@ class TerminalView {
     // Terminals send \r for both Enter and Shift+Enter, so a TUI can't tell them
     // apart. Cancel the hidden textarea's native Enter action, then send one bare
     // LF byte. Without preventDefault(), Chromium emits an extra CR after our LF,
-    // which makes Claude Code submit the message immediately after adding a line.
+    // which makes some TUIs submit the message immediately after adding a line.
     this.terminal.attachCustomKeyEventHandler((event) => {
       if (event.type === 'keydown' && event.key === 'Enter'
         && event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey

@@ -62,6 +62,7 @@
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "target": [
         "dmg",
         "zip"

@@ -68,7 +68,7 @@ Tmux Desk 的终端就是你本机的 tmux，attach 时**照常读取 `~/.tmux.c
 |---|---|---|
 | 终端里能用鼠标滚轮翻历史、拖动选择 | tmux | `set -g mouse on` |
 | 能往回翻多少行 | tmux | `set -g history-limit 50000` |
-| 在 Claude Code 等程序里 **Shift+Enter 能换行**（不被吞） | tmux + 终端特性 | `set -s extended-keys on` / `set -as terminal-features 'xterm*:extkeys'` |
+| 某些 TUI / REPL 程序里 **Shift+Enter 能换行**（不被吞） | tmux + 终端特性 | `set -s extended-keys on` / `set -as terminal-features 'xterm*:extkeys'` |
 | `⌘1…9` 对应的 window 编号从 **1** 开始；关掉一个 window 后编号自动重排 | tmux | `set -g base-index 1` / `setw -g pane-base-index 1` / `set -g renumber-windows on`（tmux 默认从 0 开始、不重排） |
 | 关掉会话里**最后一个 pane** 时不退出 tmux、而是自动切到别的会话 | tmux | `set -g detach-on-destroy off` |
 | 鼠标拖选松开就复制到系统剪贴板 | tmux（这条链路）| `bind -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-no-clear "pbcopy"` 之类 |
