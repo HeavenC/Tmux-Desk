@@ -13,7 +13,7 @@ const state = {
   systemStatus: { installed: false, path: null, version: null },
   preferences: {
     theme: 'light', favorites: [], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null, sidebarWidth: null,
-    tagRailExpanded: false,
+    tagRailExpanded: false, tagRailWidth: null,
   },
   sessions: [],
   selectedSessionId: null,
@@ -26,6 +26,7 @@ const state = {
 };
 
 const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 let terminalView = null;
 let pollTimer = null;
 let selectionToken = 0;
@@ -51,7 +52,7 @@ function cacheElements() {
     'sessionTagsModal', 'sessionTagsForm', 'sessionTagsMessage', 'sessionTagsList',
     'tagDeleteModal', 'tagDeleteMessage', 'confirmTagDeleteButton',
     'filesToggleButton', 'fileBrowser', 'fbTree', 'fbPath', 'fbRevealButton', 'fbRefreshButton', 'fbCollapseButton',
-    'sidebarResizer', 'tagRailToggleButton', 'settingsScroll',
+    'sidebarResizer', 'tagRailResizer', 'tagRailToggleButton', 'settingsScroll',
   ]) refs[id] = document.getElementById(id);
 }
 
@@ -141,9 +142,15 @@ function shortenPath(value) {
 
 const SIDEBAR_WIDTH_MIN = 200;
 const SIDEBAR_WIDTH_MAX = 420;
+const TAG_RAIL_WIDTH_MIN = 180;
+const TAG_RAIL_WIDTH_MAX = 420;
 
 function clampSidebarWidth(value) {
   return Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, Math.round(value)));
+}
+
+function clampTagRailWidth(value) {
+  return Math.min(TAG_RAIL_WIDTH_MAX, Math.max(TAG_RAIL_WIDTH_MIN, Math.round(value)));
 }
 
 // Change only the sidebar track. Compact-view and narrow-window rules keep
@@ -153,6 +160,13 @@ function applySidebarWidth() {
   const custom = Number.isFinite(stored) ? clampSidebarWidth(stored) : null;
   if (custom === null) refs.appShell.style.removeProperty('--session-sidebar-width');
   else refs.appShell.style.setProperty('--session-sidebar-width', `${custom}px`);
+}
+
+function applyTagRailWidth() {
+  const stored = state.preferences.tagRailWidth;
+  const custom = Number.isFinite(stored) ? clampTagRailWidth(stored) : null;
+  if (custom === null) refs.appShell.style.removeProperty('--activity-rail-expanded-width');
+  else refs.appShell.style.setProperty('--activity-rail-expanded-width', `${custom}px`);
 }
 
 function applyTagRailExpanded() {
@@ -176,6 +190,54 @@ async function setTagRailExpanded(expanded) {
     applyTagRailExpanded();
     toast(friendlyError(error), 'error');
   }
+}
+
+function bindTagRailResizer() {
+  refs.tagRailResizer.addEventListener('mousedown', (event) => {
+    if (event.button !== 0 || state.preferences.tagRailExpanded !== true) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = $('.activity-rail').getBoundingClientRect().width;
+    const previous = state.preferences.tagRailWidth;
+    let width = clampTagRailWidth(startWidth);
+    let moved = false;
+    refs.tagRailResizer.classList.add('dragging');
+    document.body.classList.add('tag-rail-resizing');
+    const onMove = (moveEvent) => {
+      moved = true;
+      width = clampTagRailWidth(startWidth + moveEvent.clientX - startX);
+      refs.appShell.style.setProperty('--activity-rail-expanded-width', `${width}px`);
+    };
+    const onUp = async () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      refs.tagRailResizer.classList.remove('dragging');
+      document.body.classList.remove('tag-rail-resizing');
+      if (!moved) return;
+      state.preferences = { ...state.preferences, tagRailWidth: width };
+      try {
+        state.preferences = await api.savePreferences({ tagRailWidth: width });
+      } catch (error) {
+        state.preferences = { ...state.preferences, tagRailWidth: previous };
+        toast(friendlyError(error), 'error');
+      }
+      applyTagRailWidth();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
+  refs.tagRailResizer.addEventListener('dblclick', async () => {
+    if (state.preferences.tagRailExpanded !== true) return;
+    const previous = state.preferences.tagRailWidth;
+    state.preferences = { ...state.preferences, tagRailWidth: null };
+    try {
+      state.preferences = await api.savePreferences({ tagRailWidth: null });
+    } catch (error) {
+      state.preferences = { ...state.preferences, tagRailWidth: previous };
+      toast(friendlyError(error), 'error');
+    }
+    applyTagRailWidth();
+  });
 }
 
 function bindSidebarResizer() {
@@ -312,7 +374,34 @@ function sessionMeta(session) {
   return session.activeCommand ? `${counts} · ${session.activeCommand}` : counts;
 }
 
-function renderTagRail() {
+function tagRailPositions() {
+  return new Map([...refs.tagRail.querySelectorAll('[data-tag-id]')].map((button) => (
+    [button.dataset.tagId, button.getBoundingClientRect().top]
+  )));
+}
+
+function animateTagRail(previousPositions) {
+  if (!previousPositions?.size || reducedMotion.matches) return;
+  for (const button of refs.tagRail.querySelectorAll('[data-tag-id]')) {
+    const previousTop = previousPositions.get(button.dataset.tagId);
+    if (!Number.isFinite(previousTop) || typeof button.animate !== 'function') continue;
+    const nextTop = button.getBoundingClientRect().top;
+    const delta = previousTop - nextTop;
+    if (Math.abs(delta) < 0.5) continue;
+    button.animate(
+      [{ transform: `translateY(${delta}px)` }, { transform: 'translateY(0)' }],
+      { duration: 180, easing: 'cubic-bezier(.2, .8, .2, 1)' },
+    );
+  }
+}
+
+function sameTagList(left, right) {
+  return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+    && left.every((tag, index) => tag.id === right[index].id
+      && tag.name === right[index].name && tag.color === right[index].color);
+}
+
+function renderTagRail(previousPositions = null) {
   refs.tagRail.replaceChildren();
   document.querySelectorAll('[data-view]').forEach((button) => {
     button.classList.toggle('active', button.dataset.view === state.view.kind);
@@ -345,29 +434,31 @@ function renderTagRail() {
     });
     refs.tagRail.append(button);
   }
+  animateTagRail(previousPositions);
 }
 
 async function activateTag(tag) {
   const token = ++tagActivationToken;
   const index = state.preferences.tags.findIndex((item) => item.id === tag.id);
+  const previousPositions = index > 0 ? tagRailPositions() : null;
   if (index > 0) {
     state.preferences = {
       ...state.preferences,
       tags: [tag, ...state.preferences.tags.filter((item) => item.id !== tag.id)],
     };
-    renderTagRail();
     renderTagSettings();
   }
   const touchResult = api.touchTag(tag.id).then(
     (preferences) => ({ tags: preferences.tags }),
     (error) => ({ error }),
   );
-  await setView({ kind: 'tag', tagId: tag.id });
+  await setView({ kind: 'tag', tagId: tag.id }, { tagRailPreviousPositions: previousPositions });
   const result = await touchResult;
   if (token !== tagActivationToken) return;
   if (!result.error) {
+    const needsRender = !sameTagList(state.preferences.tags, result.tags);
     state.preferences = { ...state.preferences, tags: result.tags };
-    renderTagRail();
+    if (needsRender) renderTagRail();
     renderTagSettings();
     return;
   }
@@ -815,7 +906,7 @@ async function clearSessionSelection() {
   renderDetail();
 }
 
-async function setView(view) {
+async function setView(view, { tagRailPreviousPositions = null } = {}) {
   let nextView = view;
   if (!nextView || !['all', 'favorites', 'tag'].includes(nextView.kind)) nextView = { kind: 'all' };
   if (nextView.kind === 'tag' && !state.preferences.tags.some((tag) => tag.id === nextView.tagId)) {
@@ -825,7 +916,7 @@ async function setView(view) {
   refs.appShell.classList.toggle('compact-view', nextView.kind !== 'all');
   applySidebarWidth();
   closeFloatingMenus();
-  renderTagRail();
+  renderTagRail(tagRailPreviousPositions);
   renderSessionList();
   renderSessionTabs();
   renderWorkspace();
@@ -1478,6 +1569,7 @@ function bindEvents() {
   });
 
   refs.filesToggleButton.addEventListener('click', toggleFileBrowser);
+  bindTagRailResizer();
   bindSidebarResizer();
   refs.fbCollapseButton.addEventListener('click', () => setFileBrowserOpen(false));
   refs.fbRefreshButton.addEventListener('click', () => syncFileBrowser(true));
@@ -1713,6 +1805,7 @@ async function initialize() {
     state.preferences = await api.getPreferences();
     applyCurrentTheme();
     applySidebarWidth();
+    applyTagRailWidth();
     applyTagRailExpanded();
     await refreshSessions({ initial: true });
     pollTimer = setInterval(() => { if (!document.hidden) refreshSessions(); }, 2000);

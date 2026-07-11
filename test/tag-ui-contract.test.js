@@ -10,7 +10,7 @@ test('renderer exposes tag navigation, management dialogs, and one session tab r
   for (const id of [
     'appShell', 'tagRail', 'newTagButton', 'sessionTabs', 'tagEditorModal', 'tagEditorForm',
     'sessionTagsModal', 'sessionTagsForm', 'tagDeleteModal', 'tagSettingsList', 'settingsNewTagButton',
-    'sidebarResizer', 'tagRailToggleButton', 'settingsScroll',
+    'sidebarResizer', 'tagRailResizer', 'tagRailToggleButton', 'settingsScroll',
   ]) {
     assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
   }
@@ -23,8 +23,9 @@ test('renderer exposes tag navigation, management dialogs, and one session tab r
 test('tag rail owns the available height and compact views keep the dynamic rail width', async () => {
   const css = await readFile(join(rendererDir, 'styles.css'), 'utf8');
   assert.match(css, /--activity-rail-width:\s*62px/);
-  assert.match(css, /\.app-shell\.tag-rail-expanded\s*\{[^}]*--activity-rail-width:/s);
-  assert.match(css, /\.app-shell\.compact-view\s*\{[^}]*grid-template-columns:\s*var\(--activity-rail-width\)\s+minmax\(0,\s*1fr\)\s+auto/s);
+  assert.match(css, /--tag-rail-resizer-width:\s*0px/);
+  assert.match(css, /\.app-shell\.tag-rail-expanded\s*\{[^}]*--activity-rail-width:[^}]*--tag-rail-resizer-width:\s*5px/s);
+  assert.match(css, /\.app-shell\.compact-view\s*\{[^}]*grid-template-columns:\s*var\(--activity-rail-width\)\s+var\(--tag-rail-resizer-width\)\s+minmax\(0,\s*1fr\)\s+auto/s);
   assert.match(css, /\.app-shell\.compact-view\s+\.session-sidebar\s*\{[^}]*display:\s*none/s);
   assert.match(css, /\.session-tabs:empty\s*\{[^}]*min-height:\s*0/s);
   assert.match(css, /\.tag-rail\s*\{[^}]*flex:\s*1[^}]*overflow-y:\s*auto/s);
@@ -32,7 +33,10 @@ test('tag rail owns the available height and compact views keep the dynamic rail
   assert.match(css, /\.tag-name\s*\{/);
   assert.match(css, /\.app-shell\.compact-view\s+\.sidebar-resizer\s*\{[^}]*display:\s*none/s);
   assert.match(css, /--session-sidebar-width:\s*284px/);
-  assert.match(css, /grid-template-columns:\s*var\(--activity-rail-width\)\s+var\(--session-sidebar-width\)\s+0\s+minmax\(0,\s*1fr\)\s+auto/);
+  assert.match(css, /grid-template-columns:\s*var\(--activity-rail-width\)\s+var\(--tag-rail-resizer-width\)\s+var\(--session-sidebar-width\)\s+0\s+minmax\(0,\s*1fr\)\s+auto/);
+  assert.match(css, /\.tag-rail-resizer\s*\{[^}]*cursor:\s*col-resize/s);
+  assert.match(css, /\.app-shell:not\(\.tag-rail-expanded\)\s+\.tag-rail-resizer\s*\{[^}]*pointer-events:\s*none/s);
+  assert.match(css, /body\.tag-rail-resizing\s*\{[^}]*user-select:\s*none/s);
   assert.match(css, /@media\s*\(max-width:\s*1050px\)[\s\S]*--activity-rail-width:\s*56px/);
 });
 
@@ -54,6 +58,17 @@ test('renderer controller uses explicit all, favorites, and tag workspace state'
   assert.match(app, /function renderTagRail\(/);
   assert.match(app, /api\.touchTag\(/);
   assert.match(app, /tagRailExpanded/);
+  assert.match(app, /tagRailWidth/);
+  assert.match(app, /const TAG_RAIL_WIDTH_MIN\s*=\s*180/);
+  assert.match(app, /const TAG_RAIL_WIDTH_MAX\s*=\s*420/);
+  assert.match(app, /function clampTagRailWidth\(/);
+  assert.match(app, /function applyTagRailWidth\(/);
+  assert.match(app, /function bindTagRailResizer\(/);
+  assert.match(app, /savePreferences\(\{ tagRailWidth: width \}\)/);
+  assert.match(app, /savePreferences\(\{ tagRailWidth: null \}\)/);
+  assert.match(app, /function tagRailPositions\(/);
+  assert.match(app, /prefers-reduced-motion:\s*reduce/);
+  assert.match(app, /\.animate\([\s\S]*duration:\s*180[\s\S]*cubic-bezier\(\.2,\s*\.8,\s*\.2,\s*1\)/);
   assert.doesNotMatch(app, /result\.preferences/);
   assert.match(app, /const token\s*=\s*\+\+tagActivationToken/);
   assert.ok((app.match(/token\s*!==\s*tagActivationToken/g) || []).length >= 2);
