@@ -350,12 +350,18 @@ async function activateTag(tag) {
     renderTagSettings();
   }
   const touchResult = api.touchTag(tag.id).then(
-    () => ({ ok: true }),
+    (preferences) => ({ tags: preferences.tags }),
     (error) => ({ error }),
   );
   await setView({ kind: 'tag', tagId: tag.id });
   const result = await touchResult;
-  if (!result.error || token !== tagActivationToken) return;
+  if (token !== tagActivationToken) return;
+  if (!result.error) {
+    state.preferences = { ...state.preferences, tags: result.tags };
+    renderTagRail();
+    renderTagSettings();
+    return;
+  }
   try {
     const preferences = await api.getPreferences();
     if (token !== tagActivationToken) return;
