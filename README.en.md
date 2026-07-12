@@ -135,10 +135,64 @@ Grab the artifact for your platform from [Releases](https://github.com/HeavenC/T
 
 Windows has no native tmux, so Tmux Desk runs tmux through **WSL**: the desktop side is still a Windows Electron app, but every tmux control command and terminal attach runs inside WSL as `wsl.exe -e tmux …`, and session/window/pane working directories are WSL-side paths.
 
-**Requirements**
+> **In one sentence**: Tmux Desk is the "window + interaction"; tmux is the "session engine running in the background." Windows has no tmux, so the engine runs inside WSL (a lightweight Linux on Windows) and Tmux Desk just displays it. So the order is **WSL first, then tmux, then Tmux Desk**.
 
-- Windows 10 (1903+) or Windows 11 with **WSL2** and a distro (Ubuntu, etc.) installed
-- tmux inside WSL: `sudo apt install tmux`
+### From scratch (new users — 4 steps)
+
+**Step 1 · Install WSL2**
+
+If you've never used WSL, open **PowerShell as administrator** (Start menu → search "PowerShell" → right-click → Run as administrator) and run:
+
+```powershell
+wsl --install
+```
+
+This single command enables the WSL feature, installs WSL2, and installs the default distro **Ubuntu**. **Reboot** when it finishes.
+
+> Works on Windows 11 and recent Windows 10 (2004+). If it says `wsl` is not recognized, your system is too old — see "Manual install on older Windows" below.
+
+**Step 2 · Set up Ubuntu**
+
+After rebooting, **Ubuntu** appears in the Start menu — open it. On first launch it asks you to create a **Linux username and password** (unrelated to your Windows account; just remember it — the password stays hidden while typing, which is normal). You're done once you see the shell prompt (like `you@pc:~$`).
+
+**Step 3 · Install tmux inside Ubuntu**
+
+In that Ubuntu window, run line by line (the first asks for the password from Step 2):
+
+```bash
+sudo apt update
+sudo apt install -y tmux
+tmux -V          # prints a tmux version number → installed
+```
+
+**Step 4 · Install and launch Tmux Desk**
+
+Download `Tmux Desk Setup <version>.exe` from [Releases](https://github.com/HeavenC/Tmux-Desk/releases), double-click to install, then launch it. The app finds tmux through WSL automatically; if it doesn't right after install, click **"Re-detect"** in the UI.
+
+You can now create sessions, open windows, and split panes. When creating a session, the working directory can be a Windows drive (`/mnt/c/...` in tmux) or a native WSL path (`/home/your-username/...`).
+
+### Manual install on older Windows
+
+If `wsl --install` isn't available (older Windows 10), run in an admin PowerShell:
+
+```powershell
+dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+```
+
+Reboot, install the [WSL2 Linux kernel update package](https://aka.ms/wsl2kernel), then run:
+
+```powershell
+wsl --set-default-version 2
+```
+
+Finally install **Ubuntu** from the **Microsoft Store** (or `wsl --install -d Ubuntu`), then return to Step 2 above.
+
+### Troubleshooting
+
+- **App says tmux not found**: confirm `tmux -V` prints something inside WSL; if it still fails, click "Re-detect" or restart the app.
+- **Multiple distros / wrong default**: pin it with the `TMUX_DESK_WSL_DISTRO` env var (see table); list distro names with `wsl -l -q`.
+- **tmux not on the default PATH (e.g. self-compiled)**: set `TMUX_DESK_WSL_TMUX` to the absolute path of tmux inside WSL.
 
 **Optional environment variables**
 

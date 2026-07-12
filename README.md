@@ -135,10 +135,64 @@ macOS 上应用会依次检测**自带 tmux**（`.app` 内 `Contents/Resources/b
 
 Windows 上没有原生 tmux，Tmux Desk 通过 **WSL** 运行 tmux：桌面端仍是 Windows 上的 Electron 应用，所有 tmux 控制命令与终端 attach 都以 `wsl.exe -e tmux …` 的形式进入 WSL 执行，会话、window、pane 的工作目录都是 WSL 侧路径。
 
-**环境要求**
+> **一句话原理**：Tmux Desk 是「窗口 + 交互」，tmux 是「后台的会话引擎」。Windows 没有 tmux，所以引擎跑在 WSL（Windows 里的一个轻量 Linux）里，Tmux Desk 只是把它显示出来。所以**先有 WSL、再有 tmux，最后才装 Tmux Desk**。
 
-- Windows 10 (1903+) 或 Windows 11，已启用 **WSL2** 并安装一个发行版（Ubuntu 等）
-- 在 WSL 里安装 tmux：`sudo apt install tmux`
+### 从零开始（新用户按这 4 步走）
+
+**第 1 步 · 安装 WSL2**
+
+如果你从没用过 WSL，用管理员身份打开 **PowerShell**（开始菜单搜索 “PowerShell” → 右键 → 以管理员身份运行），执行：
+
+```powershell
+wsl --install
+```
+
+这一条命令会自动：启用 WSL 功能 + 安装 WSL2 + 装好默认发行版 **Ubuntu**。完成后**重启电脑**。
+
+> 适用于 Windows 11 和较新的 Windows 10（2004+）。如果提示 `wsl` 不是可识别的命令，说明系统太旧，见下方「旧版 Windows 手动安装」。
+
+**第 2 步 · 初始化 Ubuntu**
+
+重启后，开始菜单里会出现 **Ubuntu**，点开它。第一次启动会让你设置一个 **Linux 用户名和密码**（和 Windows 账号无关，随便记一个即可，输密码时屏幕不显示是正常的）。看到命令提示符（形如 `你@电脑:~$`）就成功了。
+
+**第 3 步 · 在 Ubuntu 里装 tmux**
+
+在刚打开的 Ubuntu 窗口里，逐行执行（第一行会要你输第 2 步设的密码）：
+
+```bash
+sudo apt update
+sudo apt install -y tmux
+tmux -V          # 能打印出 tmux 版本号就装好了
+```
+
+**第 4 步 · 安装并启动 Tmux Desk**
+
+到 [Releases](https://github.com/HeavenC/Tmux-Desk/releases) 下载 `Tmux Desk Setup <版本>.exe`，双击安装，然后启动。应用会自动通过 WSL 找到 tmux；如果刚装完没检测到，点界面里的**「重新检测」**即可。
+
+至此就能新建会话、开 window / 分屏了。新建会话时，工作目录既可以选 Windows 盘（在 tmux 里是 `/mnt/c/...`），也可以选 WSL 原生目录（`/home/你的用户名/...`）。
+
+### 旧版 Windows 手动安装 WSL
+
+如果 `wsl --install` 不可用（老版本 Windows 10），用管理员 PowerShell 依次执行：
+
+```powershell
+dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+```
+
+重启后，下载并安装 [WSL2 Linux 内核更新包](https://aka.ms/wsl2kernel)，再执行：
+
+```powershell
+wsl --set-default-version 2
+```
+
+最后从 **Microsoft Store** 搜索安装 **Ubuntu**（或 `wsl --install -d Ubuntu`），然后回到上面的第 2 步继续。
+
+### 常见问题
+
+- **应用提示找不到 tmux**：确认在 WSL 里 `tmux -V` 有输出；装了还不行就点应用里的「重新检测」，或重启应用。
+- **装了多个发行版 / 默认发行版不对**：用环境变量 `TMUX_DESK_WSL_DISTRO` 指定（见下表），发行版名可用 `wsl -l -q` 查看。
+- **tmux 不在默认 PATH（比如自己编译的）**：用 `TMUX_DESK_WSL_TMUX` 指定 WSL 内 tmux 的绝对路径。
 
 **可选环境变量**
 
