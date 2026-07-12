@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Hardened Runtime entitlements for a Developer ID (direct-distribution)
+    notarized build. Deliberately NO com.apple.security.app-sandbox: Tmux Desk is
+    a terminal front-end that must exec the user's system tmux and spawn shells
+    across the whole filesystem, which the App Sandbox forbids.
+
+    JIT + unsigned executable memory: required by Electron/V8.
+    disable-library-validation: node-pty ships a native .node not signed by this
+    team; without this the hardened runtime refuses to load it.
+    allow-dyld-environment-variables: node-pty/Electron rely on DYLD_* at launch.
+  -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+</dict>
+</plist>

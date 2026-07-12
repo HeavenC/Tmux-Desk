@@ -17,7 +17,10 @@
     "package:mac": "npm run build && electron-builder --mac --arm64",
     "package:mac:x64": "npm run build && electron-builder --mac --x64",
     "package:mac:universal": "npm run build && electron-builder --mac --universal",
-    "package:win": "npm run build && electron-builder --win nsis --x64"
+    "package:win": "npm run build && electron-builder --win nsis --x64",
+    "release:mac": "npm run build && scripts/release-mac.sh arm64",
+    "release:mac:x64": "npm run build && scripts/release-mac.sh x64",
+    "release:mac:universal": "npm run build && scripts/release-mac.sh universal"
   },
   "dependencies": {
     "@xterm/addon-clipboard": "^0.2.0",
@@ -63,6 +66,10 @@
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
       "target": [
         "dmg",
         "zip"

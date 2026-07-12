@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tmux Desk — Privacy Policy / 隐私政策</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2.5rem 1.25rem 4rem;
+    font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    color: #1c1f23; background: #f6f7f9;
+  }
+  main { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.9rem; margin: 0 0 .3rem; letter-spacing: -.01em; }
+  h2 { font-size: 1.2rem; margin: 2.2rem 0 .6rem; }
+  .sub { color: #6b7280; margin: 0 0 2rem; font-size: .95rem; }
+  p, li { color: #2b3036; }
+  ul { padding-left: 1.2rem; }
+  li { margin: .3rem 0; }
+  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; background: rgba(127,127,127,.14); padding: .1em .35em; border-radius: 4px; font-size: .9em; }
+  .card { background: #fff; border: 1px solid #e6e8eb; border-radius: 12px; padding: 1rem 1.4rem; margin: 1.2rem 0; }
+  hr { border: none; border-top: 1px solid #e6e8eb; margin: 3rem 0 2rem; }
+  a { color: #2563eb; }
+  footer { color: #8a9099; font-size: .85rem; margin-top: 2.5rem; }
+  .lang-label { display: inline-block; font-size: .72rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: #6b7280; border: 1px solid #d1d5db; border-radius: 999px; padding: .12rem .6rem; margin-bottom: .8rem; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e6e8eb; background: #16181c; }
+    p, li { color: #c8ccd2; }
+    .sub { color: #9aa1ab; }
+    .card { background: #1e2126; border-color: #2c3036; }
+    hr { border-top-color: #2c3036; }
+    .lang-label { color: #9aa1ab; border-color: #3a3f47; }
+    a { color: #7aa2ff; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+  <span class="lang-label">中文</span>
+  <h1>Tmux Desk 隐私政策</h1>
+  <p class="sub">最后更新：2026 年 7 月 12 日</p>
+
+  <p>Tmux Desk 是一个运行在你本地电脑上的 tmux 图形终端前端。我们的原则很简单：<strong>Tmux Desk 不收集、不上传、不出售你的任何数据。</strong></p>
+
+  <div class="card">
+    <strong>一句话总结：</strong>所有数据都留在你自己的设备上。应用不含任何遥测、分析、广告或账号系统，也不会把你的终端内容发往任何服务器。
+  </div>
+
+  <h2>我们不收集的数据</h2>
+  <ul>
+    <li>不收集个人身份信息（姓名、邮箱、账号等）——应用根本没有登录或账号功能。</li>
+    <li>不收集、不记录你在终端中输入或看到的任何内容、命令或输出。</li>
+    <li>不含分析 / 遥测 / 崩溃上报 SDK，不做用户行为追踪。</li>
+    <li>不含广告，也不与任何第三方共享数据。</li>
+  </ul>
+
+  <h2>数据存储在哪里</h2>
+  <ul>
+    <li><strong>本地偏好设置</strong>（窗口大小、页签顺序、语言等）仅保存在你电脑的应用配置目录中，从不离开设备。</li>
+    <li><strong>终端会话</strong>由你系统中的 tmux 管理，Tmux Desk 只是它的图形界面；会话内容属于 tmux 与你的 shell，不由本应用采集或传输。</li>
+  </ul>
+
+  <h2>网络访问</h2>
+  <ul>
+    <li>桌面端界面通过内容安全策略（CSP <code>connect-src 'none'</code>）禁止对外发起任何网络请求。</li>
+    <li>可选的「手机网页端」功能会在你<strong>主动开启</strong>时，于你自己的局域网内启动一个本地 WebSocket 服务，仅供你自己的设备访问；数据不经过任何我们的或第三方的服务器。</li>
+  </ul>
+
+  <h2>你的控制权</h2>
+  <p>由于数据都在本地，删除应用及其本地配置目录即可清除全部相关数据。</p>
+
+  <h2>联系方式</h2>
+  <p>有任何隐私相关问题，可在项目仓库提交 issue：<a href="https://github.com/HeavenC/Tmux-Desk">github.com/HeavenC/Tmux-Desk</a>。</p>
+
+  <hr>
+
+  <span class="lang-label">English</span>
+  <h1>Tmux Desk Privacy Policy</h1>
+  <p class="sub">Last updated: July 12, 2026</p>
+
+  <p>Tmux Desk is a graphical tmux terminal front-end that runs entirely on your local computer. Our principle is simple: <strong>Tmux Desk does not collect, transmit, or sell any of your data.</strong></p>
+
+  <div class="card">
+    <strong>In one sentence:</strong> everything stays on your own device. The app contains no telemetry, analytics, ads, or accounts, and it never sends your terminal contents to any server.
+  </div>
+
+  <h2>Data we do NOT collect</h2>
+  <ul>
+    <li>No personally identifiable information (name, email, account) — the app has no login or account system at all.</li>
+    <li>No collection or logging of anything you type or see in the terminal — commands, output, or otherwise.</li>
+    <li>No analytics, telemetry, or crash-reporting SDKs; no behavioral tracking.</li>
+    <li>No advertising, and no data shared with any third party.</li>
+  </ul>
+
+  <h2>Where data lives</h2>
+  <ul>
+    <li><strong>Local preferences</strong> (window size, tab order, language, etc.) are stored only in the app's config directory on your computer and never leave your device.</li>
+    <li><strong>Terminal sessions</strong> are managed by tmux on your own system; Tmux Desk is only its GUI. Session contents belong to tmux and your shell and are never captured or transmitted by this app.</li>
+  </ul>
+
+  <h2>Network access</h2>
+  <ul>
+    <li>The desktop UI forbids all outbound network requests via a Content Security Policy (<code>connect-src 'none'</code>).</li>
+    <li>The optional "phone web client" feature, only when <strong>you explicitly enable it</strong>, starts a local WebSocket server on your own LAN for access by your own devices. No data passes through any server operated by us or any third party.</li>
+  </ul>
+
+  <h2>Your control</h2>
+  <p>Because all data is local, deleting the app and its local config directory removes all associated data.</p>
+
+  <h2>Contact</h2>
+  <p>For any privacy questions, open an issue on the project repository: <a href="https://github.com/HeavenC/Tmux-Desk">github.com/HeavenC/Tmux-Desk</a>.</p>
+
+  <footer>© 2026 Tmux Desk. This page is served from the project's public GitHub repository.</footer>
+
+</main>
+</body>
+</html>
