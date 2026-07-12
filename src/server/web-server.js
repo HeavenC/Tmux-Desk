@@ -338,6 +338,13 @@ function startWebServer({
         try {
           if (message.type === 'input') manager.write({ terminalId, data: message.data });
           if (message.type === 'resize') manager.resize({ terminalId, cols: message.cols, rows: message.rows });
+          // Browser tab gained focus: send a focus-in report so tmux marks this
+          // client as the "latest" one — with window-size=latest the shared
+          // window then snaps to THIS client's width instead of staying at the
+          // last-active client's (which leaves a dead strip on the wider view).
+          // tmux consumes the sequence itself (verified with focus-events off:
+          // nothing leaks into the pane application).
+          if (message.type === 'focus') manager.write({ terminalId, data: '\x1b[I' });
           if (message.type === 'ping') wsSend(ws, { type: 'pong' });
         } catch (error) {
           wsSend(ws, { type: 'error', message: error?.message || '操作失败' });

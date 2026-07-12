@@ -12034,8 +12034,8 @@ ${s3.join("\n")}
     el("view-list").hidden = name !== "list";
     el("view-terminal").hidden = name !== "terminal";
     const ball = el("quickball");
-    if (ball) ball.hidden = name !== "terminal";
-    if (name !== "terminal") closeQuickPanel();
+    if (ball) ball.hidden = name !== "terminal" || hasFinePointer();
+    if (name !== "terminal" || hasFinePointer()) closeQuickPanel();
   }
   function storedTheme() {
     try {
@@ -12388,10 +12388,18 @@ ${s3.join("\n")}
     state.fitAddon = fitAddon;
     setupKeyboardGate();
   }
+  function hasFinePointer() {
+    return !!(window.matchMedia && window.matchMedia("(any-pointer: fine)").matches);
+  }
   function setupKeyboardGate() {
     const textarea = state.term?.element?.querySelector(".xterm-helper-textarea");
     if (!textarea) return;
     state.termTextarea = textarea;
+    if (hasFinePointer()) {
+      unlockKeyboard();
+      el("keyboard-btn")?.setAttribute("hidden", "");
+      return;
+    }
     lockKeyboard();
     textarea.addEventListener("blur", onTextareaBlur);
     textarea.addEventListener("focus", () => {
@@ -12432,6 +12440,15 @@ ${s3.join("\n")}
   function toggleKeyboard() {
     const textarea = state.termTextarea;
     if (!state.term || !textarea) return;
+    if (hasFinePointer()) {
+      unlockKeyboard();
+      try {
+        textarea.focus({ preventScroll: true });
+      } catch {
+        textarea.focus();
+      }
+      return;
+    }
     if (state.keyboardActive) {
       textarea.blur();
       lockKeyboard();
@@ -12499,6 +12516,10 @@ ${s3.join("\n")}
   }
   function sendWsInput(data) {
     sendWsJson({ type: "input", data });
+  }
+  function notifyClientFocus() {
+    if (state.currentView !== "terminal") return;
+    sendWsJson({ type: "focus" });
   }
   function fitAndNotify() {
     if (state.currentView !== "terminal" || !state.term) return;
@@ -13163,7 +13184,9 @@ ${s3.join("\n")}
       if (state.currentView !== "terminal" || !state.currentSession) return;
       const socketDown = !state.ws || state.ws.readyState > WebSocket.OPEN;
       if (socketDown) connectWebSocket(state.currentSession.id);
+      else notifyClientFocus();
     });
+    window.addEventListener("focus", notifyClientFocus);
     el("window-picker").addEventListener("change", (event) => {
       const windowIndex = Number(event.target.value);
       if (Number.isInteger(windowIndex)) selectWindow(windowIndex);

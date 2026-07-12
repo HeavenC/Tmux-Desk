@@ -134,10 +134,12 @@ function showView(name) {
   state.currentView = name;
   el('view-list').hidden = name !== 'list';
   el('view-terminal').hidden = name !== 'terminal';
-  // The floating quick bar only makes sense over a live terminal.
+  // The floating quick bar only makes sense over a live terminal, and only on
+  // touch clients — desktop browsers have a physical keyboard, so the quick-key
+  // ball is just clutter (and its "键盘" button is meaningless there).
   const ball = el('quickball');
-  if (ball) ball.hidden = name !== 'terminal';
-  if (name !== 'terminal') closeQuickPanel();
+  if (ball) ball.hidden = name !== 'terminal' || hasFinePointer();
+  if (name !== 'terminal' || hasFinePointer()) closeQuickPanel();
 }
 
 function storedTheme() {
@@ -548,10 +550,29 @@ function ensureTerminalCreated() {
 // keydown, and without touching the input path used by the toolbar keys
 // (those call sendWsInput() directly over the websocket, never through this
 // textarea). Toggled explicitly via the keyboard-btn toolbar button.
+// Whether this client has a precise pointer (mouse / trackpad). Desktop browsers
+// — including touchscreen laptops — report a fine pointer; phones/tablets do not.
+// The soft-keyboard gate below only makes sense where there IS an on-screen
+// keyboard to suppress; on desktop it must never engage, because setting the
+// xterm textarea readonly kills IME composition (Latin keys still reach xterm via
+// keydown, so ASCII works while Chinese input appears "disabled").
+function hasFinePointer() {
+  return !!(window.matchMedia && window.matchMedia('(any-pointer: fine)').matches);
+}
+
 function setupKeyboardGate() {
   const textarea = state.term?.element?.querySelector('.xterm-helper-textarea');
   if (!textarea) return;
   state.termTextarea = textarea;
+  // Desktop: keep the textarea permanently editable so IME composition works.
+  // Skip the lock and the blur-relock listener entirely, and hide the "键盘"
+  // quick-bar button — it only exists to raise the on-screen keyboard, which
+  // desktop browsers don't have.
+  if (hasFinePointer()) {
+    unlockKeyboard();
+    el('keyboard-btn')?.setAttribute('hidden', '');
+    return;
+  }
   lockKeyboard();
   textarea.addEventListener('blur', onTextareaBlur);
   textarea.addEventListener('focus', () => { clearTimeout(state.relockTimer); });
@@ -595,6 +616,13 @@ function unlockKeyboard() {
 function toggleKeyboard() {
   const textarea = state.termTextarea;
   if (!state.term || !textarea) return;
+  // On desktop the textarea stays editable (see setupKeyboardGate); locking it
+  // would kill IME, so the button just (re)focuses the terminal.
+  if (hasFinePointer()) {
+    unlockKeyboard();
+    try { textarea.focus({ preventScroll: true }); } catch { textarea.focus(); }
+    return;
+  }
   if (state.keyboardActive) {
     textarea.blur();
     lockKeyboard();
@@ -676,6 +704,14 @@ function sendWsJson(payload) {
 
 function sendWsInput(data) {
   sendWsJson({ type: 'input', data });
+}
+
+// Ask the server to emit a focus-in report on our tmux client (see the
+// 'focus' handler in web-server.js). Safe to call any time; no-op when the
+// socket is down or we're not on the terminal view.
+function notifyClientFocus() {
+  if (state.currentView !== 'terminal') return;
+  sendWsJson({ type: 'focus' });
 }
 
 function fitAndNotify() {
@@ -1408,7 +1444,12 @@ function setupStaticHandlers() {
     if (state.currentView !== 'terminal' || !state.currentSession) return;
     const socketDown = !state.ws || state.ws.readyState > WebSocket.OPEN;
     if (socketDown) connectWebSocket(state.currentSession.id);
+    else notifyClientFocus();
   });
+  // Tell tmux this client is the active one whenever the tab regains focus, so
+  // the shared window resizes to OUR width (window-size=latest) — otherwise a
+  // narrower client that typed last leaves a dead strip on the right here.
+  window.addEventListener('focus', notifyClientFocus);
   el('window-picker').addEventListener('change', (event) => {
     const windowIndex = Number(event.target.value);
     if (Number.isInteger(windowIndex)) selectWindow(windowIndex);

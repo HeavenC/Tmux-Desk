@@ -145,6 +145,18 @@ class TerminalView {
     if (typeof document !== 'undefined') {
       document.addEventListener('copy', this.onCopyEvent);
     }
+    // When the app window regains focus, send a focus-in report so tmux marks
+    // this client as "latest" — with window-size=latest the shared window then
+    // resizes to OUR width. Mirrors the webapp's {type:'focus'} message; without
+    // it, a wider/narrower web client that interacted last would leave this
+    // view letterboxed (dead columns) until the next keystroke here.
+    this.onWindowFocus = () => {
+      if (this.terminalId === null) return;
+      this.api.writeTerminal({ terminalId: this.terminalId, data: '\x1b[I' }).catch(() => {});
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', this.onWindowFocus);
+    }
     this.unsubscribeData = api.onTerminalData((payload) => this.handleData(payload));
     this.unsubscribeExit = api.onTerminalExit((payload) => this.handleExit(payload));
     this.container = container;
@@ -372,6 +384,9 @@ class TerminalView {
     this.selectionChangeDisposable?.dispose();
     if (typeof document !== 'undefined') {
       document.removeEventListener('copy', this.onCopyEvent);
+    }
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('focus', this.onWindowFocus);
     }
     this.unsubscribeData?.();
     this.unsubscribeExit?.();

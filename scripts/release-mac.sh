@@ -33,11 +33,51 @@ fi
 
 echo "→ Building Developer ID release for arch=$ARCH, team=$TEAM_ID"
 
-# electron-builder auto-discovers the Developer ID Application identity.
-# --config.mac.notarize.teamId turns on notarytool notarization (+ auto-staple)
-# using the APPLE_API_* env vars above; it stays OFF for plain `package:mac`.
-npx electron-builder --mac "--$ARCH" \
-  --config.mac.notarize.teamId="$TEAM_ID"
+# --- Package (signing skipped — afterPack handles it in one deep-sign) --------
+export CSC_IDENTITY_AUTO_DISCOVERY=false
+export APPLE_TEAM_ID="$TEAM_ID"
+npx electron-builder --mac "--$ARCH"
+
+# --- Notarize & staple -------------------------------------------------------
+# notarytool uses NSURLSession which respects macOS system proxy settings.
+# We temporarily disable system proxies so notarytool can reach Apple.
+APP_NAME="Tmux Desk"
+VERSION=$(node -p "require('./package.json').version")
+DMG="dist/${APP_NAME}-${VERSION}-${ARCH}.dmg"
+ZIP="dist/${APP_NAME}-${VERSION}-${ARCH}.zip"
+
+# Save & disable system proxies
+SOCKS_STATE=$(networksetup -getsocksfirewallproxy Wi-Fi 2>/dev/null | grep "^Enabled:" | awk '{print $2}' || echo "No")
+HTTP_STATE=$(networksetup -getwebproxy Wi-Fi 2>/dev/null | grep "^Enabled:" | awk '{print $2}' || echo "No")
+HTTPS_STATE=$(networksetup -getsecurewebproxy Wi-Fi 2>/dev/null | grep "^Enabled:" | awk '{print $2}' || echo "No")
+
+restore_proxy() {
+  [ "$SOCKS_STATE" = "Yes" ] && networksetup -setsocksfirewallproxystate Wi-Fi on 2>/dev/null || true
+  [ "$HTTP_STATE"  = "Yes" ] && networksetup -setwebproxystate Wi-Fi on 2>/dev/null || true
+  [ "$HTTPS_STATE" = "Yes" ] && networksetup -setsecurewebproxystate Wi-Fi on 2>/dev/null || true
+}
+trap restore_proxy EXIT
+
+networksetup -setsocksfirewallproxystate Wi-Fi off 2>/dev/null || true
+networksetup -setwebproxystate Wi-Fi off 2>/dev/null || true
+networksetup -setsecurewebproxystate Wi-Fi off 2>/dev/null || true
+echo "→ System proxy temporarily disabled for notarization"
+
+for artifact in "$DMG" "$ZIP"; do
+  if [ -f "$artifact" ]; then
+    echo "→ Submitting $(basename "$artifact") for notarization …"
+    env -u http_proxy -u https_proxy -u all_proxy \
+        -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+      xcrun notarytool submit "$artifact" \
+        --key "$APPLE_API_KEY" \
+        --key-id "$APPLE_API_KEY_ID" \
+        --issuer "$APPLE_API_ISSUER" \
+        --wait
+    echo "→ Stapling $(basename "$artifact") …"
+    xcrun stapler staple "$artifact"
+    echo "✓ Notarized + stapled: $artifact"
+  fi
+done
 
 echo "✓ Done. Signed + notarized + stapled artifacts are in dist/"
-echo "  Verify with:  spctl -a -vvv --type install dist/mac*/Tmux\\ Desk.app  (or the .dmg)"
+echo "  Verify with:  spctl -a -vvv --type install \"$DMG\""
