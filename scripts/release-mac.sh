@@ -26,7 +26,7 @@ if ! security find-identity -v -p codesigning | grep -q "Developer ID Applicatio
   echo "  or the Apple Developer portal) before running a release build." >&2
   exit 1
 fi
-if [ ! -f "$APPLE_API_KEY" ]; then
+if [ ! -f "$APPLE_API_KEY" ] && [ "${SKIP_NOTARIZE:-}" != "true" ]; then
   echo "✗ App Store Connect API key not found at: $APPLE_API_KEY" >&2
   exit 1
 fi
@@ -39,14 +39,20 @@ export APPLE_TEAM_ID="$TEAM_ID"
 npx electron-builder --mac "--$ARCH"
 
 # --- Notarize & staple -------------------------------------------------------
-# notarytool uses NSURLSession which respects macOS system proxy settings.
-# We temporarily disable system proxies so notarytool can reach Apple.
 APP_NAME="Tmux Desk"
 VERSION=$(node -p "require('./package.json').version")
 DMG="dist/${APP_NAME}-${VERSION}-${ARCH}.dmg"
 ZIP="dist/${APP_NAME}-${VERSION}-${ARCH}.zip"
 
-# Save & disable system proxies
+if [ "${SKIP_NOTARIZE:-}" = "true" ]; then
+  echo "→ ⏭  SKIP_NOTARIZE set — skipping notarization"
+  echo "  Run later:  bash scripts/notarize-mac.sh $ARCH"
+  echo "  Signed artifacts: $DMG / $ZIP"
+  exit 0
+fi
+
+# notarytool uses NSURLSession which respects macOS system proxy settings.
+# We temporarily disable system proxies so notarytool can reach Apple.
 SOCKS_STATE=$(networksetup -getsocksfirewallproxy Wi-Fi 2>/dev/null | grep "^Enabled:" | awk '{print $2}' || echo "No")
 HTTP_STATE=$(networksetup -getwebproxy Wi-Fi 2>/dev/null | grep "^Enabled:" | awk '{print $2}' || echo "No")
 HTTPS_STATE=$(networksetup -getsecurewebproxy Wi-Fi 2>/dev/null | grep "^Enabled:" | awk '{print $2}' || echo "No")

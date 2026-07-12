@@ -1,11 +1,28 @@
 name: Release
 
-# Build the desktop app for every platform and attach the installers to a
-# GitHub Release. Push a version tag to trigger it:
-#   git tag v0.4.0 && git push origin v0.4.0
-# Windows is built on a Windows runner and macOS arm64 / x64 on their own
-# native runners, because node-pty is a native module that must be compiled on
-# the target architecture — it can't be cross-produced from a single machine.
+# Build, sign (Developer ID), notarize, and staple the desktop app for every
+# platform, then attach the installers to a GitHub Release.
+#
+# Trigger: push a version tag, e.g.  git tag v0.4.0 && git push origin v0.4.0
+# Or trigger manually from the Actions tab (workflow_dispatch).
+#
+# ── Required GitHub Secrets ──────────────────────────────────────────────────
+# APPLE_DEVELOPER_ID_CERT_BASE64    base64 of the .p12 Developer ID cert
+# APPLE_DEVELOPER_ID_CERT_PASSWORD  .p12 password
+# APPLE_API_KEY_P8                  CONTENTS of the App Store Connect .p8 file
+# APPLE_API_KEY_ID                  Key ID (e.g. 687H76CDXR)
+# APPLE_API_ISSUER_ID               Issuer UUID
+# APPLE_TEAM_ID                     Team ID (e.g. D2U492GTU7)
+#
+# To create the cert secret on your Mac:
+#   security find-identity -v -p codesigning | grep "Developer ID Application"
+#   # Export it:
+#   security export-identity -p "Developer ID Application: ..." -o cert.p12
+#   # (enter a strong password, then base64-encode):
+#   base64 -i cert.p12 | pbcopy  →  paste into GitHub Secret
+#   # The .p8 file:
+#   cat ~/.appstoreconnect/private_keys/AuthKey_687H76CDXR.p8 | pbcopy
+#   →  paste into APPLE_API_KEY_P8 secret
 
 on:
   push:
@@ -26,10 +43,10 @@ jobs:
         include:
           - name: macOS arm64
             os: macos-14
-            script: package:mac
+            script: release:mac
           - name: macOS x64
             os: macos-13
-            script: package:mac:x64
+            script: release:mac:x64
           - name: Windows x64
             os: windows-latest
             script: package:win
@@ -45,14 +62,57 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build and package
+      # ── macOS code signing + notarization setup ──────────────────────────
+      - name: Setup code signing (macOS)
+        if: runner.os == 'macOS'
+        env:
+          CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          P8_CONTENT: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          KEYCHAIN_NAME=build.keychain
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+          security default-keychain -s "$KEYCHAIN_NAME"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+
+          echo "$CERT_BASE64" | base64 --decode > cert.p12
+          security import cert.p12 \
+            -k "$KEYCHAIN_NAME" \
+            -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security \
+            -T /usr/bin/xcrun
+          rm cert.p12
+
+          # Allow codesign to access the private key without prompting
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign:,com.apple.notarytool: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+
+          # Write notarization API key to the default path
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$P8_CONTENT" > ~/.appstoreconnect/private_keys/AuthKey_687H76CDXR.p8
+
+          echo "✓ Keychain ready"
+
+      # ── Build + package + sign + notarize ────────────────────────────────
+      - name: Build and release (macOS)
+        if: runner.os == 'macOS'
         run: npm run ${{ matrix.script }}
         env:
-          # Do not attempt code signing / notarization in CI. macOS artifacts
-          # are ad-hoc signed by scripts/afterpack-adhoc.js.
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
+      - name: Build and package (Windows)
+        if: runner.os == 'Windows'
+        run: npm run ${{ matrix.script }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      # ── Upload ───────────────────────────────────────────────────────────
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
