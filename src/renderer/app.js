@@ -3,6 +3,7 @@ const { icon } = require('./icons');
 const { searchCommands } = require('./command-palette');
 const { filterAndGroupSessions, sessionsForView } = require('../shared/session-model');
 const { adjacentTagId } = require('../shared/tag-model');
+const { resolveTerminalFileReference } = require('../shared/terminal-file-link');
 const { applyTheme, resolveTheme } = require('./theme');
 const { TerminalView } = require('./terminal-view');
 const { t, applyStaticI18n, setLocale, getLocale, resolveLocale, loadStoredLanguage, saveLanguage } = require('./i18n');
@@ -14,7 +15,7 @@ const state = {
   systemStatus: { installed: false, path: null, version: null },
   preferences: {
     theme: 'light', favorites: [], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null, sidebarWidth: null,
-    tagRailExpanded: false, tagRailWidth: null,
+    tagRailExpanded: false, tagRailWidth: null, keepAwake: false,
   },
   sessions: [],
   selectedSessionId: null,
@@ -48,12 +49,12 @@ function cacheElements() {
     'commandInput', 'commandSearchIcon', 'commandResults',
     'duplicateModal', 'duplicateForm', 'duplicateInput', 'duplicateMessage',
     'importModal', 'importList', 'importTitle', 'importSubtitle', 'importSelectAll', 'importCreateButton',
-    'mobileAccessButton', 'mobileAccessModal', 'mobileAccessBody',
+    'mobileAccessButton', 'mobileAccessModal', 'mobileAccessTitle', 'mobileAccessSubtitle', 'mobileAccessBody',
     'tagEditorModal', 'tagEditorForm', 'tagEditorTitle', 'tagNameInput',
     'sessionTagsModal', 'sessionTagsForm', 'sessionTagsMessage', 'sessionTagsList',
     'tagDeleteModal', 'tagDeleteMessage', 'confirmTagDeleteButton',
     'filesToggleButton', 'fileBrowser', 'fbTree', 'fbPath', 'fbRevealButton', 'fbRefreshButton', 'fbCollapseButton',
-    'sidebarResizer', 'tagRailResizer', 'tagRailToggleButton', 'settingsScroll',
+    'sidebarResizer', 'tagRailResizer', 'tagRailToggleButton', 'settingsScroll', 'keepAwakeToggle',
   ]) refs[id] = document.getElementById(id);
 }
 
@@ -349,6 +350,19 @@ function setLanguagePreference(language) {
   relocalize();
 }
 
+async function setKeepAwakePreference(enabled) {
+  const previous = state.preferences.keepAwake === true;
+  refs.keepAwakeToggle.disabled = true;
+  try {
+    state.preferences = await api.savePreferences({ keepAwake: enabled });
+  } catch (error) {
+    refs.keepAwakeToggle.checked = previous;
+    toast(friendlyError(error), 'error');
+  } finally {
+    refs.keepAwakeToggle.disabled = false;
+  }
+}
+
 // Re-applies every translated string after a manual language switch, without
 // requiring an app restart: static markup via applyStaticI18n, plus every
 // render path that bakes t() output into dynamically-created DOM.
@@ -365,7 +379,10 @@ function relocalize() {
   renderWorkspace();
   renderDetail();
   if (refs.commandPalette && !refs.commandPalette.classList.contains('hidden')) renderCommandResults();
-  if (refs.mobileAccessModal && !refs.mobileAccessModal.classList.contains('hidden')) loadMobileAccessStatus();
+  if (refs.mobileAccessModal && !refs.mobileAccessModal.classList.contains('hidden')) {
+    syncMobileAccessHeading();
+    loadMobileAccessStatus();
+  }
   // Keep the native application menu (main process) in the same language.
   if (api && api.setAppLocale) api.setAppLocale(getLocale());
 }
@@ -1061,6 +1078,12 @@ function activeSessionDir() {
   return selectedSession()?.path || null;
 }
 
+async function openTerminalFileReference(reference) {
+  const target = resolveTerminalFileReference(reference, activeSessionDir());
+  if (!target) throw new Error(t('file.resolveFailed'));
+  await api.openFile(target);
+}
+
 function setFileBrowserOpen(open) {
   state.files.open = Boolean(open);
   refs.fileBrowser.classList.toggle('hidden', !state.files.open);
@@ -1365,6 +1388,7 @@ function openSessionMenu(session, anchor) {
       catch (error) { toast(friendlyError(error), 'error'); }
     } }),
     menuButton({ iconName: 'tag', title: t('menu.manageTags'), action: () => { closeFloatingMenus(); openSessionTagsModal(session); } }),
+    menuButton({ iconName: 'external', title: t('menu.shareSession'), action: () => { closeFloatingMenus(); openMobileAccessModal(session); } }),
     separator(),
     menuButton({ iconName: 'edit', title: t('action.rename'), action: () => { closeFloatingMenus(); openRenameModal(session); } }),
     menuButton({ iconName: 'copy', title: t('menu.duplicateSession'), action: () => { closeFloatingMenus(); openDuplicateModal(session); } }),
@@ -1502,6 +1526,7 @@ function openSettings() {
   renderThemeControls();
   renderLanguageControls();
   renderTagSettings();
+  refs.keepAwakeToggle.checked = state.preferences.keepAwake === true;
   openModal(refs.settingsModal, refs.settingsModal.querySelector('.theme-card'));
 }
 
@@ -1617,8 +1642,21 @@ async function runImport() {
 }
 
 let mobileAccessBusy = false;
+let mobileAccessSession = null;
 
-function openMobileAccessModal() {
+function syncMobileAccessHeading() {
+  if (mobileAccessSession) {
+    refs.mobileAccessTitle.textContent = t('mobile.shareTitle', { name: mobileAccessSession.name });
+    refs.mobileAccessSubtitle.textContent = t('mobile.shareSubtitle');
+  } else {
+    refs.mobileAccessTitle.textContent = t('rail.share');
+    refs.mobileAccessSubtitle.textContent = t('modal.shareSubtitle');
+  }
+}
+
+function openMobileAccessModal(session = null) {
+  mobileAccessSession = session ? { id: session.id, name: session.name } : null;
+  syncMobileAccessHeading();
   openModal(refs.mobileAccessModal);
   loadMobileAccessStatus();
 }
@@ -1626,7 +1664,7 @@ function openMobileAccessModal() {
 async function loadMobileAccessStatus() {
   renderMobileAccessLoading();
   try {
-    const status = await api.webStatus();
+    const status = await api.webStatus(mobileAccessSession?.name);
     renderMobileAccess(status);
   } catch (error) {
     renderMobileAccessError(error);
@@ -1658,7 +1696,9 @@ function renderMobileAccessIdle() {
   const wrap = document.createElement('div');
   wrap.className = 'mobile-access-empty';
   const message = document.createElement('p');
-  message.textContent = t('mobile.idleMessage');
+  message.textContent = mobileAccessSession
+    ? t('mobile.shareIdleMessage', { name: mobileAccessSession.name })
+    : t('mobile.idleMessage');
   const start = document.createElement('button');
   start.type = 'button';
   start.className = 'button primary';
@@ -1672,7 +1712,9 @@ function renderMobileAccessStarting() {
   const wrap = document.createElement('div');
   wrap.className = 'mobile-access-empty';
   const message = document.createElement('p');
-  message.textContent = t('mobile.idleMessage');
+  message.textContent = mobileAccessSession
+    ? t('mobile.shareIdleMessage', { name: mobileAccessSession.name })
+    : t('mobile.idleMessage');
   const start = document.createElement('button');
   start.type = 'button';
   start.className = 'button primary';
@@ -1687,7 +1729,7 @@ async function startMobileAccess() {
   mobileAccessBusy = true;
   renderMobileAccessStarting();
   try {
-    const status = await api.webStart();
+    const status = await api.webStart(mobileAccessSession?.name);
     renderMobileAccess(status);
   } catch (error) {
     toast(friendlyError(error), 'error');
@@ -1845,6 +1887,7 @@ function commands() {
     })),
     { id: 'mobileAccess', title: t('action.mobileAccess'), subtitle: t('palette.mobileAccessSubtitle'), keywords: ['mobile', 'web', 'qrcode', '二维码'], icon: 'phone', action: openMobileAccessModal },
     ...(session ? [
+      { id: 'shareSession', title: t('palette.shareSessionTitle', { name: session.name }), subtitle: t('palette.shareSessionSubtitle'), keywords: ['share', 'link', '分享', '链接'], icon: 'external', action: () => openMobileAccessModal(session) },
       { id: 'splitV', title: t('palette.splitVertical'), subtitle: t('palette.splitVerticalSubtitle'), shortcut: '⌘D', icon: 'panes', action: () => splitActivePane('vertical') },
       { id: 'splitH', title: t('palette.splitHorizontal'), subtitle: t('palette.splitHorizontalSubtitle'), shortcut: '⌘⇧D', icon: 'panes', action: () => splitActivePane('horizontal') },
       ...(activeWindowPanes().length >= 2 ? [
@@ -1953,6 +1996,7 @@ function bindEvents() {
   refs.newTagButton.addEventListener('click', () => openTagEditor());
   refs.tagRailToggleButton.addEventListener('click', () => setTagRailExpanded(!state.preferences.tagRailExpanded));
   refs.settingsNewTagButton.addEventListener('click', () => openTagEditor());
+  refs.keepAwakeToggle.addEventListener('change', () => setKeepAwakePreference(refs.keepAwakeToggle.checked));
   refs.emptyInstallButton.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText('brew install tmux'); toast(t('toast.copiedInstallCmd')); }
     catch (error) { toast(friendlyError(error), 'error'); }
@@ -2074,7 +2118,7 @@ function bindEvents() {
 
   refs.importSelectAll.addEventListener('click', toggleAllImports);
   refs.importCreateButton.addEventListener('click', runImport);
-  refs.mobileAccessButton.addEventListener('click', openMobileAccessModal);
+  refs.mobileAccessButton.addEventListener('click', () => openMobileAccessModal());
 
   refs.chooseDirectoryButton.addEventListener('click', async () => {
     try {
@@ -2248,6 +2292,7 @@ async function initialize() {
     },
     onError: (error) => toast(friendlyError(error), 'error'),
     onResize: () => onTerminalResize(),
+    onOpenFile: (reference) => openTerminalFileReference(reference),
   });
   bindEvents();
   try {

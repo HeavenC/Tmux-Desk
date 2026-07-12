@@ -2,6 +2,7 @@ const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
 const { ClipboardAddon } = require('@xterm/addon-clipboard');
 const { WebglAddon } = require('@xterm/addon-webgl');
+const { findTerminalFileReferences } = require('../shared/terminal-file-link');
 
 const SELECTION_COPY_DEBOUNCE_MS = 200;
 
@@ -46,11 +47,12 @@ const TERMINAL_THEMES = {
 };
 
 class TerminalView {
-  constructor({ container, api, onExit, onError, onResize }) {
+  constructor({ container, api, onExit, onError, onResize, onOpenFile }) {
     this.api = api;
     this.onExit = onExit;
     this.onError = onError;
     this.onResize = onResize;
+    this.onOpenFile = onOpenFile;
     this.terminalId = null;
     this.attachRequest = 0;
     this.pendingData = new Map();
@@ -92,6 +94,7 @@ class TerminalView {
       this.webglAddon = null; // DOM renderer fallback
     }
     this.setupCompositionShift();
+    this.setupFileLinks();
     // The composite local() @font-face can finish loading after first paint,
     // and the DOM renderer caches each char's measured width forever — once
     // the font is definitely in, toggle fontFamily to drop xterm's WidthCache
@@ -154,8 +157,27 @@ class TerminalView {
       if (this.terminalId === null) return;
       this.api.writeTerminal({ terminalId: this.terminalId, data: '\x1b[I' }).catch(() => {});
     };
+    this.onModifierKeyDown = (event) => {
+      if (event.key === 'Meta' || event.metaKey) {
+        this.fileLinkMetaActive = true;
+        this.updateHoveredFileLinkDecorations();
+      }
+    };
+    this.onModifierKeyUp = (event) => {
+      if (event.key === 'Meta' || !event.metaKey) {
+        this.fileLinkMetaActive = false;
+        this.updateHoveredFileLinkDecorations();
+      }
+    };
+    this.onWindowBlur = () => {
+      this.fileLinkMetaActive = false;
+      this.updateHoveredFileLinkDecorations();
+    };
     if (typeof window !== 'undefined') {
       window.addEventListener('focus', this.onWindowFocus);
+      window.addEventListener('keydown', this.onModifierKeyDown, true);
+      window.addEventListener('keyup', this.onModifierKeyUp, true);
+      window.addEventListener('blur', this.onWindowBlur);
     }
     this.unsubscribeData = api.onTerminalData((payload) => this.handleData(payload));
     this.unsubscribeExit = api.onTerminalExit((payload) => this.handleExit(payload));
@@ -178,6 +200,66 @@ class TerminalView {
     };
     this.dprMedia = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
     this.dprMedia.addEventListener('change', this.onDprChange, { once: true });
+  }
+
+  setupFileLinks() {
+    this.fileLinkMetaActive = false;
+    this.hoveredFileLink = null;
+    this.fileLinkDisposable = this.terminal.registerLinkProvider({
+      provideLinks: (bufferLineNumber, callback) => this.provideFileLinks(bufferLineNumber, callback),
+    });
+  }
+
+  provideFileLinks(bufferLineNumber, callback) {
+    const line = this.terminal.buffer?.active?.getLine(bufferLineNumber - 1);
+    if (!line) {
+      callback(undefined);
+      return;
+    }
+    const mapped = terminalLineText(line, this.terminal.cols);
+    const matches = findTerminalFileReferences(mapped.text);
+    if (!matches.length) {
+      callback(undefined);
+      return;
+    }
+    callback(matches.map((match) => {
+      const link = {
+        text: match.text,
+        range: {
+          start: { x: mapped.columns[match.start] + 1, y: bufferLineNumber },
+          end: { x: mapped.columns[match.end], y: bufferLineNumber },
+        },
+        decorations: {
+          pointerCursor: this.fileLinkMetaActive,
+          underline: this.fileLinkMetaActive,
+        },
+        activate: (event) => {
+          if (!event.metaKey || event.button !== 0) return;
+          event.preventDefault();
+          event.stopPropagation();
+          try {
+            Promise.resolve(this.onOpenFile?.(match.reference)).catch((error) => this.onError?.(error));
+          } catch (error) {
+            this.onError?.(error);
+          }
+        },
+        hover: (event) => {
+          this.hoveredFileLink = link;
+          this.fileLinkMetaActive = Boolean(event.metaKey || this.fileLinkMetaActive);
+          queueMicrotask(() => this.updateHoveredFileLinkDecorations());
+        },
+        leave: () => {
+          if (this.hoveredFileLink === link) this.hoveredFileLink = null;
+        },
+      };
+      return link;
+    }));
+  }
+
+  updateHoveredFileLinkDecorations() {
+    if (!this.hoveredFileLink?.decorations) return;
+    this.hoveredFileLink.decorations.pointerCursor = this.fileLinkMetaActive;
+    this.hoveredFileLink.decorations.underline = this.fileLinkMetaActive;
   }
 
   async attach(sessionId) {
@@ -382,11 +464,15 @@ class TerminalView {
     this.resizeObserver.disconnect();
     this.dataDisposable.dispose();
     this.selectionChangeDisposable?.dispose();
+    this.fileLinkDisposable?.dispose();
     if (typeof document !== 'undefined') {
       document.removeEventListener('copy', this.onCopyEvent);
     }
     if (typeof window !== 'undefined') {
       window.removeEventListener('focus', this.onWindowFocus);
+      window.removeEventListener('keydown', this.onModifierKeyDown, true);
+      window.removeEventListener('keyup', this.onModifierKeyUp, true);
+      window.removeEventListener('blur', this.onWindowBlur);
     }
     this.unsubscribeData?.();
     this.unsubscribeExit?.();
@@ -394,4 +480,25 @@ class TerminalView {
   }
 }
 
-module.exports = { TerminalView };
+function terminalLineText(line, cols) {
+  let text = '';
+  const columns = [];
+  const length = Math.min(Number(line.length) || 0, Number(cols) || 0);
+  for (let x = 0; x < length; x += 1) {
+    const cell = line.getCell(x);
+    const width = cell?.getWidth?.() || 0;
+    if (!cell || width === 0) continue;
+    const chars = cell.getChars() || ' ';
+    for (let index = 0; index < chars.length; index += 1) {
+      columns[text.length] = x;
+      text += chars[index];
+    }
+    columns[text.length] = x + width;
+  }
+  const trimmed = text.replace(/\s+$/, '');
+  columns.length = trimmed.length + 1;
+  if (columns[trimmed.length] === undefined) columns[trimmed.length] = length;
+  return { text: trimmed, columns };
+}
+
+module.exports = { TerminalView, terminalLineText };

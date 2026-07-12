@@ -1,8 +1,9 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, session, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, powerMonitor, powerSaveBlocker, session, shell } = require('electron');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 
 const { registerIpc } = require('./ipc');
+const { KeepAwakeController } = require('./keep-awake-controller');
 const { menuText, normalizeMenuLocale } = require('./menu-i18n');
 const { listDirectory, toBrowsablePath } = require('./file-service');
 const { PreferencesStore } = require('./preferences-store');
@@ -26,6 +27,7 @@ let mainWindow = null;
 let preferencesStore = null;
 let terminalManager = null;
 let webControl = null;
+let keepAwakeController = null;
 
 function sendToRenderer(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
@@ -151,6 +153,8 @@ async function bootstrap() {
       ? path.resolve(prefsOverride)
       : path.join(app.getPath('userData'), 'preferences.json'),
   });
+  keepAwakeController = new KeepAwakeController({ powerSaveBlocker, powerMonitor });
+  keepAwakeController.initialize((await preferencesStore.load()).keepAwake);
   // TMUX_DESK_SOCKET runs every tmux command against a dedicated socket
   // (`tmux -L <name>`) instead of the default one. Handy for demos/screenshots
   // and testing without touching your real sessions. Empty → default socket.
@@ -174,6 +178,7 @@ async function bootstrap() {
     tmuxService,
     terminalManager,
     preferencesStore,
+    keepAwakeController,
     webControl,
     chooseDirectory: async () => {
       const result = await dialog.showOpenDialog(mainWindow, {
@@ -230,5 +235,6 @@ app.on('window-all-closed', () => {
 });
 app.on('before-quit', () => {
   terminalManager?.dispose();
+  keepAwakeController?.dispose();
   webControl?.dispose().catch(() => {});
 });

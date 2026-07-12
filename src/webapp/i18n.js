@@ -24,10 +24,13 @@ const MESSAGES = {
     'list.refresh': '刷新',
     'list.workspaceAria': '会话工作区',
     'list.emptyAll': '暂无 tmux 会话',
+    'list.emptyShared': '共享会话暂不可用',
     'list.emptyFiltered': '{label}中暂无会话',
     'list.tagsAssociatedAria': '已关联 Tag',
     'list.manageTagsAria': '管理 {name} 的 Tag',
     'list.sessionSub': '{windows} 窗口 · {panes} 面板 · {cmd}',
+
+    'share.badge': '共享会话',
 
     'filter.all': '全部',
     'filter.favorites': '收藏',
@@ -80,7 +83,7 @@ const MESSAGES = {
     'error.loadFailed': '加载失败',
     'error.loadWindowsFailed': '获取窗口失败',
     'error.switchWindowFailed': '切换窗口失败',
-    'error.missingToken': '缺少 token 参数，请通过正确链接访问',
+    'error.missingCredential': '缺少访问凭据，请通过正确链接访问',
   },
   en: {
     'common.loading': 'Loading…',
@@ -104,10 +107,13 @@ const MESSAGES = {
     'list.refresh': 'Refresh',
     'list.workspaceAria': 'Session workspaces',
     'list.emptyAll': 'No tmux sessions',
+    'list.emptyShared': 'The shared session is unavailable',
     'list.emptyFiltered': 'No sessions in {label}',
     'list.tagsAssociatedAria': 'Associated tags',
     'list.manageTagsAria': 'Manage tags for {name}',
     'list.sessionSub': '{windows} windows · {panes} panes · {cmd}',
+
+    'share.badge': 'Shared session',
 
     'filter.all': 'All',
     'filter.favorites': 'Favorites',
@@ -160,7 +166,7 @@ const MESSAGES = {
     'error.loadFailed': 'Failed to load',
     'error.loadWindowsFailed': 'Failed to load windows',
     'error.switchWindowFailed': 'Failed to switch window',
-    'error.missingToken': 'Missing token parameter — please use a valid link',
+    'error.missingCredential': 'Missing access credentials — please use a valid link',
   },
 };
 

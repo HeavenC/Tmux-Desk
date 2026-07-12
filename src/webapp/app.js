@@ -71,6 +71,7 @@ const TERMINAL_THEMES = {
 
 const state = {
   token: '',
+  share: '',
   currentView: 'list',
   sessions: [],
   preferences: { tags: [], favorites: [], sessionTags: {}, tabOrders: {} },
@@ -103,9 +104,23 @@ function getToken() {
   return new URLSearchParams(window.location.search).get('token') || '';
 }
 
+function getShare() {
+  return new URLSearchParams(window.location.search).get('share') || '';
+}
+
+function applySharedSessionMode() {
+  const shared = Boolean(state.share);
+  document.documentElement.dataset.sharedSession = String(shared);
+  document.querySelectorAll('.shared-mode-badge').forEach((badge) => { badge.hidden = !shared; });
+  el('workspace-filters').hidden = shared;
+  el('back-btn').hidden = shared;
+  if (shared) closeSessionTagsModal();
+}
+
 function apiUrl(path, params = {}) {
   const url = new URL(path, window.location.origin);
-  url.searchParams.set('token', state.token);
+  if (state.share) url.searchParams.set('share', state.share);
+  else if (state.token) url.searchParams.set('token', state.token);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   return url.toString();
 }
@@ -249,6 +264,11 @@ function currentListSessions() {
   return mobileSessionsForView(state.sessions, state.preferences, state.listView);
 }
 
+function sessionsForShare(sessions) {
+  if (!state.share) return sessions;
+  return sessions.filter(Boolean).slice(0, 1);
+}
+
 function currentListLabel() {
   if (state.listView.kind === 'favorites') return t('filter.favorites');
   if (state.listView.kind === 'tag') {
@@ -284,9 +304,11 @@ function setListState({ loading = false, error = null, sessions = null }) {
   el('list-empty').hidden = sessions === null || sessions.length > 0;
   if (sessions !== null) {
     const emptyText = el('list-empty').querySelector('p');
-    emptyText.textContent = state.listView.kind === 'all'
-      ? t('list.emptyAll')
-      : t('list.emptyFiltered', { label: currentListLabel() });
+    emptyText.textContent = state.share
+      ? t('list.emptyShared')
+      : state.listView.kind === 'all'
+        ? t('list.emptyAll')
+        : t('list.emptyFiltered', { label: currentListLabel() });
     renderSessionList(sessions);
   }
 }
@@ -322,6 +344,12 @@ function createWorkspaceFilter(view, label, count, tag = null) {
 function renderWorkspaceFilters() {
   ensureListView();
   const filters = el('workspace-filters');
+  if (state.share) {
+    filters.replaceChildren();
+    filters.hidden = true;
+    return;
+  }
+  filters.hidden = false;
   const views = [
     { view: { kind: 'all' }, label: t('filter.all') },
     { view: { kind: 'favorites' }, label: t('filter.favorites') },
@@ -376,31 +404,33 @@ function renderSessionList(sessions) {
     meta.className = 'session-meta';
     meta.textContent = [session.path || '', formatRelativeTime(session.activity)].filter(Boolean).join(' · ');
 
-    const footer = document.createElement('div');
-    footer.className = 'session-card-footer';
-    const tagList = document.createElement('div');
-    tagList.className = 'session-tags';
-    tagList.setAttribute('aria-label', t('list.tagsAssociatedAria'));
-    for (const tag of tagsForSession(session.name)) {
-      const pill = document.createElement('span');
-      pill.className = 'session-tag-pill';
-      pill.dataset.tagColor = tag.color;
-      pill.textContent = tag.name;
-      pill.title = tag.name;
-      tagList.appendChild(pill);
+    li.append(head, sub, meta);
+    if (!state.share) {
+      const footer = document.createElement('div');
+      footer.className = 'session-card-footer';
+      const tagList = document.createElement('div');
+      tagList.className = 'session-tags';
+      tagList.setAttribute('aria-label', t('list.tagsAssociatedAria'));
+      for (const tag of tagsForSession(session.name)) {
+        const pill = document.createElement('span');
+        pill.className = 'session-tag-pill';
+        pill.dataset.tagColor = tag.color;
+        pill.textContent = tag.name;
+        pill.title = tag.name;
+        tagList.appendChild(pill);
+      }
+      const manageTags = document.createElement('button');
+      manageTags.type = 'button';
+      manageTags.className = 'session-tag-button';
+      manageTags.textContent = 'Tag';
+      manageTags.setAttribute('aria-label', t('list.manageTagsAria', { name: session.name }));
+      manageTags.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openSessionTagsModal(session);
+      });
+      footer.append(tagList, manageTags);
+      li.appendChild(footer);
     }
-    const manageTags = document.createElement('button');
-    manageTags.type = 'button';
-    manageTags.className = 'session-tag-button';
-    manageTags.textContent = 'Tag';
-    manageTags.setAttribute('aria-label', t('list.manageTagsAria', { name: session.name }));
-    manageTags.addEventListener('click', (event) => {
-      event.stopPropagation();
-      openSessionTagsModal(session);
-    });
-    footer.append(tagList, manageTags);
-
-    li.append(head, sub, meta, footer);
     li.addEventListener('click', () => openSession(session));
     li.tabIndex = 0;
     li.setAttribute('role', 'button');
@@ -419,12 +449,16 @@ async function loadSessions() {
   setListState({ loading: true, error: null });
   try {
     const body = await fetchJson(apiUrl('/api/sessions'));
-    state.sessions = Array.isArray(body.sessions) ? body.sessions : [];
+    const sessions = Array.isArray(body.sessions) ? body.sessions : [];
+    state.sessions = sessionsForShare(sessions);
     state.preferences = normalizePreferenceProjection(body.preferences);
     applyServerQuickKeys(state.preferences.webQuickKeys);
     ensureListView();
     renderWorkspaceFilters();
     setListState({ loading: false, error: null, sessions: currentListSessions() });
+    if (state.share && state.currentView === 'list' && state.sessions.length === 1) {
+      openSession(state.sessions[0]);
+    }
   } catch (err) {
     setListState({ loading: false, error: err.message || t('error.loadFailed') });
   }
@@ -437,6 +471,7 @@ function closeSessionTagsModal() {
 }
 
 function openSessionTagsModal(session) {
+  if (state.share) return;
   const form = el('session-tags-form');
   const list = el('session-tags-list');
   const selectedIds = new Set(Array.isArray(state.preferences.sessionTags[session.name])
@@ -727,11 +762,12 @@ function wsUrlFor(sessionId) {
   const cols = state.term ? state.term.cols : 80;
   const rows = state.term ? state.term.rows : 24;
   const params = new URLSearchParams({
-    token: state.token,
     session: sessionId,
     cols: String(cols),
     rows: String(rows),
   });
+  if (state.share) params.set('share', state.share);
+  else if (state.token) params.set('token', state.token);
   return `${protocol}//${window.location.host}/ws?${params.toString()}`;
 }
 
@@ -1481,7 +1517,9 @@ function setupStaticHandlers() {
 function bootstrap() {
   applyStoredLanguage();
   applyStaticI18n();
-  state.token = getToken();
+  state.share = getShare();
+  state.token = state.share ? '' : getToken();
+  applySharedSessionMode();
   applyTheme(storedTheme());
   loadQuickKeys();
   setupStaticHandlers();
@@ -1494,8 +1532,8 @@ function bootstrap() {
   // very first paint doesn't fall back to the browser default monospace
   // font while "Tmux Desk Mono" is still resolving.
   document.fonts?.load?.('13px "Tmux Desk Mono"', 'Aa中。（）').catch(() => {});
-  if (!state.token) {
-    setListState({ loading: false, error: t('error.missingToken') });
+  if (!state.token && !state.share) {
+    setListState({ loading: false, error: t('error.missingCredential') });
     return;
   }
   loadSessions();

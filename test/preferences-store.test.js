@@ -38,8 +38,17 @@ test('malformed and invalid preferences fall back to normalized defaults', async
     }), 'utf8');
     assert.deepEqual(await store.load(), {
       theme: 'light', favorites: ['api'], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null,
-      sidebarWidth: null, tagRailExpanded: false, tagRailWidth: null, webQuickKeys: [],
+      sidebarWidth: null, tagRailExpanded: false, tagRailWidth: null, keepAwake: false, webQuickKeys: [],
     });
+  });
+});
+
+test('keep-awake preference defaults off and only accepts persisted booleans', async () => {
+  await withStore(async (store, filePath) => {
+    assert.equal((await store.load()).keepAwake, false);
+    assert.equal((await store.save({ keepAwake: true })).keepAwake, true);
+    await writeFile(filePath, JSON.stringify({ keepAwake: 'yes' }), 'utf8');
+    assert.equal((await store.load()).keepAwake, false);
   });
 });
 

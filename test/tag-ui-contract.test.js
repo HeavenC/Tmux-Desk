@@ -10,7 +10,7 @@ test('renderer exposes tag navigation, management dialogs, and one session tab r
   for (const id of [
     'appShell', 'tagRail', 'newTagButton', 'sessionTabs', 'tagEditorModal', 'tagEditorForm',
     'sessionTagsModal', 'sessionTagsForm', 'tagDeleteModal', 'tagSettingsList', 'settingsNewTagButton',
-    'sidebarResizer', 'tagRailResizer', 'tagRailToggleButton', 'settingsScroll',
+    'sidebarResizer', 'tagRailResizer', 'tagRailToggleButton', 'settingsScroll', 'keepAwakeToggle',
   ]) {
     assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
   }
@@ -50,6 +50,17 @@ test('settings modal caps its height and scrolls only its content body', async (
   assert.match(css, /\.settings-scroll\s*\{[^}]*min-height:\s*0[^}]*overflow-y:\s*auto/s);
 });
 
+test('settings exposes an accessible persisted keep-awake switch', async () => {
+  const [html, app, css] = await Promise.all([
+    readFile(join(rendererDir, 'index.html'), 'utf8'),
+    readFile(join(rendererDir, 'app.js'), 'utf8'),
+    readFile(join(rendererDir, 'styles.css'), 'utf8'),
+  ]);
+  assert.match(html, /id="keepAwakeToggle"[\s\S]*role="switch"/);
+  assert.match(app, /savePreferences\(\{ keepAwake: enabled \}\)/);
+  assert.match(css, /\.settings-switch:checked\s*\{/);
+});
+
 test('renderer controller uses explicit all, favorites, and tag workspace state', async () => {
   const app = await readFile(join(rendererDir, 'app.js'), 'utf8');
   assert.match(app, /view:\s*\{\s*kind:\s*'all'\s*\}/);
@@ -78,6 +89,24 @@ test('renderer controller uses explicit all, favorites, and tag workspace state'
   assert.doesNotMatch(app, /setAttribute\(['"]role['"],\s*['"]listitem['"]\)/);
   assert.match(app, /style\.setProperty\(['"]--session-sidebar-width['"]/);
   assert.doesNotMatch(app, /style\.gridTemplateColumns/);
+});
+
+test('desktop session sharing uses an independent capability without changing all-session access', async () => {
+  const [html, app, preload, i18n] = await Promise.all([
+    readFile(join(rendererDir, 'index.html'), 'utf8'),
+    readFile(join(rendererDir, 'app.js'), 'utf8'),
+    readFile(join(__dirname, '..', 'src', 'preload.js'), 'utf8'),
+    readFile(join(rendererDir, 'i18n.js'), 'utf8'),
+  ]);
+  assert.match(html, /id="mobileAccessTitle"/);
+  assert.match(html, /id="mobileAccessSubtitle"/);
+  assert.match(app, /menu\.shareSession/);
+  assert.match(app, /api\.webStatus\(mobileAccessSession\?\.name\)/);
+  assert.match(app, /api\.webStart\(mobileAccessSession\?\.name\)/);
+  assert.doesNotMatch(app, /searchParams\.set\(['"](?:scope|token|share)['"]/);
+  assert.match(preload, /webStatus:\s*\(sessionName\)[^\n]+sessionName/);
+  assert.match(i18n, /不是终端 shell 的强权限隔离/);
+  assert.match(i18n, /not strong isolation inside the terminal shell/);
 });
 
 test('tag icon has its own artwork rather than falling back to the info icon', () => {

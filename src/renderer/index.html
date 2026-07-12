@@ -421,8 +421,8 @@
             <div class="modal mobile-access-modal">
                 <header>
                     <div>
-                        <h2 data-i18n="rail.share">共享</h2>
-                        <p data-i18n="modal.shareSubtitle">
+                        <h2 id="mobileAccessTitle" data-i18n="rail.share">共享</h2>
+                        <p id="mobileAccessSubtitle" data-i18n="modal.shareSubtitle">
                             手机与 Mac 连接同一 Tailscale
                             或局域网，扫码即可在手机上操作全部 tmux 会话。
                         </p>
@@ -508,6 +508,22 @@
                     <section>
                         <h3 data-i18n="settings.language">语言</h3>
                         <div class="theme-cards" id="languageCards"></div>
+                    </section>
+                    <section>
+                        <h3 data-i18n="settings.power">电源</h3>
+                        <label class="settings-toggle-row" for="keepAwakeToggle">
+                            <span class="settings-toggle-copy">
+                                <strong data-i18n="settings.keepAwake">保持屏幕常亮</strong>
+                                <span data-i18n="settings.keepAwakeDescription">阻止空闲熄屏和休眠；手动锁屏或执行 pmset sleepnow 仍会生效。</span>
+                            </span>
+                            <input
+                                type="checkbox"
+                                id="keepAwakeToggle"
+                                class="settings-switch"
+                                role="switch"
+                                data-i18n-aria="settings.keepAwake"
+                            />
+                        </label>
                     </section>
                     <section>
                         <div class="settings-section-heading">

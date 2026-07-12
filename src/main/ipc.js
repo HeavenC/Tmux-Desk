@@ -64,6 +64,10 @@ function validateSessionName(value) {
   return name;
 }
 
+function validateOptionalSessionName(value) {
+  return value == null ? null : validateSessionName(value);
+}
+
 function validateSessionInput(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('会话参数无效');
   const name = validateSessionName(value.name);
@@ -145,7 +149,7 @@ function validateTabOrders(value) {
 
 function validatePreferencesPatch(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('偏好设置无效');
-  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders']);
+  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders', 'keepAwake']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new Error('偏好字段无效');
   }
@@ -175,6 +179,10 @@ function validatePreferencesPatch(value) {
     }
     result.tagRailWidth = value.tagRailWidth === null ? null : Math.round(value.tagRailWidth);
   }
+  if ('keepAwake' in value) {
+    if (typeof value.keepAwake !== 'boolean') throw new Error('保持唤醒设置无效');
+    result.keepAwake = value.keepAwake;
+  }
   if ('tabOrders' in value) result.tabOrders = validateTabOrders(value.tabOrders);
   return result;
 }
@@ -186,7 +194,7 @@ function validateFilePath(value) {
   return value;
 }
 
-function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, chooseDirectory, fileBridge, webControl, setAppLocale }) {
+function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, chooseDirectory, fileBridge, webControl, setAppLocale, keepAwakeController }) {
   const requireWebControl = () => {
     if (!webControl) throw new Error('Web 服务不可用');
     return webControl;
@@ -262,7 +270,12 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       return true;
     },
     'preferences:get': () => preferencesStore.load(),
-    'preferences:save': (_event, patch) => preferencesStore.save(validatePreferencesPatch(patch)),
+    'preferences:save': async (_event, patch) => {
+      const validated = validatePreferencesPatch(patch);
+      const preferences = await preferencesStore.save(validated);
+      if ('keepAwake' in validated) keepAwakeController?.setEnabled(preferences.keepAwake);
+      return preferences;
+    },
     'files:list': (_event, dirPath) => fileBridge.list(validateFilePath(dirPath)),
     'files:open': (_event, filePath) => fileBridge.open(validateFilePath(filePath)),
     'files:open-with': (_event, filePath) => fileBridge.openWith(validateFilePath(filePath)),
@@ -271,8 +284,8 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
     'terminal:write': (_event, payload) => terminalManager.write(validateTerminalPayload('write', payload)),
     'terminal:resize': (_event, payload) => terminalManager.resize(validateTerminalPayload('resize', payload)),
     'terminal:detach': () => { terminalManager.dispose(); return true; },
-    'web:status': () => requireWebControl().status(),
-    'web:start': () => requireWebControl().start(),
+    'web:status': (_event, sessionName) => requireWebControl().status(validateOptionalSessionName(sessionName)),
+    'web:start': (_event, sessionName) => requireWebControl().start(validateOptionalSessionName(sessionName)),
     'web:stop': () => requireWebControl().stop(),
   };
   for (const channel of IPC_CHANNELS) ipcMain.handle(channel, handlers[channel]);
@@ -283,6 +296,7 @@ module.exports = {
   IPC_CHANNELS,
   registerIpc,
   validatePreferencesPatch,
+  validateOptionalSessionName,
   validateSessionInput,
   validateSessionTags,
   validateTagMutation,

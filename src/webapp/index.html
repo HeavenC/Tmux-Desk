@@ -16,7 +16,7 @@
 
     <section id="view-list" class="view">
       <header class="topbar">
-        <h1 class="topbar-title">Tmux Desk</h1>
+        <h1 class="topbar-title">Tmux Desk <span class="shared-mode-badge" data-i18n="share.badge" hidden>共享会话</span></h1>
         <div class="topbar-actions">
           <button id="lang-btn" class="icon-btn lang-btn" aria-label="切换语言" type="button">中</button>
           <button id="fullscreen-btn" class="icon-btn" data-i18n-aria="fullscreen.enter" aria-label="全屏" type="button" hidden>&#x26F6;</button>
@@ -48,6 +48,7 @@
       <header class="term-topbar">
         <button id="back-btn" class="icon-btn" data-i18n-aria="common.back" aria-label="返回" type="button">&#x2039;</button>
         <span id="term-title" class="term-title"></span>
+        <span class="shared-mode-badge" data-i18n="share.badge" hidden>共享会话</span>
         <button id="theme-btn-term" class="icon-btn theme-btn" data-i18n-aria="theme.toggle" aria-label="切换主题" type="button">&#x263E;</button>
         <select id="window-picker" class="window-picker" data-i18n-aria="term.windowAria" aria-label="tmux 窗口" hidden></select>
       </header>

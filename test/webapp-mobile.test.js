@@ -116,3 +116,28 @@ test('mobile controller consumes shared tag data and preserves terminal controls
   assert.match(app, /document\.querySelectorAll\(['"]\.theme-btn['"]\)[\s\S]*addEventListener\(['"]click['"],\s*toggleTheme\)/);
   assert.match(app, /applyTheme\(storedTheme\(\)\)/);
 });
+
+test('shared-session mode forwards only its signed share credential and exposes one session', async () => {
+  const [app, html, css, i18n] = await Promise.all([
+    readFile(join(webappDir, 'app.js'), 'utf8'),
+    readFile(join(webappDir, 'index.html'), 'utf8'),
+    readFile(join(webappDir, 'styles.css'), 'utf8'),
+    readFile(join(webappDir, 'i18n.js'), 'utf8'),
+  ]);
+
+  assert.match(app, /function getShare\(\)[\s\S]*\.get\(['"]share['"]\)/);
+  assert.match(app, /if \(state\.share\) url\.searchParams\.set\(['"]share['"], state\.share\);/);
+  assert.match(app, /else if \(state\.token\) url\.searchParams\.set\(['"]token['"], state\.token\);/);
+  assert.match(app, /if \(state\.share\) params\.set\(['"]share['"], state\.share\);/);
+  assert.match(app, /state\.token = state\.share \? ['"]['"] : getToken\(\);/);
+  assert.match(app, /function sessionsForShare\([\s\S]*slice\(0, 1\)/);
+  assert.match(app, /state\.share && state\.currentView === ['"]list['"] && state\.sessions\.length === 1/);
+  assert.match(app, /if \(!state\.share\)[\s\S]*openSessionTagsModal\(session\)/);
+  assert.match(app, /if \(state\.share\) return;[\s\S]*const form = el\(['"]session-tags-form['"]\)/);
+
+  assert.match(html, /class="shared-mode-badge"[^>]+data-i18n="share\.badge"[^>]+hidden/);
+  assert.match(css, /:root\[data-shared-session="true"\][\s\S]*#session-tags-modal/);
+  assert.match(css, /:root\[data-shared-session="true"\][\s\S]*#back-btn/);
+  assert.match(i18n, /'share\.badge': '共享会话'/);
+  assert.match(i18n, /'share\.badge': 'Shared session'/);
+});

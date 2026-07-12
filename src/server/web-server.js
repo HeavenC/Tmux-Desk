@@ -51,6 +51,40 @@ function loadToken() {
   return token;
 }
 
+function validShareSessionName(value) {
+  return typeof value === 'string'
+    && Boolean(value.trim())
+    && value === value.trim()
+    && Array.from(value).length <= 80
+    && !/[.:\x00-\x1f\x7f]/.test(value);
+}
+
+function createSessionShareToken(token, sessionName) {
+  if (typeof token !== 'string' || !token || !validShareSessionName(sessionName)) {
+    throw new Error('无法为无效会话创建分享链接');
+  }
+  const payload = Buffer.from(JSON.stringify({ v: 1, sessionName }), 'utf8').toString('base64url');
+  const signature = crypto.createHmac('sha256', token).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function verifySessionShareToken(token, candidate) {
+  if (typeof token !== 'string' || !token || typeof candidate !== 'string' || candidate.length > 2048) return null;
+  const parts = candidate.split('.');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  const expected = crypto.createHmac('sha256', token).update(parts[0]).digest();
+  let actual;
+  try { actual = Buffer.from(parts[1], 'base64url'); } catch { return null; }
+  if (actual.length !== expected.length || !crypto.timingSafeEqual(expected, actual)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
+    if (!payload || payload.v !== 1 || !validShareSessionName(payload.sessionName)) return null;
+    return { sessionName: payload.sessionName };
+  } catch {
+    return null;
+  }
+}
+
 function isTailscaleAddress(address) {
   const octets = address.split('.').map(Number);
   return octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127;
@@ -85,17 +119,35 @@ async function listAccessUrls({ port = DEFAULT_PORT, token } = {}) {
   return urls;
 }
 
-function publicPreferences(value) {
+function publicPreferences(value, sessionName) {
   const preferences = normalizePreferences(value);
+  const scoped = typeof sessionName === 'string';
+  const scopedTagIds = new Set(scoped ? (preferences.sessionTags[sessionName] || []) : []);
+  const tags = scoped
+    ? preferences.tags.filter((tag) => scopedTagIds.has(tag.id))
+    : preferences.tags;
+  const favorites = scoped
+    ? preferences.favorites.filter((name) => name === sessionName)
+    : preferences.favorites;
+  const sessionTags = scoped && preferences.sessionTags[sessionName]
+    ? { [sessionName]: preferences.sessionTags[sessionName] }
+    : (scoped ? {} : preferences.sessionTags);
+  const tabOrders = scoped
+    ? Object.fromEntries(Object.entries(preferences.tabOrders)
+      .map(([view, names]) => [view, names.filter((name) => name === sessionName)])
+      .filter(([, names]) => names.length))
+    : preferences.tabOrders;
   return {
-    tags: preferences.tags,
-    favorites: preferences.favorites,
-    sessionTags: preferences.sessionTags,
+    tags,
+    favorites,
+    sessionTags,
     // Mobile has no drag UI, but it should still show the desktop's manual
     // tab order rather than falling back to activity/alphabetical sorting.
-    tabOrders: preferences.tabOrders,
-    // Shared across every phone that connects to this machine.
-    webQuickKeys: preferences.webQuickKeys,
+    tabOrders,
+    // Custom quick keys can contain user-authored command text. Keep them out
+    // of a session capability response; shared clients fall back to local
+    // defaults and cannot mutate the machine-wide quick-key configuration.
+    webQuickKeys: scoped ? [] : preferences.webQuickKeys,
   };
 }
 
@@ -116,7 +168,10 @@ function startWebServer({
   const preferencesStore = providedPreferencesStore || new PreferencesStore({
     filePath: defaultPreferencesFilePath(),
   });
-  const liveGrouped = new Set();
+  // A grouped session is a browser-only view derived from one public source
+  // session. Keep the source association so a scoped share cannot use a valid
+  // grouped id that belongs to a different shared session.
+  const liveGrouped = new Map();
   let groupedCounter = 1;
 
   function tokenMatches(candidate) {
@@ -124,6 +179,11 @@ function startWebServer({
     const expected = crypto.createHash('sha256').update(token).digest();
     const actual = crypto.createHash('sha256').update(candidate).digest();
     return crypto.timingSafeEqual(expected, actual);
+  }
+
+  function authenticateUrl(url) {
+    if (tokenMatches(url.searchParams.get('token'))) return { sessionName: null };
+    return verifySessionShareToken(token, url.searchParams.get('share'));
   }
 
   function sendJson(res, status, payload) {
@@ -167,7 +227,7 @@ function startWebServer({
       'new-session', '-d', '-P', '-F', '#{session_id}', '-t', sourceId, '-s', name,
     ]);
     const groupedId = String(stdout || '').trim();
-    liveGrouped.add(groupedId);
+    liveGrouped.set(groupedId, sourceId);
     return groupedId;
   }
 
@@ -193,19 +253,45 @@ function startWebServer({
     return (await service.listSessions()).filter((session) => !session.name.startsWith(WEB_SESSION_PREFIX));
   }
 
-  async function handleApi(req, res, url) {
+  function findScopedSession(sessions, sessionName) {
+    if (sessionName === null) return null;
+    return sessions.find((session) => session.name === sessionName) || null;
+  }
+
+  function targetAllowedByScope(target, scopedSession) {
+    return target === scopedSession.id || liveGrouped.get(target) === scopedSession.id;
+  }
+
+  async function requireScopedTarget(res, sessionName, target) {
+    if (sessionName === null) return true;
+    const scopedSession = findScopedSession(await listPublicSessions(), sessionName);
+    if (!scopedSession) {
+      sendError(res, 404, '共享会话不存在或已关闭');
+      return false;
+    }
+    if (!targetAllowedByScope(target, scopedSession)) {
+      sendError(res, 403, '无权访问此会话');
+      return false;
+    }
+    return true;
+  }
+
+  async function handleApi(req, res, url, access) {
+    const scope = access.sessionName;
     if (req.method === 'GET' && url.pathname === '/api/sessions') {
       const [sessions, preferences] = await Promise.all([
         listPublicSessions(),
         preferencesStore.load(),
       ]);
+      const scopedSession = findScopedSession(sessions, scope);
       return sendJson(res, 200, {
         ok: true,
-        sessions,
-        preferences: publicPreferences(preferences),
+        sessions: scope === null ? sessions : (scopedSession ? [scopedSession] : []),
+        preferences: publicPreferences(preferences, scope === null ? undefined : (scopedSession?.name || '')),
       });
     }
     if (req.method === 'POST' && url.pathname === '/api/session-tags') {
+      if (scope !== null) return sendError(res, 403, '共享链接不允许修改会话设置');
       const { sessionName, tagIds } = validateSessionTags(await readJsonBody(req));
       const sessions = await listPublicSessions();
       if (!sessions.some((session) => session.name === sessionName)) {
@@ -218,10 +304,12 @@ function startWebServer({
       });
     }
     if (req.method === 'GET' && url.pathname === '/api/quick-keys') {
+      if (scope !== null) return sendJson(res, 200, { ok: true, keys: [] });
       const preferences = await preferencesStore.load();
       return sendJson(res, 200, { ok: true, keys: preferences.webQuickKeys });
     }
     if (req.method === 'POST' && url.pathname === '/api/quick-keys') {
+      if (scope !== null) return sendError(res, 403, '共享链接不允许修改快捷键设置');
       const body = await readJsonBody(req);
       const keys = Array.isArray(body) ? body : (body && Array.isArray(body.keys) ? body.keys : null);
       if (!keys) return sendError(res, 400, '快捷键格式无效');
@@ -229,7 +317,9 @@ function startWebServer({
       return sendJson(res, 200, { ok: true, preferences: publicPreferences(preferences) });
     }
     if (req.method === 'GET' && url.pathname === '/api/session-detail') {
-      const detail = await service.getSessionDetail(url.searchParams.get('session'));
+      const target = url.searchParams.get('session');
+      if (!await requireScopedTarget(res, scope, target)) return;
+      const detail = await service.getSessionDetail(target);
       return sendJson(res, 200, { ok: true, ...detail });
     }
     if (req.method === 'POST' && url.pathname === '/api/select-window') {
@@ -237,6 +327,7 @@ function startWebServer({
       if (typeof grouped !== 'string' || !SESSION_TARGET.test(grouped) || !liveGrouped.has(grouped)) {
         return sendError(res, 400, '无效的派生会话');
       }
+      if (!await requireScopedTarget(res, scope, grouped)) return;
       if (!Number.isInteger(windowIndex) || windowIndex < 0 || windowIndex > 999) {
         return sendError(res, 400, '无效的窗口序号');
       }
@@ -258,14 +349,15 @@ function startWebServer({
         // HTML/API shape with stale JS after an app upgrade.
         return serveStatic(res, path.join(STATIC_ROOT, 'assets', path.basename(url.pathname)), false);
       }
-      if (!tokenMatches(url.searchParams.get('token'))) {
+      const access = authenticateUrl(url);
+      if (!access) {
         return sendError(res, 401, '缺少或错误的访问令牌');
       }
       if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
         return serveStatic(res, path.join(STATIC_ROOT, 'index.html'), false);
       }
       if (url.pathname.startsWith('/api/')) {
-        return await handleApi(req, res, url);
+        return await handleApi(req, res, url, access);
       }
       return sendError(res, 404, '未找到资源');
     } catch (error) {
@@ -277,7 +369,8 @@ function startWebServer({
 
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, 'http://internal');
-    if (url.pathname !== '/ws' || !tokenMatches(url.searchParams.get('token'))) {
+    const access = authenticateUrl(url);
+    if (url.pathname !== '/ws' || !access) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
@@ -291,6 +384,8 @@ function startWebServer({
 
   wss.on('connection', async (ws, req) => {
     const url = new URL(req.url, 'http://internal');
+    const access = authenticateUrl(url);
+    const scope = access.sessionName;
     const sourceId = url.searchParams.get('session');
     const cols = Number(url.searchParams.get('cols')) || 80;
     const rows = Number(url.searchParams.get('rows')) || 24;
@@ -299,6 +394,26 @@ function startWebServer({
       wsSend(ws, { type: 'error', message: '无效的会话目标' });
       ws.close();
       return;
+    }
+
+    if (scope !== null) {
+      try {
+        const scopedSession = findScopedSession(await listPublicSessions(), scope);
+        if (!scopedSession) {
+          wsSend(ws, { type: 'error', message: '共享会话不存在或已关闭' });
+          ws.close();
+          return;
+        }
+        if (sourceId !== scopedSession.id) {
+          wsSend(ws, { type: 'error', message: '无权访问此会话' });
+          ws.close();
+          return;
+        }
+      } catch (error) {
+        wsSend(ws, { type: 'error', message: error?.message || '连接失败' });
+        ws.close();
+        return;
+      }
     }
 
     let groupedId = null;
@@ -377,7 +492,7 @@ function startWebServer({
   async function close() {
     clearInterval(heartbeat);
     for (const ws of wss.clients) ws.terminate();
-    for (const groupedId of [...liveGrouped]) await destroyGroupedSession(groupedId);
+    for (const groupedId of [...liveGrouped.keys()]) await destroyGroupedSession(groupedId);
     await new Promise((resolve) => server.close(resolve));
   }
 
@@ -396,26 +511,35 @@ function startWebServer({
   }));
 }
 
-// Probe whether some other process (e.g. the CLI daemon) already serves on the
-// port with our token, so the app can show its URLs instead of failing to bind.
-async function probeExternalServer({ port = DEFAULT_PORT, token } = {}) {
+// Probe whether some other process (e.g. the CLI daemon) accepts a specific
+// credential. web-control probes both the global token and a freshly minted
+// share capability so an old daemon cannot be mistaken for a compatible one.
+async function probeExternalServer({ port = DEFAULT_PORT, token, share } = {}) {
+  const params = new URLSearchParams();
+  if (typeof share === 'string' && share) params.set('share', share);
+  else if (typeof token === 'string' && token) params.set('token', token);
+  else return false;
+  let timer = null;
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 1500);
-    const response = await fetch(`http://127.0.0.1:${port}/api/sessions?token=${token}`, { signal: controller.signal });
-    clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(), 1500);
+    const response = await fetch(`http://127.0.0.1:${port}/api/sessions?${params}`, { signal: controller.signal });
     return response.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 module.exports = {
   DEFAULT_PORT,
   WEB_SESSION_PREFIX,
+  createSessionShareToken,
   loadToken,
   listAccessUrls,
   publicPreferences,
   startWebServer,
   probeExternalServer,
+  verifySessionShareToken,
 };

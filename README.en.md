@@ -42,12 +42,14 @@ Any phone browser can drive all of your local tmux sessions; add it to the home 
 - **Duplicate session** (like `git checkout -b`): derive a copy from an existing session's windows and directory, leaving the original untouched
 - **Split panes** (`⌘D` vertical / `⌘⇧D` horizontal, `tmux split-window`) and **close/restore split**; each split has an × overlay button in its top-right corner
 - **File browser on the right** (`⌘B` to toggle): browse the file tree of the current session's directory — open with default app, "Open With…" another app, reveal in Finder, copy path
+- Hold `⌘` and click a filename or path in terminal output to open it with the system default app, like iTerm; relative, absolute and `file:line:column` forms are supported
 - Pane picker in the workspace header for quick pane focus; `⌘1…9` switches the current session's tmux window
 - Full interactive terminal via xterm.js + node-pty, with color, mouse and full-screen TUI programs
 - `⌘K` command palette and familiar desktop shortcuts
 - Light, dark and system-following themes; defaults to light on first launch
 - Bilingual UI (English / Chinese; system-following or manual)
 - Auto-refresh after sessions are created or closed in an external Terminal
+- Creates a separately signed Web share link for the current session; the server scopes listing, detail, terminal attach and window switching to that session
 - No login, telemetry, cloud sync or plugins; the phone web service is off by default and only listens on the network after you start it
 
 ## Using Tags
@@ -95,6 +97,7 @@ All of the following are **App shortcuts** (tmux's own prefix bindings are unaff
 | `⌘F` | Search sessions |
 | `⌘R` | Refresh sessions |
 | `⌘B` | Toggle file browser |
+| `⌘` + click a file path | Open a file from terminal output with its default app (relative to the active pane directory) |
 | `⌘D` / `⌘⇧D` | Split vertically / horizontally (`tmux split-window`) |
 | `⌘⇧T` | Cycle light / dark / system theme |
 | `⌘1…9` | Switch the current session's tmux window |
@@ -218,9 +221,10 @@ npm start
 
 ## Phone / Web access
 
-Any phone/tablet browser can drive all of your local tmux sessions (pair it with [Tailscale](https://tailscale.com/) for remote access — its WireGuard tunnel provides transport security; the service itself does not do TLS). Two ways to start it:
+Any phone/tablet browser can drive your local tmux sessions (pair it with [Tailscale](https://tailscale.com/) for remote access — its WireGuard tunnel provides transport security; the service itself does not do TLS). You can open every session or share only the current one:
 
-- **Inside the desktop app**: the phone icon in the left rail (or "Phone access" in the command palette) → "Start web service", which shows Tailscale and LAN QR codes to scan. The service stops when the app quits.
+- **Access every session**: use the phone icon in the desktop app's left rail (or "Phone access" in the command palette) → "Start web service" to show Tailscale and LAN QR codes.
+- **Share the current session**: choose "Share this session" from its menu. The QR code and URL contain a separate signed capability bound to that session, not the full-access token; the server rejects attempts to read, attach to, or switch to another session with it.
 - **Command-line daemon** (works without the app):
 
 ```bash
@@ -235,7 +239,9 @@ It prints access URLs per interface (with a random token, persisted at `~/.confi
 - The phone attaches a **session-group derivative** (`_web_*`) that mirrors the desktop content but keeps its own current window and size; it is cleaned up on disconnect
 - Environment variables: `TMUX_DESK_WEB_PORT`, `TMUX_DESK_WEB_HOST`, `TMUX_DESK_WEB_TOKEN`, `TMUX_DESK_PREFERENCES_FILE`
 
-The web service authenticates with the random token in the URL but provides no TLS. Prefer Tailscale; LAN URLs are only for trusted Wi-Fi — **never expose port 8790 directly to the public internet**. A full URL with token is equivalent to an access credential; don't forward it.
+The web service authenticates with either the random token or a session capability in the URL, but provides no TLS. Prefer Tailscale; LAN URLs are only for trusted Wi-Fi — **never expose port 8790 directly to the public internet**. A complete URL is an access credential; don't forward it.
+
+> **Session-sharing boundary:** the signed URL can only see and attach to its designated session through the Web/API; tampering with it or requesting another session is rejected. It still exposes a real terminal, however. If that session provides a normal shell, the recipient runs commands as your local OS user and may deliberately invoke `tmux`, read files, or connect to other local resources. Share only with people you trust. For process-level isolation, use a separate OS user, container, or tmux socket.
 
 ## Advanced environment variables
 

@@ -4,6 +4,7 @@ const test = require('node:test');
 const {
   IPC_CHANNELS,
   registerIpc,
+  validateOptionalSessionName,
   validatePreferencesPatch,
   validateSessionInput,
   validateSessionTags,
@@ -29,6 +30,13 @@ test('session input accepts local unicode values and rejects malformed fields', 
   assert.throws(() => validateSessionInput({ name: 'api', cwd: '/tmp', startupCommand: 'one\ntwo' }), /启动命令/);
 });
 
+test('optional web share scope accepts a session name without changing full-access calls', () => {
+  assert.equal(validateOptionalSessionName(undefined), null);
+  assert.equal(validateOptionalSessionName(null), null);
+  assert.equal(validateOptionalSessionName(' api '), 'api');
+  assert.throws(() => validateOptionalSessionName('bad:name'), /会话名称/);
+});
+
 test('terminal IPC payload validates ids, dimensions, and bounded strings', () => {
   assert.deepEqual(validateTerminalPayload('attach', { sessionId: '$2', cols: 120, rows: 40 }), {
     sessionId: '$2', cols: 120, rows: 40,
@@ -51,6 +59,7 @@ test('preference patches allow only local UI preference fields', () => {
   assert.deepEqual(validatePreferencesPatch({ tagRailExpanded: true }), { tagRailExpanded: true });
   assert.deepEqual(validatePreferencesPatch({ tagRailWidth: 259.6 }), { tagRailWidth: 260 });
   assert.deepEqual(validatePreferencesPatch({ tagRailWidth: null }), { tagRailWidth: null });
+  assert.deepEqual(validatePreferencesPatch({ keepAwake: true }), { keepAwake: true });
   assert.throws(() => validatePreferencesPatch({ theme: 'sepia' }), /主题/);
   assert.throws(() => validatePreferencesPatch({ token: 'secret' }), /偏好字段/);
   assert.throws(() => validatePreferencesPatch({ windowBounds: { width: 2 } }), /窗口尺寸/);
@@ -60,6 +69,26 @@ test('preference patches allow only local UI preference fields', () => {
   assert.throws(() => validatePreferencesPatch({ tagRailWidth: '260' }), /Tag 栏宽度/);
   assert.throws(() => validatePreferencesPatch({ tagRailWidth: 50 }), /Tag 栏宽度/);
   assert.throws(() => validatePreferencesPatch({ tagRailWidth: 1001 }), /Tag 栏宽度/);
+  assert.throws(() => validatePreferencesPatch({ keepAwake: 'yes' }), /保持唤醒/);
+});
+
+test('saving keep-awake preference applies the persisted value to the system controller', async () => {
+  const handlers = new Map();
+  const calls = [];
+  registerIpc({
+    ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
+    tmuxService: {},
+    terminalManager: {},
+    preferencesStore: {
+      save: async (patch) => ({ theme: 'light', keepAwake: patch.keepAwake }),
+    },
+    keepAwakeController: { setEnabled: (enabled) => calls.push(enabled) },
+    chooseDirectory: async () => null,
+  });
+
+  const preferences = await handlers.get('preferences:save')(null, { keepAwake: true });
+  assert.equal(preferences.keepAwake, true);
+  assert.deepEqual(calls, [true]);
 });
 
 test('preference patches shape-check tabOrders but leave deep validation to the store', () => {
@@ -99,6 +128,29 @@ test('registerIpc exposes only the documented local channels', () => {
   });
   assert.deepEqual([...handlers.keys()].sort(), [...IPC_CHANNELS].sort());
   assert.equal([...handlers.keys()].some((channel) => channel.includes('exec')), false);
+});
+
+test('web IPC forwards a validated optional session name to status and start', async () => {
+  const handlers = new Map();
+  const calls = [];
+  registerIpc({
+    ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
+    tmuxService: {},
+    terminalManager: {},
+    preferencesStore: {},
+    chooseDirectory: async () => null,
+    webControl: {
+      status: async (sessionName) => { calls.push(['status', sessionName]); return {}; },
+      start: async (sessionName) => { calls.push(['start', sessionName]); return {}; },
+      stop: async () => ({}),
+    },
+  });
+
+  await handlers.get('web:status')(null, undefined);
+  await handlers.get('web:status')(null, ' api ');
+  await handlers.get('web:start')(null, 'worker');
+  assert.throws(() => handlers.get('web:start')(null, 'bad:name'), /会话名称/);
+  assert.deepEqual(calls, [['status', null], ['status', 'api'], ['start', 'worker']]);
 });
 
 test('tag and session lifecycle handlers update preferences after tmux succeeds', async () => {

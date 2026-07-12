@@ -13,6 +13,10 @@ class FakeTerminal {
   attachCustomKeyEventHandler(handler) { this.customKeyHandler = handler; }
   onData(handler) { this.dataHandler = handler; return { dispose() {} }; }
   onSelectionChange(handler) { this.selectionChangeHandler = handler; return { dispose() { this.disposed = true; } }; }
+  registerLinkProvider(provider) {
+    this.linkProvider = provider;
+    return { dispose: () => { this.linkProviderDisposed = true; } };
+  }
   hasSelection() { return this.selection.length > 0; }
   getSelection() { return this.selection; }
   dispatchKeyEvent(event) {
@@ -78,6 +82,7 @@ function createView() {
   global.cancelAnimationFrame = () => {};
 
   const writes = [];
+  const openedFiles = [];
   const TerminalView = loadTerminalView();
   const view = new TerminalView({
     container: {},
@@ -86,15 +91,30 @@ function createView() {
       onTerminalData() { return () => {}; },
       onTerminalExit() { return () => {}; },
     },
+    onOpenFile(reference) { openedFiles.push(reference); },
   });
   return {
     view,
     writes,
+    openedFiles,
     dispose() {
       view.dispose();
       global.ResizeObserver = previousResizeObserver;
       global.cancelAnimationFrame = previousCancelAnimationFrame;
     },
+  };
+}
+
+function fakeBufferLine(text) {
+  const cells = [];
+  for (const char of Array.from(text)) {
+    const width = /[^\u0000-\u00ff]/.test(char) ? 2 : 1;
+    cells.push({ getWidth: () => width, getChars: () => char });
+    if (width === 2) cells.push({ getWidth: () => 0, getChars: () => '' });
+  }
+  return {
+    length: cells.length,
+    getCell: (index) => cells[index],
   };
 }
 
@@ -192,6 +212,45 @@ test('detached Shift+Enter is consumed without writing to a stale terminal', () 
   try {
     assert.equal(view.terminal.dispatchKeyEvent(enterEvent({ shiftKey: true })), false);
     assert.deepEqual(writes, []);
+  } finally {
+    dispose();
+  }
+});
+
+test('Cmd+click opens a detected file reference while an ordinary click is inert', async () => {
+  const { view, openedFiles, dispose } = createView();
+  try {
+    view.terminal.buffer = {
+      active: { getLine: () => fakeBufferLine('中 src/app.js:12:3') },
+    };
+    const links = await new Promise((resolve) => view.terminal.linkProvider.provideLinks(1, resolve));
+    assert.equal(links.length, 1);
+    assert.equal(links[0].text, 'src/app.js:12:3');
+    assert.deepEqual(links[0].range, {
+      start: { x: 4, y: 1 },
+      end: { x: 18, y: 1 },
+    });
+    assert.deepEqual(links[0].decorations, { pointerCursor: false, underline: false });
+
+    links[0].activate({ metaKey: false, button: 0 });
+    assert.deepEqual(openedFiles, []);
+
+    const event = {
+      metaKey: true,
+      button: 0,
+      defaultPrevented: false,
+      propagationStopped: false,
+      preventDefault() { this.defaultPrevented = true; },
+      stopPropagation() { this.propagationStopped = true; },
+    };
+    links[0].activate(event);
+    assert.deepEqual(openedFiles, ['src/app.js']);
+    assert.equal(event.defaultPrevented, true);
+    assert.equal(event.propagationStopped, true);
+
+    links[0].hover({ metaKey: true });
+    await Promise.resolve();
+    assert.deepEqual(links[0].decorations, { pointerCursor: true, underline: true });
   } finally {
     dispose();
   }

@@ -167,6 +167,31 @@ body {
   color: var(--text-strong);
 }
 
+.shared-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--accent-border);
+  border-radius: 12px;
+  color: var(--accent-text);
+  background: var(--accent-bg);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.shared-mode-badge[hidden] {
+  display: none;
+}
+
+:root[data-shared-session="true"] .workspace-filters,
+:root[data-shared-session="true"] #session-tags-modal,
+:root[data-shared-session="true"] #back-btn {
+  display: none;
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;
@@ -514,6 +539,10 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: center;
+}
+
+:root[data-shared-session="true"] .term-title {
+  text-align: left;
 }
 
 .window-picker {

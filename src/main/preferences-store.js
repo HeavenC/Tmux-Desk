@@ -23,6 +23,7 @@ const DEFAULT_PREFERENCES = Object.freeze({
   sidebarWidth: null,
   tagRailExpanded: false,
   tagRailWidth: null,
+  keepAwake: false,
   webQuickKeys: [],
 });
 const SIDEBAR_WIDTH_RANGE = Object.freeze({ min: 200, max: 420 });
@@ -118,6 +119,9 @@ function normalizePreferences(value = {}) {
       ? value.tagRailExpanded
       : DEFAULT_PREFERENCES.tagRailExpanded,
     tagRailWidth: normalizeTagRailWidth(value.tagRailWidth),
+    keepAwake: typeof value.keepAwake === 'boolean'
+      ? value.keepAwake
+      : DEFAULT_PREFERENCES.keepAwake,
     webQuickKeys: normalizeWebQuickKeys(value.webQuickKeys),
   };
 }

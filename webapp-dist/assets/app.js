@@ -11718,10 +11718,12 @@ ${s3.join("\n")}
           "list.refresh": "\u5237\u65B0",
           "list.workspaceAria": "\u4F1A\u8BDD\u5DE5\u4F5C\u533A",
           "list.emptyAll": "\u6682\u65E0 tmux \u4F1A\u8BDD",
+          "list.emptyShared": "\u5171\u4EAB\u4F1A\u8BDD\u6682\u4E0D\u53EF\u7528",
           "list.emptyFiltered": "{label}\u4E2D\u6682\u65E0\u4F1A\u8BDD",
           "list.tagsAssociatedAria": "\u5DF2\u5173\u8054 Tag",
           "list.manageTagsAria": "\u7BA1\u7406 {name} \u7684 Tag",
           "list.sessionSub": "{windows} \u7A97\u53E3 \xB7 {panes} \u9762\u677F \xB7 {cmd}",
+          "share.badge": "\u5171\u4EAB\u4F1A\u8BDD",
           "filter.all": "\u5168\u90E8",
           "filter.favorites": "\u6536\u85CF",
           "filter.titleCount": "{label}\uFF08{count}\uFF09",
@@ -11766,7 +11768,7 @@ ${s3.join("\n")}
           "error.loadFailed": "\u52A0\u8F7D\u5931\u8D25",
           "error.loadWindowsFailed": "\u83B7\u53D6\u7A97\u53E3\u5931\u8D25",
           "error.switchWindowFailed": "\u5207\u6362\u7A97\u53E3\u5931\u8D25",
-          "error.missingToken": "\u7F3A\u5C11 token \u53C2\u6570\uFF0C\u8BF7\u901A\u8FC7\u6B63\u786E\u94FE\u63A5\u8BBF\u95EE"
+          "error.missingCredential": "\u7F3A\u5C11\u8BBF\u95EE\u51ED\u636E\uFF0C\u8BF7\u901A\u8FC7\u6B63\u786E\u94FE\u63A5\u8BBF\u95EE"
         },
         en: {
           "common.loading": "Loading\u2026",
@@ -11787,10 +11789,12 @@ ${s3.join("\n")}
           "list.refresh": "Refresh",
           "list.workspaceAria": "Session workspaces",
           "list.emptyAll": "No tmux sessions",
+          "list.emptyShared": "The shared session is unavailable",
           "list.emptyFiltered": "No sessions in {label}",
           "list.tagsAssociatedAria": "Associated tags",
           "list.manageTagsAria": "Manage tags for {name}",
           "list.sessionSub": "{windows} windows \xB7 {panes} panes \xB7 {cmd}",
+          "share.badge": "Shared session",
           "filter.all": "All",
           "filter.favorites": "Favorites",
           "filter.titleCount": "{label} ({count})",
@@ -11835,7 +11839,7 @@ ${s3.join("\n")}
           "error.loadFailed": "Failed to load",
           "error.loadWindowsFailed": "Failed to load windows",
           "error.switchWindowFailed": "Failed to switch window",
-          "error.missingToken": "Missing token parameter \u2014 please use a valid link"
+          "error.missingCredential": "Missing access credentials \u2014 please use a valid link"
         }
       };
       function detectLocale2() {
@@ -11974,6 +11978,7 @@ ${s3.join("\n")}
   };
   var state = {
     token: "",
+    share: "",
     currentView: "list",
     sessions: [],
     preferences: { tags: [], favorites: [], sessionTags: {}, tabOrders: {} },
@@ -12003,9 +12008,23 @@ ${s3.join("\n")}
   function getToken() {
     return new URLSearchParams(window.location.search).get("token") || "";
   }
+  function getShare() {
+    return new URLSearchParams(window.location.search).get("share") || "";
+  }
+  function applySharedSessionMode() {
+    const shared = Boolean(state.share);
+    document.documentElement.dataset.sharedSession = String(shared);
+    document.querySelectorAll(".shared-mode-badge").forEach((badge) => {
+      badge.hidden = !shared;
+    });
+    el("workspace-filters").hidden = shared;
+    el("back-btn").hidden = shared;
+    if (shared) closeSessionTagsModal();
+  }
   function apiUrl(path, params = {}) {
     const url = new URL(path, window.location.origin);
-    url.searchParams.set("token", state.token);
+    if (state.share) url.searchParams.set("share", state.share);
+    else if (state.token) url.searchParams.set("token", state.token);
     for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
     return url.toString();
   }
@@ -12125,6 +12144,10 @@ ${s3.join("\n")}
   function currentListSessions() {
     return mobileSessionsForView(state.sessions, state.preferences, state.listView);
   }
+  function sessionsForShare(sessions) {
+    if (!state.share) return sessions;
+    return sessions.filter(Boolean).slice(0, 1);
+  }
   function currentListLabel() {
     if (state.listView.kind === "favorites") return t("filter.favorites");
     if (state.listView.kind === "tag") {
@@ -12157,7 +12180,7 @@ ${s3.join("\n")}
     el("list-empty").hidden = sessions === null || sessions.length > 0;
     if (sessions !== null) {
       const emptyText = el("list-empty").querySelector("p");
-      emptyText.textContent = state.listView.kind === "all" ? t("list.emptyAll") : t("list.emptyFiltered", { label: currentListLabel() });
+      emptyText.textContent = state.share ? t("list.emptyShared") : state.listView.kind === "all" ? t("list.emptyAll") : t("list.emptyFiltered", { label: currentListLabel() });
       renderSessionList(sessions);
     }
   }
@@ -12191,6 +12214,12 @@ ${s3.join("\n")}
   function renderWorkspaceFilters() {
     ensureListView();
     const filters = el("workspace-filters");
+    if (state.share) {
+      filters.replaceChildren();
+      filters.hidden = true;
+      return;
+    }
+    filters.hidden = false;
     const views = [
       { view: { kind: "all" }, label: t("filter.all") },
       { view: { kind: "favorites" }, label: t("filter.favorites") },
@@ -12237,30 +12266,33 @@ ${s3.join("\n")}
       const meta = document.createElement("div");
       meta.className = "session-meta";
       meta.textContent = [session.path || "", formatRelativeTime(session.activity)].filter(Boolean).join(" \xB7 ");
-      const footer = document.createElement("div");
-      footer.className = "session-card-footer";
-      const tagList = document.createElement("div");
-      tagList.className = "session-tags";
-      tagList.setAttribute("aria-label", t("list.tagsAssociatedAria"));
-      for (const tag of tagsForSession(session.name)) {
-        const pill = document.createElement("span");
-        pill.className = "session-tag-pill";
-        pill.dataset.tagColor = tag.color;
-        pill.textContent = tag.name;
-        pill.title = tag.name;
-        tagList.appendChild(pill);
+      li.append(head, sub, meta);
+      if (!state.share) {
+        const footer = document.createElement("div");
+        footer.className = "session-card-footer";
+        const tagList = document.createElement("div");
+        tagList.className = "session-tags";
+        tagList.setAttribute("aria-label", t("list.tagsAssociatedAria"));
+        for (const tag of tagsForSession(session.name)) {
+          const pill = document.createElement("span");
+          pill.className = "session-tag-pill";
+          pill.dataset.tagColor = tag.color;
+          pill.textContent = tag.name;
+          pill.title = tag.name;
+          tagList.appendChild(pill);
+        }
+        const manageTags = document.createElement("button");
+        manageTags.type = "button";
+        manageTags.className = "session-tag-button";
+        manageTags.textContent = "Tag";
+        manageTags.setAttribute("aria-label", t("list.manageTagsAria", { name: session.name }));
+        manageTags.addEventListener("click", (event) => {
+          event.stopPropagation();
+          openSessionTagsModal(session);
+        });
+        footer.append(tagList, manageTags);
+        li.appendChild(footer);
       }
-      const manageTags = document.createElement("button");
-      manageTags.type = "button";
-      manageTags.className = "session-tag-button";
-      manageTags.textContent = "Tag";
-      manageTags.setAttribute("aria-label", t("list.manageTagsAria", { name: session.name }));
-      manageTags.addEventListener("click", (event) => {
-        event.stopPropagation();
-        openSessionTagsModal(session);
-      });
-      footer.append(tagList, manageTags);
-      li.append(head, sub, meta, footer);
       li.addEventListener("click", () => openSession(session));
       li.tabIndex = 0;
       li.setAttribute("role", "button");
@@ -12278,12 +12310,16 @@ ${s3.join("\n")}
     setListState({ loading: true, error: null });
     try {
       const body = await fetchJson(apiUrl("/api/sessions"));
-      state.sessions = Array.isArray(body.sessions) ? body.sessions : [];
+      const sessions = Array.isArray(body.sessions) ? body.sessions : [];
+      state.sessions = sessionsForShare(sessions);
       state.preferences = normalizePreferenceProjection(body.preferences);
       applyServerQuickKeys(state.preferences.webQuickKeys);
       ensureListView();
       renderWorkspaceFilters();
       setListState({ loading: false, error: null, sessions: currentListSessions() });
+      if (state.share && state.currentView === "list" && state.sessions.length === 1) {
+        openSession(state.sessions[0]);
+      }
     } catch (err) {
       setListState({ loading: false, error: err.message || t("error.loadFailed") });
     }
@@ -12294,6 +12330,7 @@ ${s3.join("\n")}
     el("session-tags-form").removeAttribute("data-session-name");
   }
   function openSessionTagsModal(session) {
+    if (state.share) return;
     const form = el("session-tags-form");
     const list = el("session-tags-list");
     const selectedIds = new Set(Array.isArray(state.preferences.sessionTags[session.name]) ? state.preferences.sessionTags[session.name] : []);
@@ -12534,11 +12571,12 @@ ${s3.join("\n")}
     const cols = state.term ? state.term.cols : 80;
     const rows = state.term ? state.term.rows : 24;
     const params = new URLSearchParams({
-      token: state.token,
       session: sessionId,
       cols: String(cols),
       rows: String(rows)
     });
+    if (state.share) params.set("share", state.share);
+    else if (state.token) params.set("token", state.token);
     return `${protocol}//${window.location.host}/ws?${params.toString()}`;
   }
   var RECONNECT_MAX = 10;
@@ -13217,7 +13255,9 @@ ${s3.join("\n")}
   function bootstrap() {
     applyStoredLanguage();
     applyStaticI18n();
-    state.token = getToken();
+    state.share = getShare();
+    state.token = state.share ? "" : getToken();
+    applySharedSessionMode();
     applyTheme(storedTheme());
     loadQuickKeys();
     setupStaticHandlers();
@@ -13228,8 +13268,8 @@ ${s3.join("\n")}
     renderWorkspaceFilters();
     document.fonts?.load?.('13px "Tmux Desk Mono"', "Aa\u4E2D\u3002\uFF08\uFF09").catch(() => {
     });
-    if (!state.token) {
-      setListState({ loading: false, error: t("error.missingToken") });
+    if (!state.token && !state.share) {
+      setListState({ loading: false, error: t("error.missingCredential") });
       return;
     }
     loadSessions();
