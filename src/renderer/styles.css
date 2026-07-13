@@ -599,7 +599,9 @@ kbd {
 .theme-preview::after { content: ""; position: absolute; left: 35%; right: 8px; top: 10px; height: 4px; border-radius: 4px; background: #1769e0; box-shadow: 0 10px 0 #dce1e7, 0 20px 0 #dce1e7; }
 .theme-preview.dark::after { background: #6ca6f7; box-shadow: 0 10px 0 #363b45, 0 20px 0 #363b45; }
 .theme-card strong { font-size: 11px; }
+.settings-section-note { margin: 0 0 10px; color: var(--text-tertiary); font-size: 11px; line-height: 1.5; }
 .settings-toggle-row { min-height: 58px; display: flex; align-items: center; gap: 18px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; cursor: pointer; }
+.settings-toggle-row + .settings-toggle-row { margin-top: 8px; }
 .settings-toggle-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; color: var(--text-tertiary); font-size: 11px; line-height: 1.45; }
 .settings-toggle-copy strong { color: var(--text); font-size: 12px; }
 .settings-switch { position: relative; width: 36px; height: 20px; flex: none; margin: 0; appearance: none; background: var(--border-strong); border: 0; border-radius: 999px; cursor: pointer; transition: background .15s ease; }

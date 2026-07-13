@@ -1,6 +1,6 @@
 const os = require('node:os');
 const { withUtf8Locale } = require('./locale-env');
-const { buildTmuxInvocation } = require('./platform');
+const { buildTmuxInvocation, withTmuxDirOnPath } = require('./platform');
 
 const SESSION_TARGET = /^\$\d+$/;
 const MAX_INPUT_LENGTH = 1024 * 1024;
@@ -33,11 +33,12 @@ class TerminalManager {
     const terminalId = this.nextTerminalId++;
     const tmuxArgs = [
       ...(this.socketName ? ['-L', this.socketName] : []),
-      // Declare clipboard + RGB terminal features for this client so tmux (with
-      // set-clipboard external) emits OSC52 on selection/copy — otherwise tmux
-      // only sends it to clients whose terminfo/terminal-features already claim
-      // clipboard support (xterm.js's "xterm-256color" advertises neither).
-      '-T', 'clipboard,RGB',
+      // Declare clipboard + RGB + extkeys terminal features for this client so
+      // tmux (with set-clipboard external) emits OSC52 on selection/copy and
+      // (with extended-keys on) forwards Shift+Enter etc. — otherwise tmux only
+      // enables these for clients whose terminfo/terminal-features already claim
+      // them (xterm.js's "xterm-256color" advertises none).
+      '-T', 'clipboard,RGB,extkeys',
       'attach-session', '-t', sessionId,
     ];
     // On Windows tmux runs inside WSL: spawn `wsl.exe -e tmux …` instead of a
@@ -51,7 +52,14 @@ class TerminalManager {
       cols,
       rows,
       cwd: this.env.HOME || os.homedir(),
-      env: { ...this.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
+      // withTmuxDirOnPath: a server this client daemonizes must find `tmux` on
+      // PATH for its plugins (resurrect/continuum) even when the app was
+      // launched from the Dock with a minimal PATH.
+      env: withTmuxDirOnPath(
+        { ...this.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
+        this.tmuxPath,
+        this.platform,
+      ),
     });
     const active = { terminalId, process, disposables: [] };
     active.disposables.push(process.onData((data) => {

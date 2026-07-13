@@ -325,3 +325,62 @@ test('splitPane maps orientation to tmux -h/-v and opens in the current dir', as
 
   await assert.rejects(() => service.splitPane('nope', 'vertical'), /无效的 tmux/);
 });
+
+test('applySessionDefaults applies enabled toggles session-scoped and unsets disabled ones', async () => {
+  const makeService = (calls) => new TmuxService({
+    tmuxPath: '/opt/homebrew/bin/tmux',
+    fsImpl: executableFs(['/opt/homebrew/bin/tmux']),
+    execFileImpl: async (file, args) => { calls.push(args); return { stdout: '', stderr: '' }; },
+  });
+
+  // All toggles on (and the default when no toggle object is given).
+  const allOn = [];
+  assert.equal(await makeService(allOn).applySessionDefaults('$4'), true);
+  assert.deepEqual(allOn, [
+    ['set-option', '-t', '$4', 'mouse', 'on'],
+    ['set-option', '-t', '$4', 'history-limit', '50000'],
+    ['set-option', '-t', '$4', 'detach-on-destroy', 'off'],
+    ['set-option', '-t', '$4', 'base-index', '1'],
+    ['set-option', '-t', '$4', 'renumber-windows', 'on'],
+    ['set-option', '-s', 'extended-keys', 'on'],
+  ]);
+
+  // Disabled session toggles unset the session-level override (fall back to the
+  // user's own config); a disabled extendedKeys leaves the server option alone.
+  const mixed = [];
+  await makeService(mixed).applySessionDefaults('$4', {
+    mouse: true, history: false, detachOnDestroy: false, windowNumbering: false, extendedKeys: false,
+  });
+  assert.deepEqual(mixed, [
+    ['set-option', '-t', '$4', 'mouse', 'on'],
+    ['set-option', '-u', '-t', '$4', 'history-limit'],
+    ['set-option', '-u', '-t', '$4', 'detach-on-destroy'],
+    ['set-option', '-u', '-t', '$4', 'base-index'],
+    ['set-option', '-u', '-t', '$4', 'renumber-windows'],
+  ]);
+
+  // Invalid targets are a programming error and still throw…
+  await assert.rejects(() => makeService([]).applySessionDefaults('pwned; rm'), /无效的 tmux/);
+
+  // …but a failing tmux (old version, race with a killed session) must not
+  // break the attach that follows.
+  const failing = new TmuxService({
+    tmuxPath: '/opt/homebrew/bin/tmux',
+    fsImpl: executableFs(['/opt/homebrew/bin/tmux']),
+    execFileImpl: async () => { throw new Error('no server running'); },
+  });
+  assert.equal(await failing.applySessionDefaults('$4'), false);
+});
+
+test('execTmux exposes the tmux directory on PATH to spawned servers', async () => {
+  let seenEnv = null;
+  const service = new TmuxService({
+    tmuxPath: '/opt/homebrew/bin/tmux',
+    fsImpl: executableFs(['/opt/homebrew/bin/tmux']),
+    env: { PATH: '/usr/bin:/bin', HOME: '/Users/x' },
+  });
+  service.execFileImpl = async () => { seenEnv = service.env; return { stdout: '', stderr: '' }; };
+
+  await service.run(['start-server']);
+  assert.equal(seenEnv.PATH.startsWith('/opt/homebrew/bin:'), true);
+});

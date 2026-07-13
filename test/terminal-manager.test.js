@@ -62,11 +62,14 @@ test('attach uses exact tmux socket arguments and terminal environment', () => {
     env: { PATH: '/bin', TERM: 'old' },
   });
   manager.attach({ sessionId: '$7', cols: 90, rows: 28 });
-  assert.deepEqual(calls[0].args, ['-L', 'isolated', '-T', 'clipboard,RGB', 'attach-session', '-t', '$7']);
+  assert.deepEqual(calls[0].args, ['-L', 'isolated', '-T', 'clipboard,RGB,extkeys', 'attach-session', '-t', '$7']);
   assert.equal(calls[0].file, '/custom/tmux');
   assert.equal(calls[0].options.name, 'xterm-256color');
   assert.equal(calls[0].options.env.TERM, 'xterm-256color');
   assert.equal(calls[0].options.env.COLORTERM, 'truecolor');
+  // A server daemonized by this client must find `tmux` on PATH so its plugins
+  // (resurrect/continuum) work even when the app launched with a minimal PATH.
+  assert.equal(calls[0].options.env.PATH, '/custom:/bin');
   assert.equal(calls[0].options.cols, 90);
   assert.equal(calls[0].options.rows, 28);
 });

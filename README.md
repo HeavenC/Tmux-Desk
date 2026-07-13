@@ -45,6 +45,7 @@ Tmux Desk 是一个本地优先的 tmux 桌面管理器。它采用类似工作�
 - 像 iTerm 一样按住 `⌘` 点击终端输出中的文件名或路径，以系统默认应用打开；支持相对路径、绝对路径及 `file:line:column` 格式
 - 工作区右上角面板菜单快速定位 pane，`⌘1…9` 切换当前会话的 tmux window
 - 基于 xterm.js + node-pty 的完整交互终端，支持颜色、鼠标和全屏终端程序
+- **终端体验基线开箱即用**：鼠标滚轮/拖选、5 万行回滚、Shift+Enter 扩展按键、窗口从 1 编号、关最后分屏时切会话——连接会话时按会话自动应用，无需任何 `~/.tmux.conf`；「设置 → 终端体验」可逐项关闭
 - `⌘K` 命令面板与常用桌面快捷键
 - 亮色、暗色和跟随系统主题；首次启动默认亮色
 - 中英文界面（跟随系统或手动切换）
@@ -64,15 +65,19 @@ Tag、收藏、主题和窗口尺寸都只保存在本机。复制会话会继�
 
 ## ⚠️ tmux 行为 vs App 行为（重要）
 
-Tmux Desk 的终端就是你本机的 tmux，attach 时**照常读取 `~/.tmux.conf`**。因此很多“App 的行为”其实是 **tmux 配置**决定的——在别的终端里换一套 tmux 配置，表现就会变。下面这些是常见的“以为是 App、其实是 tmux”的点（配置示例可参考本项目作者的 `~/.tmux.conf`）：
+Tmux Desk 的终端就是你本机的 tmux，attach 时**照常读取 `~/.tmux.conf`**。因此很多“App 的行为”其实是 **tmux 配置**决定的——在别的终端里换一套 tmux 配置，表现就会变。
+
+其中最影响体验的几项，App 已经**默认接管**（连接会话时**按会话**应用，不修改你的 `~/.tmux.conf`、不影响其他终端里的会话）：鼠标滚轮/拖选、5 万行回滚缓冲、Shift+Enter 扩展按键、窗口从 1 编号、关最后分屏时切会话。可在**「设置 → 终端体验」**逐项关闭，关闭后重新连接会话即回到你自己的 tmux 配置。
+
+下面这些是常见的“以为是 App、其实是 tmux”的点（标注“App 默认接管”的项开箱即用）：
 
 | 现象 | 其实由谁决定 | 相关 tmux 配置 |
 |---|---|---|
-| 终端里能用鼠标滚轮翻历史、拖动选择 | tmux | `set -g mouse on` |
-| 能往回翻多少行 | tmux | `set -g history-limit 50000` |
-| 某些 TUI / REPL 程序里 **Shift+Enter 能换行**（不被吞） | tmux + 终端特性 | `set -s extended-keys on` / `set -as terminal-features 'xterm*:extkeys'` |
-| `⌘1…9` 对应的 window 编号从 **1** 开始；关掉一个 window 后编号自动重排 | tmux | `set -g base-index 1` / `setw -g pane-base-index 1` / `set -g renumber-windows on`（tmux 默认从 0 开始、不重排） |
-| 关掉会话里**最后一个 pane** 时不退出 tmux、而是自动切到别的会话 | tmux | `set -g detach-on-destroy off` |
+| 终端里能用鼠标滚轮翻历史、拖动选择 | **App 默认接管** | `mouse on`（按会话）。关闭该接管后，除非你自己配置，滚轮会退化成 ↑/↓ 方向键 |
+| 能往回翻多少行 | **App 默认接管** | `history-limit 50000`（按会话，tmux 默认仅 2000；对连接后新建的 pane 生效）|
+| 某些 TUI / REPL 程序里 **Shift+Enter 能换行**（不被吞） | **App 默认接管** | App attach 已声明 `extkeys` 并开启 `set -s extended-keys on`，Claude Code 等开箱即用 |
+| `⌘1…9` 对应的 window 编号从 **1** 开始；关掉一个 window 后编号自动重排 | **App 默认接管** | `base-index 1` + `renumber-windows on`（按会话，tmux 默认从 0 开始、不重排）|
+| 关掉会话里**最后一个 pane** 时不退出 tmux、而是自动切到别的会话 | **App 默认接管** | `detach-on-destroy off`（按会话）|
 | 鼠标拖选松开就复制到系统剪贴板 | tmux（这条链路）| `bind -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-no-clear "pbcopy"` 之类 |
 | `prefix + T/L/X` 弹出 fzf 会话选择器等 | tmux（用户键位，如 `sesh`）| `bind-key T display-popup …` |
 | 底部那条状态栏的颜色/内容 | tmux | `status-*` 系列，是 tmux 画的，不是 App |
@@ -85,6 +90,33 @@ App 只负责**转发按键**、**把 pane attach 进来**、并叠加自己的�
 - 如果某个行为在 App 里和你另一个终端里不一致，**先怀疑 tmux 配置差异**（prefix、`mouse`、`base-index` 等），而不是 App 的 bug。
 
 > App 侧为保证跨环境一致，attach 时做了两件事：用 `tmux -T clipboard,RGB attach-session` 声明客户端支持 OSC52 剪贴板与真彩色；为 tmux 子进程强制 UTF-8 locale（`LANG`/`LC_ALL`），避免从访达/程序坞启动时继承不到 shell 的 locale 而把中文/emoji 会话名显示成 `_`。
+
+## 电脑重启后恢复会话
+
+tmux server 是内存进程，关机/重启后所有会话必然消失——这不是 App 的行为，任何终端里的 tmux 都一样。推荐用社区插件 [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) + [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum) 自动快照、开机自动恢复：
+
+```bash
+git clone https://github.com/tmux-plugins/tmux-resurrect ~/.tmux/plugins/tmux-resurrect
+git clone https://github.com/tmux-plugins/tmux-continuum ~/.tmux/plugins/tmux-continuum
+```
+
+`~/.tmux.conf` 追加（手动 clone 即可，无需 TPM）：
+
+```tmux
+set -g @resurrect-capture-pane-contents 'on'   # 连屏幕内容一起快照
+set -g @continuum-restore 'on'                 # server 启动时自动恢复
+set -g @continuum-save-interval '15'           # 每 15 分钟自动快照
+run-shell ~/.tmux/plugins/tmux-resurrect/resurrect.tmux
+run-shell ~/.tmux/plugins/tmux-continuum/continuum.tmux
+```
+
+配好后 continuum 每 15 分钟把全部会话（窗口 / 分屏布局、每个 pane 的工作目录、可选屏幕内容）快照到 `~/.local/share/tmux/resurrect/`。重启后**打开 Tmux Desk 会话即自动回来**：App 启动时会主动唤起 tmux server（`start-server`），continuum 的自动恢复随之执行，不需要先手动新建会话。
+
+注意事项：
+
+- 恢复的是**布局不是进程**：pane 里正在跑的程序默认只重启白名单内的（`@resurrect-processes` 可配），跑到一半的任务、shell 变量回不来——这是任何方案都绕不开的。
+- App 会把 tmux 所在目录注入其拉起的 server 的 `PATH`，所以从 Dock 启动也能正常执行插件。如果你在**别的 GUI 终端**里遇到插件报 `tmux: command not found`，在 tmux.conf 里插件行之前加：`set-environment -g PATH "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"`。
+- 已在运行的 tmux server 不会重读配置；改完 conf 执行一次 `tmux source-file ~/.tmux.conf`（或 `tmux kill-server` 后重开）才生效。
 
 ## 快捷键
 
@@ -320,6 +352,10 @@ npm run postinstall
 ### 为什么某个终端行为和我另一个终端不一样？
 
 先看上面的 **「tmux 行为 vs App 行为」** 一节——绝大多数差异来自 `~/.tmux.conf`（prefix、`mouse`、`base-index`、扩展按键等），不是 App。
+
+### 电脑重启后会话都没了？
+
+tmux 本身不落盘，见 **「电脑重启后恢复会话」** 一节：装 tmux-resurrect + tmux-continuum 后，重启再打开 App 会话会自动恢复。
 
 ## 许可证
 

@@ -39,6 +39,27 @@ test('malformed and invalid preferences fall back to normalized defaults', async
     assert.deepEqual(await store.load(), {
       theme: 'light', favorites: ['api'], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null,
       sidebarWidth: null, tagRailExpanded: false, tagRailWidth: null, keepAwake: false, webQuickKeys: [],
+      tmuxDefaults: { mouse: true, history: true, detachOnDestroy: true, windowNumbering: true, extendedKeys: true },
+    });
+  });
+});
+
+test('tmux defaults toggle on by default, persist booleans, and drop junk keys', async () => {
+  await withStore(async (store, filePath) => {
+    assert.deepEqual((await store.load()).tmuxDefaults, {
+      mouse: true, history: true, detachOnDestroy: true, windowNumbering: true, extendedKeys: true,
+    });
+    const saved = await store.save({
+      tmuxDefaults: { mouse: false, history: true, detachOnDestroy: true, windowNumbering: true, extendedKeys: false },
+    });
+    assert.deepEqual(saved.tmuxDefaults, {
+      mouse: false, history: true, detachOnDestroy: true, windowNumbering: true, extendedKeys: false,
+    });
+    await writeFile(filePath, JSON.stringify({
+      tmuxDefaults: { mouse: 'yes', history: false, bogus: true },
+    }), 'utf8');
+    assert.deepEqual((await store.load()).tmuxDefaults, {
+      mouse: true, history: false, detachOnDestroy: true, windowNumbering: true, extendedKeys: true,
     });
   });
 });

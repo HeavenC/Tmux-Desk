@@ -8,6 +8,7 @@ const {
   wslConfig,
   resolveWslDistro,
   resetWslDistroCache,
+  withTmuxDirOnPath,
 } = require('../src/main/platform');
 
 test('buildTmuxInvocation runs the tmux binary directly off Windows', () => {
@@ -81,4 +82,23 @@ test('resolveWslDistro prefers the env var, else decodes UTF-16 wsl -l output', 
   resetWslDistroCache();
   const missing = await resolveWslDistro({ env: {}, execFileImpl: async () => { throw new Error('no wsl'); } });
   assert.equal(missing, null);
+});
+
+test('withTmuxDirOnPath prepends the tmux directory exactly once', () => {
+  const env = { PATH: '/usr/bin:/bin', HOME: '/Users/x' };
+  const patched = withTmuxDirOnPath(env, '/opt/homebrew/bin/tmux', 'darwin');
+  assert.equal(patched.PATH, '/opt/homebrew/bin:/usr/bin:/bin');
+  assert.equal(patched.HOME, '/Users/x');
+  // Already on PATH → the same env object comes back untouched.
+  assert.equal(withTmuxDirOnPath(patched, '/opt/homebrew/bin/tmux', 'darwin'), patched);
+  assert.equal(withTmuxDirOnPath(env, '/usr/bin/tmux', 'darwin'), env);
+});
+
+test('withTmuxDirOnPath is a no-op for relative commands, Windows, and missing PATH survives', () => {
+  const env = { PATH: '/usr/bin' };
+  assert.equal(withTmuxDirOnPath(env, 'tmux', 'darwin'), env);
+  assert.equal(withTmuxDirOnPath(env, null, 'darwin'), env);
+  // On Windows tmux runs inside WSL; the Windows PATH is irrelevant to it.
+  assert.equal(withTmuxDirOnPath(env, '/usr/bin/tmux', 'win32'), env);
+  assert.equal(withTmuxDirOnPath({}, '/opt/homebrew/bin/tmux', 'darwin').PATH, '/opt/homebrew/bin');
 });

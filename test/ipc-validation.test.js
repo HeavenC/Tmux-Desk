@@ -70,6 +70,13 @@ test('preference patches allow only local UI preference fields', () => {
   assert.throws(() => validatePreferencesPatch({ tagRailWidth: 50 }), /Tag 栏宽度/);
   assert.throws(() => validatePreferencesPatch({ tagRailWidth: 1001 }), /Tag 栏宽度/);
   assert.throws(() => validatePreferencesPatch({ keepAwake: 'yes' }), /保持唤醒/);
+  assert.deepEqual(
+    validatePreferencesPatch({ tmuxDefaults: { mouse: false, extendedKeys: true } }),
+    { tmuxDefaults: { mouse: false, extendedKeys: true } },
+  );
+  assert.throws(() => validatePreferencesPatch({ tmuxDefaults: { mouse: 'yes' } }), /终端体验/);
+  assert.throws(() => validatePreferencesPatch({ tmuxDefaults: { statusRight: true } }), /终端体验/);
+  assert.throws(() => validatePreferencesPatch({ tmuxDefaults: null }), /终端体验/);
 });
 
 test('saving keep-awake preference applies the persisted value to the system controller', async () => {

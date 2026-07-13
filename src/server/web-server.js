@@ -431,6 +431,12 @@ function startWebServer({
       const tmuxPath = await service.resolveTmuxPath();
       if (!tmuxPath) throw new Error('未找到 tmux');
       groupedId = await createGroupedSession(sourceId);
+      // Touch scrolling on mobile needs tmux mouse mode; apply the same UX
+      // baseline as the desktop attach to the grouped session
+      // (fire-and-forget, session options apply live).
+      preferencesStore.load()
+        .then((preferences) => service.applySessionDefaults(groupedId, preferences.tmuxDefaults))
+        .catch(() => {});
       manager = new TerminalManager({
         tmuxPath,
         socketName: service.socketName,

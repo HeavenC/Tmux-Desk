@@ -149,7 +149,8 @@ function validateTabOrders(value) {
 
 function validatePreferencesPatch(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('偏好设置无效');
-  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders', 'keepAwake']);
+  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders', 'keepAwake', 'tmuxDefaults']);
+  const TMUX_DEFAULT_KEYS = ['mouse', 'history', 'detachOnDestroy', 'windowNumbering', 'extendedKeys'];
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new Error('偏好字段无效');
   }
@@ -182,6 +183,15 @@ function validatePreferencesPatch(value) {
   if ('keepAwake' in value) {
     if (typeof value.keepAwake !== 'boolean') throw new Error('保持唤醒设置无效');
     result.keepAwake = value.keepAwake;
+  }
+  if ('tmuxDefaults' in value) {
+    const toggles = value.tmuxDefaults;
+    if (!toggles || typeof toggles !== 'object' || Array.isArray(toggles)
+      || !Object.keys(toggles).every((key) => TMUX_DEFAULT_KEYS.includes(key))
+      || !Object.values(toggles).every((item) => typeof item === 'boolean')) {
+      throw new Error('终端体验设置无效');
+    }
+    result.tmuxDefaults = { ...toggles };
   }
   if ('tabOrders' in value) result.tabOrders = validateTabOrders(value.tabOrders);
   return result;
@@ -280,7 +290,15 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
     'files:open': (_event, filePath) => fileBridge.open(validateFilePath(filePath)),
     'files:open-with': (_event, filePath) => fileBridge.openWith(validateFilePath(filePath)),
     'files:reveal': (_event, filePath) => fileBridge.reveal(validateFilePath(filePath)),
-    'terminal:attach': (_event, payload) => terminalManager.attach(validateTerminalPayload('attach', payload)),
+    'terminal:attach': (_event, payload) => {
+      const validated = validateTerminalPayload('attach', payload);
+      // Fire-and-forget: tmux applies session options live, so the client sees
+      // the UX baseline (mouse, history…) even if this lands after the attach.
+      preferencesStore.load()
+        .then((preferences) => tmuxService.applySessionDefaults(validated.sessionId, preferences.tmuxDefaults))
+        .catch(() => {});
+      return terminalManager.attach(validated);
+    },
     'terminal:write': (_event, payload) => terminalManager.write(validateTerminalPayload('write', payload)),
     'terminal:resize': (_event, payload) => terminalManager.resize(validateTerminalPayload('resize', payload)),
     'terminal:detach': () => { terminalManager.dispose(); return true; },

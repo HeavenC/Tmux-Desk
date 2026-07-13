@@ -45,6 +45,7 @@ Any phone browser can drive all of your local tmux sessions; add it to the home 
 - Hold `⌘` and click a filename or path in terminal output to open it with the system default app, like iTerm; relative, absolute and `file:line:column` forms are supported
 - Pane picker in the workspace header for quick pane focus; `⌘1…9` switches the current session's tmux window
 - Full interactive terminal via xterm.js + node-pty, with color, mouse and full-screen TUI programs
+- **Terminal experience baseline out of the box**: mouse wheel/drag-select, 50000-line scrollback, Shift+Enter extended keys, windows numbered from 1, switch-session-on-last-pane-close — applied per session on attach, no `~/.tmux.conf` needed; each is toggleable under Settings → Terminal experience
 - `⌘K` command palette and familiar desktop shortcuts
 - Light, dark and system-following themes; defaults to light on first launch
 - Bilingual UI (English / Chinese; system-following or manual)
@@ -64,15 +65,19 @@ Tags, favorites, theme and window size are stored only on this machine. Duplicat
 
 ## ⚠️ tmux behavior vs App behavior (important)
 
-Tmux Desk's terminal *is* your local tmux, and it **reads `~/.tmux.conf` as usual** when it attaches. So a lot of "App behavior" is actually decided by your **tmux config** — swap in a different tmux config elsewhere and the behavior changes. These are the common "I thought it was the App, but it's tmux" points (config examples mirror this project author's `~/.tmux.conf`):
+Tmux Desk's terminal *is* your local tmux, and it **reads `~/.tmux.conf` as usual** when it attaches. So a lot of "App behavior" is actually decided by your **tmux config** — swap in a different tmux config elsewhere and the behavior changes.
+
+The most experience-critical options are **managed by the App by default** (applied **per attached session** when connecting — your `~/.tmux.conf` is never modified and sessions in other terminals are unaffected): mouse wheel/drag-select, a 50000-line scrollback, Shift+Enter extended keys, windows numbered from 1, and switch-session-on-last-pane-close. Each can be turned off under **Settings → Terminal experience**; reconnect the session and it falls back to your own tmux config.
+
+These are the common "I thought it was the App, but it's tmux" points (rows marked "App-managed" work out of the box):
 
 | What you see | Actually decided by | Relevant tmux config |
 |---|---|---|
-| Mouse wheel scrolls history, drag-to-select works in the terminal | tmux | `set -g mouse on` |
-| How many lines you can scroll back | tmux | `set -g history-limit 50000` |
-| **Shift+Enter inserts a newline** (isn't swallowed) in some TUI / REPL programs | tmux + terminal features | `set -s extended-keys on` / `set -as terminal-features 'xterm*:extkeys'` |
-| `⌘1…9` window numbers start at **1**; numbers renumber after you close a window | tmux | `set -g base-index 1` / `setw -g pane-base-index 1` / `set -g renumber-windows on` (tmux defaults to 0-based, no renumber) |
-| Closing the **last pane** of a session doesn't exit tmux but switches to another session | tmux | `set -g detach-on-destroy off` |
+| Mouse wheel scrolls history, drag-to-select works in the terminal | **App-managed** | `mouse on` (per session). With the toggle off — and no config of your own — the wheel degrades into ↑/↓ arrow keys |
+| How many lines you can scroll back | **App-managed** | `history-limit 50000` (per session; tmux defaults to just 2000, applies to panes created after attach) |
+| **Shift+Enter inserts a newline** (isn't swallowed) in some TUI / REPL programs | **App-managed** | the App declares `extkeys` on attach and sets `set -s extended-keys on` — Claude Code and friends work out of the box |
+| `⌘1…9` window numbers start at **1**; numbers renumber after you close a window | **App-managed** | `base-index 1` + `renumber-windows on` (per session; tmux defaults to 0-based, no renumber) |
+| Closing the **last pane** of a session doesn't exit tmux but switches to another session | **App-managed** | `detach-on-destroy off` (per session) |
 | Releasing a mouse drag copies to the system clipboard | tmux (this path) | e.g. `bind -T copy-mode MouseDragEnd1Pane send-keys -X copy-pipe-no-clear "pbcopy"` |
 | `prefix + T/L/X` pops up an fzf session picker etc. | tmux (your bindings, e.g. `sesh`) | `bind-key T display-popup …` |
 | The color/content of that bottom status bar | tmux | the `status-*` options — tmux draws it, not the App |
@@ -85,6 +90,33 @@ The App only **forwards keys**, **attaches panes**, and layers its own desktop i
 - If a behavior differs between the App and another terminal, **suspect a tmux config difference first** (prefix, `mouse`, `base-index`, …), not an App bug.
 
 > For cross-environment consistency, the App does two things on attach: declares OSC 52 clipboard + true color support via `tmux -T clipboard,RGB attach-session`; and forces a UTF-8 locale (`LANG`/`LC_ALL`) for the tmux child, so launching from Finder/Dock doesn't fall back to the C locale and render CJK/emoji session names as `_`.
+
+## Restoring sessions after a reboot
+
+The tmux server is an in-memory process — a shutdown/reboot always wipes every session. That's not App behavior; tmux works the same in any terminal. The recommended fix is the community plugin pair [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) + [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum) for automatic snapshots and restore-on-boot:
+
+```bash
+git clone https://github.com/tmux-plugins/tmux-resurrect ~/.tmux/plugins/tmux-resurrect
+git clone https://github.com/tmux-plugins/tmux-continuum ~/.tmux/plugins/tmux-continuum
+```
+
+Append to `~/.tmux.conf` (a manual clone is enough — no TPM required):
+
+```tmux
+set -g @resurrect-capture-pane-contents 'on'   # snapshot visible pane contents too
+set -g @continuum-restore 'on'                 # auto-restore when the server starts
+set -g @continuum-save-interval '15'           # auto-snapshot every 15 minutes
+run-shell ~/.tmux/plugins/tmux-resurrect/resurrect.tmux
+run-shell ~/.tmux/plugins/tmux-continuum/continuum.tmux
+```
+
+Once configured, continuum snapshots all sessions (window/split layout, each pane's working directory, optionally pane contents) to `~/.local/share/tmux/resurrect/` every 15 minutes. After a reboot, **just open Tmux Desk and your sessions come back**: the App wakes the tmux server on launch (`start-server`), which triggers continuum's auto-restore — no need to create a session first.
+
+Caveats:
+
+- What's restored is the **layout, not the processes**: programs running inside panes are only relaunched if whitelisted (`@resurrect-processes`); half-finished jobs and shell state don't survive — no scheme gets around that.
+- The App injects the tmux binary's directory into the `PATH` of any server it starts, so plugins work even when launched from the Dock. If a plugin dies with `tmux: command not found` in **another GUI terminal**, add this before the plugin lines in tmux.conf: `set-environment -g PATH "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"`.
+- A running tmux server doesn't re-read its config; after editing, run `tmux source-file ~/.tmux.conf` once (or `tmux kill-server` and reopen).
 
 ## Keyboard shortcuts
 
@@ -320,6 +352,10 @@ No. Switching only closes the `tmux attach` client for the current window; the t
 ### Why does some terminal behavior differ from my other terminal?
 
 See the **"tmux behavior vs App behavior"** section above — almost all differences come from `~/.tmux.conf` (prefix, `mouse`, `base-index`, extended keys, …), not the App.
+
+### All my sessions are gone after a reboot?
+
+tmux keeps nothing on disk by itself — see **"Restoring sessions after a reboot"** above: with tmux-resurrect + tmux-continuum installed, reopening the App after a reboot restores your sessions automatically.
 
 ## License
 

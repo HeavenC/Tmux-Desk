@@ -111,10 +111,26 @@ function defaultExecFile(file, args) {
   });
 }
 
+// GUI-launched apps (Dock/Finder) inherit a minimal PATH without Homebrew, and
+// the tmux SERVER daemonized from our first tmux command inherits ours — so tmux
+// plugins (tmux-resurrect/continuum, TPM…) that invoke a bare `tmux` from
+// run-shell die with "command not found", silently breaking session save/restore.
+// Prepend the resolved tmux binary's directory so any server we start can run
+// its own plugins. No-op on Windows: tmux and its plugins live inside WSL with
+// WSL's own PATH.
+function withTmuxDirOnPath(env, tmuxPath, platform = process.platform) {
+  if (isWindows(platform) || typeof tmuxPath !== 'string' || !path.posix.isAbsolute(tmuxPath)) return env;
+  const dir = path.posix.dirname(tmuxPath);
+  const parts = String(env.PATH || '').split(':').filter(Boolean);
+  if (parts.includes(dir)) return env;
+  return { ...env, PATH: [dir, ...parts].join(':') };
+}
+
 module.exports = {
   isWindows,
   wslConfig,
   buildTmuxInvocation,
+  withTmuxDirOnPath,
   toWslPath,
   toWindowsPath,
   resolveWslDistro,

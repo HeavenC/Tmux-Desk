@@ -166,6 +166,11 @@ async function bootstrap() {
   const bundledTmux = app.isPackaged ? path.join(process.resourcesPath, 'bin', 'tmux') : null;
   const tmuxService = new TmuxService({ tmuxPath: bundledTmux, socketName });
   const tmuxPath = await tmuxService.resolveTmuxPath();
+  // Kick the tmux server awake so config-driven restore plugins (e.g.
+  // tmux-continuum's auto-restore after a reboot) run at app launch instead of
+  // waiting for the first session command. start-server is a no-op on a running
+  // server, and without a restore plugin an empty server just exits again.
+  if (tmuxPath) tmuxService.run(['start-server']).catch(() => {});
   terminalManager = new TerminalManager({
     tmuxPath: tmuxPath || 'tmux',
     socketName,

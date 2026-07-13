@@ -183,12 +183,14 @@ test('session-scoped shares only expose and control their selected session', asy
   const details = [];
   const tmuxCalls = [];
   const killed = [];
+  const mouseEnabled = [];
   let nextGrouped = 50;
   const service = {
     socketName: 'test-socket',
     listSessions: async () => sessions,
     killSession: async (target) => killed.push(target),
     resolveTmuxPath: async () => '/fake/tmux',
+    applySessionDefaults: async (target) => { mouseEnabled.push(target); return true; },
     getSessionDetail: async (target) => {
       details.push(target);
       return { windows: [{ id: '@1', index: 0, name: 'main', active: true, panes: 1 }], panes: [] };
@@ -271,6 +273,12 @@ test('session-scoped shares only expose and control their selected session', asy
     const ready = await nextWebSocketMessage(allowedSocket);
     assert.equal(ready.type, 'ready');
     assert.equal(ready.grouped, '$50');
+    // The attach must apply the tmux UX baseline (mouse etc.) to the grouped
+    // session. It's fire-and-forget behind a preferences load — poll briefly.
+    for (let i = 0; i < 100 && mouseEnabled.length === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.deepEqual(mouseEnabled, ['$50']);
 
     const allowedDetail = await responseJson(`${base}/api/session-detail?${shareQuery}&session=%2450`);
     assert.equal(allowedDetail.response.status, 200);

@@ -3,7 +3,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const { withUtf8Locale } = require('./locale-env');
-const { isWindows, wslConfig, buildTmuxInvocation, toWslPath, toWindowsPath } = require('./platform');
+const { isWindows, wslConfig, buildTmuxInvocation, toWslPath, toWindowsPath, withTmuxDirOnPath } = require('./platform');
 
 const execFileAsync = promisify(execFile);
 const SESSION_TARGET = /^\$\d+$/;
@@ -286,6 +286,56 @@ class TmuxService {
     await this.run(['kill-session', '-t', sessionTarget]);
   }
 
+  // UX baseline the app guarantees regardless of the user's ~/.tmux.conf, so the
+  // app behaves the same on any machine it's handed to. All of it is scoped to
+  // the attached session — tmux's global option table is always populated with
+  // defaults, so "unset" is indistinguishable from an explicit value and we must
+  // not touch globals (the user's sessions in other terminals stay untouched):
+  //   mouse             — without it xterm.js degrades wheel events into ↑/↓
+  //                       arrow keys (tmux keeps the client on the alt screen)
+  //   history           — history-limit 50000: the 2000-line default is far too
+  //                       little for LLM/CI output (applies to panes created
+  //                       after attach)
+  //   detachOnDestroy   — closing the last pane switches session instead of
+  //                       going blank
+  //   windowNumbering   — base-index 1 + renumber-windows on, matching the
+  //                       app's ⌘1…9 switcher
+  //   extendedKeys      — the one server-scoped option (it has no session
+  //                       variant): forwards Shift+Enter etc. ONLY to clients
+  //                       that declared extkeys support (the app does via -T),
+  //                       so other terminals are unaffected
+  // Each toggle (preferences.tmuxDefaults) applies its options when on and
+  // UNSETS the session-level override when off (`set -u` falls back to the
+  // user's own global/config value) — so flipping a toggle is fully reversible
+  // on the next attach. extendedKeys off leaves the server option alone: we
+  // can't know whether the user's config turned it on.
+  async applySessionDefaults(sessionTarget, toggles = {}) {
+    validateTarget(sessionTarget, SESSION_TARGET, '会话');
+    const sessionOptions = {
+      mouse: [['mouse', 'on']],
+      history: [['history-limit', '50000']],
+      detachOnDestroy: [['detach-on-destroy', 'off']],
+      windowNumbering: [['base-index', '1'], ['renumber-windows', 'on']],
+    };
+    const commands = [];
+    for (const [toggle, options] of Object.entries(sessionOptions)) {
+      const enabled = toggles[toggle] !== false;
+      for (const [key, value] of options) {
+        commands.push(enabled
+          ? ['set-option', '-t', sessionTarget, key, value]
+          : ['set-option', '-u', '-t', sessionTarget, key]);
+      }
+    }
+    if (toggles.extendedKeys !== false) commands.push(['set-option', '-s', 'extended-keys', 'on']);
+    let allApplied = true;
+    for (const args of commands) {
+      // Each option fails independently (old tmux without it, session raced
+      // away) — a miss must never break the attach that follows.
+      try { await this.run(args); } catch { allApplied = false; }
+    }
+    return allApplied;
+  }
+
   async selectWindow(windowTarget) {
     validateTarget(windowTarget, WINDOW_TARGET, '窗口');
     await this.run(['select-window', '-t', windowTarget]);
@@ -368,6 +418,9 @@ class TmuxService {
   async execTmux(args) {
     const tmuxPath = await this.resolveTmuxPath();
     if (!tmuxPath) throw new TmuxError('TMUX_NOT_FOUND', notFoundMessage(this.isWindows));
+    // A tmux server we daemonize inherits this env; make sure its plugins can
+    // find `tmux` even when the app was launched from the Dock (minimal PATH).
+    this.env = withTmuxDirOnPath(this.env, tmuxPath, this.platform);
     const invocation = buildTmuxInvocation(
       { platform: this.platform, tmuxPath, env: this.env },
       this.commandArgs(args),

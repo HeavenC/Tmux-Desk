@@ -16,6 +16,7 @@ const state = {
   preferences: {
     theme: 'light', favorites: [], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null, sidebarWidth: null,
     tagRailExpanded: false, tagRailWidth: null, keepAwake: false,
+    tmuxDefaults: { mouse: true, history: true, detachOnDestroy: true, windowNumbering: true, extendedKeys: true },
   },
   sessions: [],
   selectedSessionId: null,
@@ -360,6 +361,28 @@ async function setKeepAwakePreference(enabled) {
     toast(friendlyError(error), 'error');
   } finally {
     refs.keepAwakeToggle.disabled = false;
+  }
+}
+
+function tmuxDefaultToggles() {
+  return document.querySelectorAll('.tmux-default-toggle');
+}
+
+// The tmux UX baseline the app applies per attached session; the full toggle
+// object is sent so the stored preference never depends on merge semantics.
+// Takes effect on the next attach (session switch / reconnect).
+async function setTmuxDefaultPreference(key, enabled, input) {
+  const previous = state.preferences.tmuxDefaults?.[key] !== false;
+  input.disabled = true;
+  try {
+    state.preferences = await api.savePreferences({
+      tmuxDefaults: { ...state.preferences.tmuxDefaults, [key]: enabled },
+    });
+  } catch (error) {
+    input.checked = previous;
+    toast(friendlyError(error), 'error');
+  } finally {
+    input.disabled = false;
   }
 }
 
@@ -1527,6 +1550,9 @@ function openSettings() {
   renderLanguageControls();
   renderTagSettings();
   refs.keepAwakeToggle.checked = state.preferences.keepAwake === true;
+  for (const input of tmuxDefaultToggles()) {
+    input.checked = state.preferences.tmuxDefaults?.[input.dataset.tmuxKey] !== false;
+  }
   openModal(refs.settingsModal, refs.settingsModal.querySelector('.theme-card'));
 }
 
@@ -1997,6 +2023,9 @@ function bindEvents() {
   refs.tagRailToggleButton.addEventListener('click', () => setTagRailExpanded(!state.preferences.tagRailExpanded));
   refs.settingsNewTagButton.addEventListener('click', () => openTagEditor());
   refs.keepAwakeToggle.addEventListener('change', () => setKeepAwakePreference(refs.keepAwakeToggle.checked));
+  for (const input of tmuxDefaultToggles()) {
+    input.addEventListener('change', () => setTmuxDefaultPreference(input.dataset.tmuxKey, input.checked, input));
+  }
   refs.emptyInstallButton.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText('brew install tmux'); toast(t('toast.copiedInstallCmd')); }
     catch (error) { toast(friendlyError(error), 'error'); }
