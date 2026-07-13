@@ -36,6 +36,12 @@ echo "→ Building Developer ID release for arch=$ARCH, team=$TEAM_ID"
 # --- Package (signing skipped — afterPack handles it in one deep-sign) --------
 export CSC_IDENTITY_AUTO_DISCOVERY=false
 export APPLE_TEAM_ID="$TEAM_ID"
+# Unless notarization is explicitly skipped, require a real Developer ID in the
+# afterPack hook — an ad-hoc fallback would only fail later as an "Invalid"
+# notarization after a long wait (see scripts/afterpack-adhoc.js).
+if [ "${SKIP_NOTARIZE:-}" != "true" ]; then
+  export REQUIRE_DEVELOPER_ID=true
+fi
 npx electron-builder --mac "--$ARCH"
 
 # --- Notarize & staple -------------------------------------------------------
@@ -69,21 +75,42 @@ networksetup -setwebproxystate Wi-Fi off 2>/dev/null || true
 networksetup -setsecurewebproxystate Wi-Fi off 2>/dev/null || true
 echo "→ System proxy temporarily disabled for notarization"
 
+# Notarization is per app-bundle cdhash, NOT per container: the DMG and the ZIP
+# wrap the SAME signed .app, so ONE submission covers both. We submit the DMG
+# once (halving the wait against an already-slow Apple notary service) and then
+# staple every artifact that exists. --timeout caps the --wait so the job fails
+# fast with a clear error instead of hanging up to GitHub's 6h limit if Apple is
+# backed up.
+SUBMIT_TARGET=""
+[ -f "$DMG" ] && SUBMIT_TARGET="$DMG"
+[ -z "$SUBMIT_TARGET" ] && [ -f "$ZIP" ] && SUBMIT_TARGET="$ZIP"
+if [ -z "$SUBMIT_TARGET" ]; then
+  echo "✗ Neither DMG nor ZIP found to notarize ($DMG / $ZIP)" >&2
+  exit 1
+fi
+
+echo "→ Submitting $(basename "$SUBMIT_TARGET") for notarization (covers DMG+ZIP, same cdhash) …"
+env -u http_proxy -u https_proxy -u all_proxy \
+    -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+  xcrun notarytool submit "$SUBMIT_TARGET" \
+    --key "$APPLE_API_KEY" \
+    --key-id "$APPLE_API_KEY_ID" \
+    --issuer "$APPLE_API_ISSUER" \
+    --wait --timeout 30m
+
+# Staple each artifact. A DMG staples directly; a ZIP cannot be stapled (staple
+# the .app before re-zipping if offline stapling of the ZIP is needed).
 for artifact in "$DMG" "$ZIP"; do
-  if [ -f "$artifact" ]; then
-    echo "→ Submitting $(basename "$artifact") for notarization …"
-    env -u http_proxy -u https_proxy -u all_proxy \
-        -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
-      xcrun notarytool submit "$artifact" \
-        --key "$APPLE_API_KEY" \
-        --key-id "$APPLE_API_KEY_ID" \
-        --issuer "$APPLE_API_ISSUER" \
-        --wait
-    echo "→ Stapling $(basename "$artifact") …"
-    xcrun stapler staple "$artifact"
-    echo "✓ Notarized + stapled: $artifact"
-  fi
+  [ -f "$artifact" ] || continue
+  case "$artifact" in
+    *.dmg)
+      echo "→ Stapling $(basename "$artifact") …"
+      xcrun stapler staple "$artifact"
+      echo "✓ Notarized + stapled: $artifact" ;;
+    *.zip)
+      echo "✓ Notarized (ZIP shares the notarized cdhash; ZIP containers aren't stapled): $artifact" ;;
+  esac
 done
 
-echo "✓ Done. Signed + notarized + stapled artifacts are in dist/"
+echo "✓ Done. Signed + notarized artifacts are in dist/"
 echo "  Verify with:  spctl -a -vvv --type install \"$DMG\""

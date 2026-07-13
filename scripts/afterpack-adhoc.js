@@ -66,6 +66,23 @@ exports.default = async function afterPack(context) {
   const entitlements = path.resolve(context.packager.projectDir, 'build', 'entitlements.mac.plist');
 
   const devId = getDeveloperIdIdentity();
+
+  // In a release/notarization build the caller sets REQUIRE_DEVELOPER_ID=true.
+  // If we can't see a Developer ID cert we must FAIL LOUDLY rather than silently
+  // ad-hoc sign: an ad-hoc bundle uploads fine but Apple returns "Invalid"
+  // ("not signed with a valid Developer ID certificate / no secure timestamp"),
+  // which we only discover after a long notarization wait. Common CI cause: the
+  // signing keychain isn't on the search list, so `security find-identity` finds
+  // nothing here even though the cert was imported.
+  if (!devId && /^(1|true)$/i.test(process.env.REQUIRE_DEVELOPER_ID || '')) {
+    throw new Error(
+      'REQUIRE_DEVELOPER_ID is set but no "Developer ID Application" certificate ' +
+      'is visible to codesign. Refusing to ad-hoc sign (it would fail notarization). ' +
+      'Check the keychain is unlocked AND on the search list: ' +
+      '`security list-keychains -d user -s <keychain> login.keychain`.'
+    );
+  }
+
   const signIdentity = devId || '-';
 
   const label = devId ? `Developer ID: ${devId}` : 'ad-hoc';

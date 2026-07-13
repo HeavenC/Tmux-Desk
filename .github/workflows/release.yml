@@ -37,6 +37,9 @@ jobs:
   build:
     name: Build ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    # Fail fast if a step hangs (e.g. notarytool waiting on a backed-up Apple
+    # notary service) instead of burning up to GitHub's 6h default.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -76,6 +79,13 @@ jobs:
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
           security default-keychain -s "$KEYCHAIN_NAME"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_NAME"
+          # Put the build keychain on the search list so `security find-identity`
+          # (used by afterpack-adhoc.js) actually SEES the imported Developer ID.
+          # Without this the signing hook finds no cert and would ad-hoc sign,
+          # which later fails notarization as "Invalid".
+          security list-keychains -d user -s "$KEYCHAIN_NAME" login.keychain
+          # Stop the keychain from auto-locking mid-build (long notarize waits).
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_NAME"
 
           echo "$CERT_BASE64" | base64 --decode > cert.p12
           security import cert.p12 \
