@@ -66,8 +66,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          node -e "const fs=require('fs'); const cp=require('child_process'); const tag=process.env.RELEASE_TAG; const version=tag.replace(/^v/, ''); if(!/^\\d+\\.\\d+\\.\\d+(?:[-+].*)?$/.test(version)){throw new Error('Invalid release tag: '+tag)}; const result=cp.spawnSync(process.platform==='win32'?'npm.cmd':'npm',['version',version,'--no-git-tag-version'],{stdio:'inherit'}); if(result.status!==0) process.exit(result.status ?? 1); console.log('Using release version '+version);"
+        run: node scripts/sync-release-version.js
 
       - name: Install dependencies
         run: npm ci
