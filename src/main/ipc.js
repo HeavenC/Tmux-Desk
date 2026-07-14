@@ -1,5 +1,6 @@
 const path = require('node:path');
 const { normalizeTagId, normalizeTagName } = require('../shared/tag-model');
+const { validateTmuxSettings } = require('../shared/tmux-settings');
 const { discoverCodebases } = require('./codebase-import');
 
 const TARGET_PATTERNS = {
@@ -149,8 +150,7 @@ function validateTabOrders(value) {
 
 function validatePreferencesPatch(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('偏好设置无效');
-  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders', 'keepAwake', 'tmuxDefaults']);
-  const TMUX_DEFAULT_KEYS = ['mouse', 'history', 'detachOnDestroy', 'windowNumbering', 'extendedKeys'];
+  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders', 'keepAwake', 'tmuxSettings']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new Error('偏好字段无效');
   }
@@ -184,15 +184,7 @@ function validatePreferencesPatch(value) {
     if (typeof value.keepAwake !== 'boolean') throw new Error('保持唤醒设置无效');
     result.keepAwake = value.keepAwake;
   }
-  if ('tmuxDefaults' in value) {
-    const toggles = value.tmuxDefaults;
-    if (!toggles || typeof toggles !== 'object' || Array.isArray(toggles)
-      || !Object.keys(toggles).every((key) => TMUX_DEFAULT_KEYS.includes(key))
-      || !Object.values(toggles).every((item) => typeof item === 'boolean')) {
-      throw new Error('终端体验设置无效');
-    }
-    result.tmuxDefaults = { ...toggles };
-  }
+  if ('tmuxSettings' in value) result.tmuxSettings = validateTmuxSettings(value.tmuxSettings);
   if ('tabOrders' in value) result.tabOrders = validateTabOrders(value.tabOrders);
   return result;
 }
@@ -284,6 +276,9 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       const validated = validatePreferencesPatch(patch);
       const preferences = await preferencesStore.save(validated);
       if ('keepAwake' in validated) keepAwakeController?.setEnabled(preferences.keepAwake);
+      if ('tmuxSettings' in validated) {
+        await tmuxService.applySettingsToAllSessions(preferences.tmuxSettings);
+      }
       return preferences;
     },
     'files:list': (_event, dirPath) => fileBridge.list(validateFilePath(dirPath)),
@@ -295,7 +290,7 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       // Fire-and-forget: tmux applies session options live, so the client sees
       // the UX baseline (mouse, history…) even if this lands after the attach.
       preferencesStore.load()
-        .then((preferences) => tmuxService.applySessionDefaults(validated.sessionId, preferences.tmuxDefaults))
+        .then((preferences) => tmuxService.applySessionDefaults(validated.sessionId, preferences.tmuxSettings))
         .catch(() => {});
       return terminalManager.attach(validated);
     },

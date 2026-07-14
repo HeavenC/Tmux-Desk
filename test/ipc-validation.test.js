@@ -12,6 +12,7 @@ const {
   validateTarget,
   validateTerminalPayload,
 } = require('../src/main/ipc');
+const { DEFAULT_TMUX_SETTINGS } = require('../src/shared/tmux-settings');
 
 test('rejects malformed tmux targets before reaching the service', () => {
   assert.throws(() => validateTarget('api; rm -rf ~'), /目标无效/);
@@ -71,12 +72,12 @@ test('preference patches allow only local UI preference fields', () => {
   assert.throws(() => validatePreferencesPatch({ tagRailWidth: 1001 }), /Tag 栏宽度/);
   assert.throws(() => validatePreferencesPatch({ keepAwake: 'yes' }), /保持唤醒/);
   assert.deepEqual(
-    validatePreferencesPatch({ tmuxDefaults: { mouse: false, extendedKeys: true } }),
-    { tmuxDefaults: { mouse: false, extendedKeys: true } },
+    validatePreferencesPatch({ tmuxSettings: { ...DEFAULT_TMUX_SETTINGS, mouse: false } }),
+    { tmuxSettings: { ...DEFAULT_TMUX_SETTINGS, mouse: false } },
   );
-  assert.throws(() => validatePreferencesPatch({ tmuxDefaults: { mouse: 'yes' } }), /终端体验/);
-  assert.throws(() => validatePreferencesPatch({ tmuxDefaults: { statusRight: true } }), /终端体验/);
-  assert.throws(() => validatePreferencesPatch({ tmuxDefaults: null }), /终端体验/);
+  assert.throws(() => validatePreferencesPatch({ tmuxSettings: { mouse: 'yes' } }), /tmux 设置/);
+  assert.throws(() => validatePreferencesPatch({ tmuxSettings: { statusRight: true } }), /未知字段/);
+  assert.throws(() => validatePreferencesPatch({ tmuxSettings: null }), /tmux 设置/);
 });
 
 test('saving keep-awake preference applies the persisted value to the system controller', async () => {
@@ -96,6 +97,23 @@ test('saving keep-awake preference applies the persisted value to the system con
   const preferences = await handlers.get('preferences:save')(null, { keepAwake: true });
   assert.equal(preferences.keepAwake, true);
   assert.deepEqual(calls, [true]);
+});
+
+test('saving tmux settings immediately applies the persisted profile to live sessions', async () => {
+  const handlers = new Map();
+  const applied = [];
+  const settings = { ...DEFAULT_TMUX_SETTINGS, status: true };
+  registerIpc({
+    ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
+    tmuxService: { applySettingsToAllSessions: async (profile) => { applied.push(profile); return true; } },
+    terminalManager: {},
+    preferencesStore: { save: async (patch) => ({ theme: 'light', tmuxSettings: patch.tmuxSettings }) },
+    chooseDirectory: async () => null,
+  });
+
+  const preferences = await handlers.get('preferences:save')(null, { tmuxSettings: settings });
+  assert.equal(preferences.tmuxSettings.status, true);
+  assert.deepEqual(applied, [settings]);
 });
 
 test('preference patches shape-check tabOrders but leave deep validation to the store', () => {

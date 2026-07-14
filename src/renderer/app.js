@@ -4,6 +4,7 @@ const { searchCommands } = require('./command-palette');
 const { filterAndGroupSessions, sessionsForView } = require('../shared/session-model');
 const { adjacentTagId } = require('../shared/tag-model');
 const { resolveTerminalFileReference } = require('../shared/terminal-file-link');
+const { DEFAULT_TMUX_SETTINGS, TMUX_SETTING_FIELDS, parseAdvancedConfig } = require('../shared/tmux-settings');
 const { applyTheme, resolveTheme } = require('./theme');
 const { TerminalView } = require('./terminal-view');
 const { t, applyStaticI18n, setLocale, getLocale, resolveLocale, loadStoredLanguage, saveLanguage } = require('./i18n');
@@ -16,7 +17,7 @@ const state = {
   preferences: {
     theme: 'light', favorites: [], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null, sidebarWidth: null,
     tagRailExpanded: false, tagRailWidth: null, keepAwake: false,
-    tmuxDefaults: { mouse: true, history: true, detachOnDestroy: true, windowNumbering: true, extendedKeys: true },
+    tmuxSettings: { ...DEFAULT_TMUX_SETTINGS },
   },
   sessions: [],
   selectedSessionId: null,
@@ -56,6 +57,7 @@ function cacheElements() {
     'tagDeleteModal', 'tagDeleteMessage', 'confirmTagDeleteButton',
     'filesToggleButton', 'fileBrowser', 'fbTree', 'fbPath', 'fbRevealButton', 'fbRefreshButton', 'fbCollapseButton',
     'sidebarResizer', 'tagRailResizer', 'tagRailToggleButton', 'settingsScroll', 'keepAwakeToggle',
+    'tmuxSettingsGroups', 'tmuxResetButton', 'tmuxAdvancedConfig', 'tmuxAdvancedError', 'tmuxAdvancedApplyButton',
   ]) refs[id] = document.getElementById(id);
 }
 
@@ -364,26 +366,131 @@ async function setKeepAwakePreference(enabled) {
   }
 }
 
-function tmuxDefaultToggles() {
-  return document.querySelectorAll('.tmux-default-toggle');
-}
-
-// The tmux UX baseline the app applies per attached session; the full toggle
-// object is sent so the stored preference never depends on merge semantics.
-// Takes effect on the next attach (session switch / reconnect).
-async function setTmuxDefaultPreference(key, enabled, input) {
-  const previous = state.preferences.tmuxDefaults?.[key] !== false;
-  input.disabled = true;
+async function saveTmuxSettings(next, input) {
+  const previous = state.preferences.tmuxSettings;
+  const controls = [
+    ...refs.tmuxSettingsGroups.querySelectorAll('input, select, button'),
+    refs.tmuxAdvancedConfig,
+    refs.tmuxAdvancedApplyButton,
+    refs.tmuxResetButton,
+  ].filter(Boolean);
+  for (const control of controls) control.disabled = true;
   try {
     state.preferences = await api.savePreferences({
-      tmuxDefaults: { ...state.preferences.tmuxDefaults, [key]: enabled },
+      tmuxSettings: next,
     });
+    renderTmuxSettings();
+    toast(t('toast.tmuxApplied'));
   } catch (error) {
-    input.checked = previous;
+    state.preferences = { ...state.preferences, tmuxSettings: previous };
+    renderTmuxSettings();
     toast(friendlyError(error), 'error');
   } finally {
-    input.disabled = false;
+    if (input?.isConnected) input.disabled = false;
+    for (const control of controls) {
+      if (control.isConnected) control.disabled = false;
+    }
   }
+}
+
+const TMUX_SETTING_GROUPS = ['interaction', 'scrollback', 'appearance', 'windows'];
+
+function tmuxSettingOptionLabel(field, value) {
+  if (field.key === 'modeKeys') return t(`settings.tmuxOption.modeKeys.${value}`);
+  if (field.key === 'prefix') return value;
+  if (field.key === 'statusPosition') return t(`settings.tmuxOption.statusPosition.${value}`);
+  if (field.key === 'baseIndex' || field.key === 'paneBaseIndex') return String(value);
+  return String(value);
+}
+
+function createTmuxSettingControl(field) {
+  const value = state.preferences.tmuxSettings?.[field.key] ?? DEFAULT_TMUX_SETTINGS[field.key];
+  const row = document.createElement(field.type === 'boolean' ? 'label' : 'div');
+  row.className = field.type === 'boolean' ? 'settings-toggle-row' : 'settings-value-row';
+  const copy = document.createElement('span');
+  copy.className = 'settings-toggle-copy';
+  const title = document.createElement('strong');
+  title.textContent = t(`settings.tmuxField.${field.key}`);
+  const description = document.createElement('span');
+  description.textContent = t(`settings.tmuxField.${field.key}Description`);
+  copy.append(title, description);
+  const input = document.createElement(field.type === 'boolean' ? 'input' : 'select');
+  input.dataset.tmuxKey = field.key;
+  input.setAttribute('aria-label', title.textContent);
+  if (field.type === 'boolean') {
+    input.type = 'checkbox';
+    input.className = 'settings-switch';
+    input.setAttribute('role', 'switch');
+    input.checked = value === true;
+  } else if (field.type === 'number') {
+    const number = document.createElement('input');
+    number.type = 'number';
+    number.className = 'settings-number';
+    number.dataset.tmuxKey = field.key;
+    number.setAttribute('aria-label', title.textContent);
+    number.min = String(field.min);
+    number.max = String(field.max);
+    number.step = String(field.step);
+    number.value = String(value);
+    row.append(copy, number);
+    number.addEventListener('change', () => {
+      const nextValue = Number(number.value);
+      saveTmuxSettings({ ...state.preferences.tmuxSettings, [field.key]: nextValue }, number);
+    });
+    return row;
+  } else {
+    input.className = 'settings-select';
+    for (const optionValue of field.values) {
+      const option = document.createElement('option');
+      option.value = String(optionValue);
+      option.textContent = tmuxSettingOptionLabel(field, optionValue);
+      option.selected = optionValue === value;
+      input.append(option);
+    }
+  }
+  row.append(copy, input);
+  input.addEventListener('change', () => {
+    const nextValue = field.type === 'boolean'
+      ? input.checked
+      : field.type === 'select-number' ? Number(input.value) : input.value;
+    saveTmuxSettings({ ...state.preferences.tmuxSettings, [field.key]: nextValue }, input);
+  });
+  return row;
+}
+
+function renderTmuxSettings() {
+  if (!refs.tmuxSettingsGroups) return;
+  refs.tmuxSettingsGroups.replaceChildren();
+  for (const groupName of TMUX_SETTING_GROUPS) {
+    const group = document.createElement('section');
+    group.className = 'tmux-settings-group';
+    const heading = document.createElement('h4');
+    heading.textContent = t(`settings.tmuxGroup.${groupName}`);
+    group.append(heading);
+    for (const field of TMUX_SETTING_FIELDS.filter((item) => item.group === groupName)) {
+      group.append(createTmuxSettingControl(field));
+    }
+    refs.tmuxSettingsGroups.append(group);
+  }
+  refs.tmuxAdvancedConfig.value = state.preferences.tmuxSettings?.advancedConfig || '';
+  refs.tmuxAdvancedError.textContent = '';
+}
+
+async function applyAdvancedTmuxSettings() {
+  const advancedConfig = refs.tmuxAdvancedConfig.value;
+  refs.tmuxAdvancedError.textContent = '';
+  try {
+    parseAdvancedConfig(advancedConfig);
+    await saveTmuxSettings({ ...state.preferences.tmuxSettings, advancedConfig }, refs.tmuxAdvancedApplyButton);
+  } catch (error) {
+    refs.tmuxAdvancedError.textContent = getLocale() === 'zh'
+      ? `${t('settings.tmuxAdvancedInvalid')} ${friendlyError(error)}`
+      : t('settings.tmuxAdvancedInvalid');
+  }
+}
+
+async function resetTmuxSettings() {
+  await saveTmuxSettings({ ...DEFAULT_TMUX_SETTINGS }, refs.tmuxResetButton);
 }
 
 // Re-applies every translated string after a manual language switch, without
@@ -393,6 +500,7 @@ function relocalize() {
   installIcons();
   applyStaticI18n();
   applyCurrentTheme();
+  renderTmuxSettings();
   renderLanguageControls();
   renderSystemStatus();
   renderTagRail();
@@ -1550,9 +1658,7 @@ function openSettings() {
   renderLanguageControls();
   renderTagSettings();
   refs.keepAwakeToggle.checked = state.preferences.keepAwake === true;
-  for (const input of tmuxDefaultToggles()) {
-    input.checked = state.preferences.tmuxDefaults?.[input.dataset.tmuxKey] !== false;
-  }
+  renderTmuxSettings();
   openModal(refs.settingsModal, refs.settingsModal.querySelector('.theme-card'));
 }
 
@@ -2023,9 +2129,8 @@ function bindEvents() {
   refs.tagRailToggleButton.addEventListener('click', () => setTagRailExpanded(!state.preferences.tagRailExpanded));
   refs.settingsNewTagButton.addEventListener('click', () => openTagEditor());
   refs.keepAwakeToggle.addEventListener('change', () => setKeepAwakePreference(refs.keepAwakeToggle.checked));
-  for (const input of tmuxDefaultToggles()) {
-    input.addEventListener('change', () => setTmuxDefaultPreference(input.dataset.tmuxKey, input.checked, input));
-  }
+  refs.tmuxResetButton.addEventListener('click', resetTmuxSettings);
+  refs.tmuxAdvancedApplyButton.addEventListener('click', applyAdvancedTmuxSettings);
   refs.emptyInstallButton.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText('brew install tmux'); toast(t('toast.copiedInstallCmd')); }
     catch (error) { toast(friendlyError(error), 'error'); }

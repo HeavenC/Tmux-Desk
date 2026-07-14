@@ -3,6 +3,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const lockfile = require('proper-lockfile');
+const { DEFAULT_TMUX_SETTINGS, normalizeTmuxSettings } = require('../shared/tmux-settings');
 const {
   TAG_COLORS,
   normalizeSessionKey,
@@ -25,17 +26,9 @@ const DEFAULT_PREFERENCES = Object.freeze({
   tagRailWidth: null,
   keepAwake: false,
   webQuickKeys: [],
-  // The tmux UX baseline the app applies per attached session (see
-  // TmuxService.applySessionDefaults). All on by default so the app behaves the
-  // same on a machine with no ~/.tmux.conf at all; each can be turned off in
-  // Settings, which reverts to the user's own tmux configuration.
-  tmuxDefaults: Object.freeze({
-    mouse: true,           // wheel scrolls history instead of sending ↑/↓
-    history: true,         // history-limit 50000 for new panes
-    detachOnDestroy: true, // closing the last pane switches session, not blank
-    windowNumbering: true, // base-index 1 + renumber-windows on (matches ⌘1…9)
-    extendedKeys: true,    // extended-keys on (Shift+Enter in TUIs/REPLs)
-  }),
+  // The app-managed tmux profile is deliberately complete and deterministic:
+  // a user does not need a ~/.tmux.conf to get the same iTerm-like behavior.
+  tmuxSettings: DEFAULT_TMUX_SETTINGS,
 });
 const SIDEBAR_WIDTH_RANGE = Object.freeze({ min: 200, max: 420 });
 const TAG_RAIL_WIDTH_RANGE = Object.freeze({ min: 180, max: 420 });
@@ -134,15 +127,8 @@ function normalizePreferences(value = {}) {
       ? value.keepAwake
       : DEFAULT_PREFERENCES.keepAwake,
     webQuickKeys: normalizeWebQuickKeys(value.webQuickKeys),
-    tmuxDefaults: normalizeTmuxDefaults(value.tmuxDefaults),
+    tmuxSettings: normalizeTmuxSettings(value.tmuxSettings, value.tmuxDefaults),
   };
-}
-
-function normalizeTmuxDefaults(value) {
-  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-  return Object.fromEntries(Object.entries(DEFAULT_PREFERENCES.tmuxDefaults).map(([key, fallback]) => (
-    [key, typeof source[key] === 'boolean' ? source[key] : fallback]
-  )));
 }
 
 // The mobile web toolbar's user-defined keys, stored on this machine so every

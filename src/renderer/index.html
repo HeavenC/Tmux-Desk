@@ -526,78 +526,21 @@
                         </label>
                     </section>
                     <section>
-                        <h3 data-i18n="settings.tmux">终端体验</h3>
-                        <p class="settings-section-note" data-i18n="settings.tmuxDescription">由 App 在连接会话时按会话应用，不修改 ~/.tmux.conf；关闭某项后重新连接会话，即恢复你自己的 tmux 配置。</p>
-                        <label class="settings-toggle-row" for="tmuxMouseToggle">
-                            <span class="settings-toggle-copy">
-                                <strong data-i18n="settings.tmuxMouse">鼠标滚轮与拖选</strong>
-                                <span data-i18n="settings.tmuxMouseDescription">开启 tmux 鼠标模式（mouse on）：滚轮翻历史、拖动选择。关闭后滚轮会退化成 ↑/↓ 方向键。</span>
-                            </span>
-                            <input
-                                type="checkbox"
-                                id="tmuxMouseToggle"
-                                class="settings-switch tmux-default-toggle"
-                                role="switch"
-                                data-tmux-key="mouse"
-                                data-i18n-aria="settings.tmuxMouse"
-                            />
-                        </label>
-                        <label class="settings-toggle-row" for="tmuxHistoryToggle">
-                            <span class="settings-toggle-copy">
-                                <strong data-i18n="settings.tmuxHistory">加大回滚缓冲</strong>
-                                <span data-i18n="settings.tmuxHistoryDescription">history-limit 50000（tmux 默认仅 2000 行），对连接后新建的 pane 生效。</span>
-                            </span>
-                            <input
-                                type="checkbox"
-                                id="tmuxHistoryToggle"
-                                class="settings-switch tmux-default-toggle"
-                                role="switch"
-                                data-tmux-key="history"
-                                data-i18n-aria="settings.tmuxHistory"
-                            />
-                        </label>
-                        <label class="settings-toggle-row" for="tmuxDetachToggle">
-                            <span class="settings-toggle-copy">
-                                <strong data-i18n="settings.tmuxDetachOnDestroy">关闭最后分屏时切换会话</strong>
-                                <span data-i18n="settings.tmuxDetachOnDestroyDescription">detach-on-destroy off：关掉会话最后一个 pane 时自动切到其他会话，而不是断开黑屏。</span>
-                            </span>
-                            <input
-                                type="checkbox"
-                                id="tmuxDetachToggle"
-                                class="settings-switch tmux-default-toggle"
-                                role="switch"
-                                data-tmux-key="detachOnDestroy"
-                                data-i18n-aria="settings.tmuxDetachOnDestroy"
-                            />
-                        </label>
-                        <label class="settings-toggle-row" for="tmuxNumberingToggle">
-                            <span class="settings-toggle-copy">
-                                <strong data-i18n="settings.tmuxWindowNumbering">窗口从 1 开始编号</strong>
-                                <span data-i18n="settings.tmuxWindowNumberingDescription">base-index 1 + renumber-windows on：与 ⌘1…9 一致，关掉窗口后编号自动重排。</span>
-                            </span>
-                            <input
-                                type="checkbox"
-                                id="tmuxNumberingToggle"
-                                class="settings-switch tmux-default-toggle"
-                                role="switch"
-                                data-tmux-key="windowNumbering"
-                                data-i18n-aria="settings.tmuxWindowNumbering"
-                            />
-                        </label>
-                        <label class="settings-toggle-row" for="tmuxExtkeysToggle">
-                            <span class="settings-toggle-copy">
-                                <strong data-i18n="settings.tmuxExtendedKeys">扩展按键（Shift+Enter）</strong>
-                                <span data-i18n="settings.tmuxExtendedKeysDescription">extended-keys on：让 Claude Code 等 TUI 程序能收到 Shift+Enter 换行等组合键。</span>
-                            </span>
-                            <input
-                                type="checkbox"
-                                id="tmuxExtkeysToggle"
-                                class="settings-switch tmux-default-toggle"
-                                role="switch"
-                                data-tmux-key="extendedKeys"
-                                data-i18n-aria="settings.tmuxExtendedKeys"
-                            />
-                        </label>
+                        <div class="settings-section-heading">
+                            <h3 data-i18n="settings.tmux">终端体验</h3>
+                            <button type="button" class="button" id="tmuxResetButton" data-i18n="settings.tmuxReset">恢复 iTerm 风格默认值</button>
+                        </div>
+                        <p class="settings-section-note" data-i18n="settings.tmuxDescription">Tmux Desk 接管这些选项并立即应用到所有本地会话，不需要编辑 ~/.tmux.conf。</p>
+                        <div id="tmuxSettingsGroups" class="tmux-settings-groups"></div>
+                        <div class="tmux-advanced">
+                            <h4 data-i18n="settings.tmuxAdvanced">高级 tmux 选项</h4>
+                            <p data-i18n="settings.tmuxAdvancedDescription">每行填写一条带 -g 或 -s 的 set-option / set-window-option。高级选项最后应用，可覆盖上面的常用设置；为安全起见不支持 shell 命令。</p>
+                            <textarea id="tmuxAdvancedConfig" rows="6" spellcheck="false" data-i18n-ph="settings.tmuxAdvancedPlaceholder" placeholder="# 示例：set -g status-left '#S'"></textarea>
+                            <div class="tmux-advanced-actions">
+                                <span id="tmuxAdvancedError" role="alert"></span>
+                                <button type="button" class="button" id="tmuxAdvancedApplyButton" data-i18n="settings.tmuxApply">保存并应用</button>
+                            </div>
+                        </div>
                     </section>
                     <section>
                         <div class="settings-section-heading">

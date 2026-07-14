@@ -435,7 +435,7 @@ function startWebServer({
       // baseline as the desktop attach to the grouped session
       // (fire-and-forget, session options apply live).
       preferencesStore.load()
-        .then((preferences) => service.applySessionDefaults(groupedId, preferences.tmuxDefaults))
+        .then((preferences) => service.applySessionDefaults(groupedId, preferences.tmuxSettings))
         .catch(() => {});
       manager = new TerminalManager({
         tmuxPath,

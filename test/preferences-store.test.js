@@ -3,6 +3,7 @@ const { mkdtemp, mkdir, readFile, rm, writeFile, access, utimes } = require('nod
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const test = require('node:test');
+const { DEFAULT_TMUX_SETTINGS } = require('../src/shared/tmux-settings');
 
 const {
   PreferencesStore,
@@ -39,28 +40,31 @@ test('malformed and invalid preferences fall back to normalized defaults', async
     assert.deepEqual(await store.load(), {
       theme: 'light', favorites: ['api'], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null,
       sidebarWidth: null, tagRailExpanded: false, tagRailWidth: null, keepAwake: false, webQuickKeys: [],
-      tmuxDefaults: { mouse: true, history: true, detachOnDestroy: true, windowNumbering: true, extendedKeys: true },
+      tmuxSettings: { ...DEFAULT_TMUX_SETTINGS },
     });
   });
 });
 
-test('tmux defaults toggle on by default, persist booleans, and drop junk keys', async () => {
+test('tmux settings use iTerm-style defaults, persist validated values, and migrate legacy toggles', async () => {
   await withStore(async (store, filePath) => {
-    assert.deepEqual((await store.load()).tmuxDefaults, {
-      mouse: true, history: true, detachOnDestroy: true, windowNumbering: true, extendedKeys: true,
-    });
+    assert.deepEqual((await store.load()).tmuxSettings, DEFAULT_TMUX_SETTINGS);
     const saved = await store.save({
-      tmuxDefaults: { mouse: false, history: true, detachOnDestroy: true, windowNumbering: true, extendedKeys: false },
+      tmuxSettings: { ...DEFAULT_TMUX_SETTINGS, mouse: false, modeKeys: 'vi', historyLimit: 120000 },
     });
-    assert.deepEqual(saved.tmuxDefaults, {
-      mouse: false, history: true, detachOnDestroy: true, windowNumbering: true, extendedKeys: false,
-    });
+    assert.equal(saved.tmuxSettings.mouse, false);
+    assert.equal(saved.tmuxSettings.modeKeys, 'vi');
+    assert.equal(saved.tmuxSettings.historyLimit, 120000);
     await writeFile(filePath, JSON.stringify({
-      tmuxDefaults: { mouse: 'yes', history: false, bogus: true },
+      tmuxDefaults: { mouse: false, history: false, detachOnDestroy: false, windowNumbering: false, extendedKeys: false },
     }), 'utf8');
-    assert.deepEqual((await store.load()).tmuxDefaults, {
-      mouse: true, history: false, detachOnDestroy: true, windowNumbering: true, extendedKeys: true,
-    });
+    const migrated = (await store.load()).tmuxSettings;
+    assert.equal(migrated.mouse, false);
+    assert.equal(migrated.historyLimit, 2000);
+    assert.equal(migrated.detachOnDestroy, true);
+    assert.equal(migrated.baseIndex, 0);
+    assert.equal(migrated.paneBaseIndex, 0);
+    assert.equal(migrated.renumberWindows, false);
+    assert.equal(migrated.extendedKeys, false);
   });
 });
 

@@ -61,6 +61,23 @@ test('settings exposes an accessible persisted keep-awake switch', async () => {
   assert.match(css, /\.settings-switch:checked\s*\{/);
 });
 
+test('settings exposes managed tmux controls, safe advanced options, and bilingual explanations', async () => {
+  const [html, app, i18n] = await Promise.all([
+    readFile(join(rendererDir, 'index.html'), 'utf8'),
+    readFile(join(rendererDir, 'app.js'), 'utf8'),
+    readFile(join(rendererDir, 'i18n.js'), 'utf8'),
+  ]);
+  for (const id of ['tmuxSettingsGroups', 'tmuxResetButton', 'tmuxAdvancedConfig', 'tmuxAdvancedApplyButton']) {
+    assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
+  }
+  assert.match(app, /TMUX_SETTING_FIELDS/);
+  assert.match(app, /savePreferences\(\{\s*tmuxSettings: next/s);
+  assert.match(i18n, /默认隐藏 tmux 状态栏/);
+  assert.match(i18n, /hidden by default because Tmux Desk already provides native tabs/);
+  assert.match(i18n, /恢复 iTerm 风格默认值/);
+  assert.match(i18n, /Restore iTerm-style defaults/);
+});
+
 test('renderer controller uses explicit all, favorites, and tag workspace state', async () => {
   const app = await readFile(join(rendererDir, 'app.js'), 'utf8');
   assert.match(app, /view:\s*\{\s*kind:\s*'all'\s*\}/);

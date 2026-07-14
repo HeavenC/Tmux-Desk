@@ -326,38 +326,46 @@ test('splitPane maps orientation to tmux -h/-v and opens in the current dir', as
   await assert.rejects(() => service.splitPane('nope', 'vertical'), /无效的 tmux/);
 });
 
-test('applySessionDefaults applies enabled toggles session-scoped and unsets disabled ones', async () => {
+test('applySessionDefaults applies the managed iTerm-like profile and advanced options', async () => {
   const makeService = (calls) => new TmuxService({
     tmuxPath: '/opt/homebrew/bin/tmux',
     fsImpl: executableFs(['/opt/homebrew/bin/tmux']),
     execFileImpl: async (file, args) => { calls.push(args); return { stdout: '', stderr: '' }; },
   });
 
-  // All toggles on (and the default when no toggle object is given).
-  const allOn = [];
-  assert.equal(await makeService(allOn).applySessionDefaults('$4'), true);
-  assert.deepEqual(allOn, [
-    ['set-option', '-t', '$4', 'mouse', 'on'],
-    ['set-option', '-t', '$4', 'history-limit', '50000'],
-    ['set-option', '-t', '$4', 'detach-on-destroy', 'off'],
-    ['set-option', '-t', '$4', 'base-index', '1'],
-    ['set-option', '-t', '$4', 'renumber-windows', 'on'],
-    ['set-option', '-s', 'extended-keys', 'on'],
-  ]);
+  const calls = [];
+  assert.equal(await makeService(calls).applySessionDefaults('$4', {
+    mouse: false,
+    historyLimit: 90000,
+    modeKeys: 'vi',
+    status: true,
+    extendedKeys: false,
+    advancedConfig: "set -g status-left '#S'",
+  }), true);
+  assert.equal(calls.length, 34);
+  for (const expected of [
+    ['set-option', '-u', '-t', '$4', 'mouse'],
+    ['set-option', '-g', 'mouse', 'off'],
+    ['set-option', '-g', 'history-limit', '90000'],
+    ['set-option', '-g', 'status', 'on'],
+    ['set-option', '-s', 'escape-time', '10'],
+    ['set-option', '-s', 'extended-keys', 'off'],
+    ['set-option', '-s', 'default-terminal', 'tmux-256color'],
+    ['set-window-option', '-g', 'mode-keys', 'vi'],
+    ['set', '-g', 'status-left', '#S'],
+  ]) {
+    assert.equal(calls.some((call) => JSON.stringify(call) === JSON.stringify(expected)), true, expected.join(' '));
+  }
 
-  // Disabled session toggles unset the session-level override (fall back to the
-  // user's own config); a disabled extendedKeys leaves the server option alone.
-  const mixed = [];
-  await makeService(mixed).applySessionDefaults('$4', {
-    mouse: true, history: false, detachOnDestroy: false, windowNumbering: false, extendedKeys: false,
+  const reset = [];
+  await makeService(reset).applySessionDefaults('$4', {
+    detachOnDestroy: true,
+    remainOnExit: true,
+    trueColor: false,
   });
-  assert.deepEqual(mixed, [
-    ['set-option', '-t', '$4', 'mouse', 'on'],
-    ['set-option', '-u', '-t', '$4', 'history-limit'],
-    ['set-option', '-u', '-t', '$4', 'detach-on-destroy'],
-    ['set-option', '-u', '-t', '$4', 'base-index'],
-    ['set-option', '-u', '-t', '$4', 'renumber-windows'],
-  ]);
+  assert.equal(reset.some((call) => call.join(' ') === 'set-option -g detach-on-destroy on'), true);
+  assert.equal(reset.some((call) => call.join(' ') === 'set-window-option -g remain-on-exit on'), true);
+  assert.equal(reset.some((call) => call.join(' ') === 'set-option -s default-terminal screen-256color'), true);
 
   // Invalid targets are a programming error and still throw…
   await assert.rejects(() => makeService([]).applySessionDefaults('pwned; rm'), /无效的 tmux/);
