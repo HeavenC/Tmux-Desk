@@ -55,3 +55,13 @@ test('subsequent sessions only clear stale local overrides', () => {
   assert.equal(commands.length, 12);
   assert.equal(commands.every((args) => args[0] === 'set-option' && args[1] === '-u' && args[3] === '$8'), true);
 });
+
+test('managed copy-mode bindings forward Ctrl+V to the pane instead of scrolling', () => {
+  const commands = buildTmuxSettingCommands('$8', DEFAULT_TMUX_SETTINGS);
+  for (const table of ['copy-mode', 'copy-mode-vi']) {
+    assert.deepEqual(commands.find((args) => args[0] === 'bind-key' && args[2] === table), [
+      'bind-key', '-T', table, 'C-v',
+      'send-keys', '-X', 'cancel', '\\;', 'send-keys', 'C-v',
+    ]);
+  }
+});

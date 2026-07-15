@@ -34,6 +34,12 @@ test('real tmux lifecycle stays isolated on its own socket', { timeout: 15000 },
   const created = await service.createSession({ name: 'alpha', cwd: root, startupCommand: '' });
   assert.match(created.id, /^\$\d+$/);
   await execFileAsync(tmuxPath, [...globalArgs, 'kill-session', '-t', 'keepalive']);
+  assert.equal(await service.applySessionDefaults(created.id), true);
+  for (const table of ['copy-mode', 'copy-mode-vi']) {
+    const { stdout } = await execFileAsync(tmuxPath, [...globalArgs, 'list-keys', '-T', table]);
+    const ctrlVBinding = stdout.split('\n').find((line) => /\sC-v\s/.test(line));
+    assert.match(ctrlVBinding, /send-keys -X cancel \\; send-keys C-v/);
+  }
   const initialDetail = await service.getSessionDetail(created.id);
   assert.equal(initialDetail.windows.length, 1);
   await execFileAsync(tmuxPath, [...globalArgs, 'new-window', '-d', '-t', created.id, '-n', 'logs', '-c', root]);

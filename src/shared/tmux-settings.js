@@ -190,6 +190,16 @@ function booleanValue(value) {
   return value ? 'on' : 'off';
 }
 
+function copyModePasteBindings() {
+  // Scrolling with tmux mouse mode enters copy-mode, whose default C-v binding
+  // is page-down (or rectangle-toggle for vi keys). Leave the mode first and
+  // replay C-v to the pane so TUIs such as Claude Code can handle image paste.
+  return ['copy-mode', 'copy-mode-vi'].map((table) => [
+    'bind-key', '-T', table, 'C-v',
+    'send-keys', '-X', 'cancel', '\\;', 'send-keys', 'C-v',
+  ]);
+}
+
 function buildTmuxSettingCommands(sessionTarget, settings, { includeGlobal = true } = {}) {
   const profile = normalizeTmuxSettings(settings);
   const sessionOptions = [
@@ -223,6 +233,7 @@ function buildTmuxSettingCommands(sessionTarget, settings, { includeGlobal = tru
     windowGlobal('automatic-rename', booleanValue(profile.automaticRename)),
     windowGlobal('aggressive-resize', booleanValue(profile.aggressiveResize)),
     windowGlobal('remain-on-exit', booleanValue(profile.remainOnExit)),
+    ...copyModePasteBindings(),
     ...parseAdvancedConfig(profile.advancedConfig),
   ];
 }

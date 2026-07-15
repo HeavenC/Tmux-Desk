@@ -342,7 +342,7 @@ test('applySessionDefaults applies the managed iTerm-like profile and advanced o
     extendedKeys: false,
     advancedConfig: "set -g status-left '#S'",
   }), true);
-  assert.equal(calls.length, 34);
+  assert.equal(calls.length, 36);
   for (const expected of [
     ['set-option', '-u', '-t', '$4', 'mouse'],
     ['set-option', '-g', 'mouse', 'off'],
@@ -352,6 +352,8 @@ test('applySessionDefaults applies the managed iTerm-like profile and advanced o
     ['set-option', '-s', 'extended-keys', 'off'],
     ['set-option', '-s', 'default-terminal', 'tmux-256color'],
     ['set-window-option', '-g', 'mode-keys', 'vi'],
+    ['bind-key', '-T', 'copy-mode', 'C-v', 'send-keys', '-X', 'cancel', '\\;', 'send-keys', 'C-v'],
+    ['bind-key', '-T', 'copy-mode-vi', 'C-v', 'send-keys', '-X', 'cancel', '\\;', 'send-keys', 'C-v'],
     ['set', '-g', 'status-left', '#S'],
   ]) {
     assert.equal(calls.some((call) => JSON.stringify(call) === JSON.stringify(expected)), true, expected.join(' '));
