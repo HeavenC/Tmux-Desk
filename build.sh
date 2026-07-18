@@ -36,6 +36,19 @@ fi
 
 ok "Node $(node -v) · npm $(npm -v)"
 
+# ---- 0.5 国内镜像加速 ---------------------------------------------------------
+# electron-builder 打包时要从 GitHub 拉 Electron 本体(~116M)和 dmgbuild 二进制(~22M)，
+# 国内直连很慢，表现为长时间卡在 "packaging platform=darwin"。这里默认走 npmmirror。
+# 如在海外/公司网络无需镜像，用 NO_MIRROR=1 ./build.sh 关闭。
+if [ "${NO_MIRROR:-0}" != "1" ]; then
+  export ELECTRON_MIRROR="${ELECTRON_MIRROR:-https://npmmirror.com/mirrors/electron/}"
+  export ELECTRON_BUILDER_BINARIES_MIRROR="${ELECTRON_BUILDER_BINARIES_MIRROR:-https://npmmirror.com/mirrors/electron-builder-binaries/}"
+  NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
+  info "已启用国内镜像加速（npmmirror）；如需关闭：NO_MIRROR=1 ./build.sh"
+else
+  NPM_REGISTRY=""
+fi
+
 # ---- 1. 选择目标架构 ----------------------------------------------------------
 TARGET="${1:-host}"
 if [ "$TARGET" = "host" ]; then
@@ -48,10 +61,12 @@ fi
 
 # ---- 2. 安装依赖（会顺带为 Electron 重建 node-pty 原生模块）-------------------
 info "安装依赖（首次会下载 Electron，需要联网，请耐心等待）…"
+NPM_REG_ARGS=()
+[ -n "${NPM_REGISTRY:-}" ] && NPM_REG_ARGS=(--registry "$NPM_REGISTRY")
 if [ -f package-lock.json ]; then
-  npm ci
+  npm ci ${NPM_REG_ARGS[@]+"${NPM_REG_ARGS[@]}"}
 else
-  npm install
+  npm install ${NPM_REG_ARGS[@]+"${NPM_REG_ARGS[@]}"}
 fi
 ok "依赖安装完成"
 
