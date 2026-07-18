@@ -152,12 +152,13 @@ function showView(name) {
   state.currentView = name;
   el('view-list').hidden = name !== 'list';
   el('view-terminal').hidden = name !== 'terminal';
-  // The floating quick bar only makes sense over a live terminal, and only on
-  // touch clients — desktop browsers have a physical keyboard, so the quick-key
-  // ball is just clutter (and its "键盘" button is meaningless there).
+  // The floating quick bar shows over a live terminal on every client. On
+  // desktop the on-screen-keyboard button is hidden (see setupKeyboardGate) and
+  // the textarea stays editable, but the quick-key / copy actions are still
+  // useful — e.g. one-tap /usage, /new — so the ball is no longer desktop-gated.
   const ball = el('quickball');
-  if (ball) ball.hidden = name !== 'terminal' || hasFinePointer();
-  if (name !== 'terminal' || hasFinePointer()) closeQuickPanel();
+  if (ball) ball.hidden = name !== 'terminal';
+  if (name !== 'terminal') closeQuickPanel();
 }
 
 function storedTheme() {

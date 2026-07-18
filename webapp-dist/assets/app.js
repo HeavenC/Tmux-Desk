@@ -12061,8 +12061,8 @@ ${s3.join("\n")}
     el("view-list").hidden = name !== "list";
     el("view-terminal").hidden = name !== "terminal";
     const ball = el("quickball");
-    if (ball) ball.hidden = name !== "terminal" || hasFinePointer();
-    if (name !== "terminal" || hasFinePointer()) closeQuickPanel();
+    if (ball) ball.hidden = name !== "terminal";
+    if (name !== "terminal") closeQuickPanel();
   }
   function storedTheme() {
     try {
