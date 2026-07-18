@@ -85,6 +85,10 @@ function startMockUpstream(token) {
       ] }));
       return;
     }
+    if (url.pathname === '/api/quick-keys' && req.method === 'GET') {
+      res.end(JSON.stringify({ ok: true, keys: [{ type: 'text', label: 'A-key', text: 'from-A', enter: true }] }));
+      return;
+    }
     if (url.pathname === '/api/session-detail') {
       res.end(JSON.stringify({ ok: true, session: url.searchParams.get('session'),
         windows: [{ id: '@3', index: 0, name: 'w', active: true, panes: 1 }], panes: [] }));
@@ -142,6 +146,14 @@ test('web-server aggregates + proxies reshare-enabled remotes (REST relay)', asy
     });
     assert.equal(sw.status, 200);
     assert.deepEqual(upstream.selectCalls.at(-1), { grouped: '$9', windowIndex: 2 });
+
+    // Quick keys follow the session's host: a remote target relays to the
+    // upstream's bar, while a local/absent target returns this host's own bar.
+    await store.setWebQuickKeys([{ type: 'preset', id: 'esc' }]);
+    const remoteKeys = await (await fetch(`${b}/api/quick-keys?token=Btoken&session=r:remote-c1:$7`)).json();
+    assert.deepEqual(remoteKeys.keys, [{ type: 'text', label: 'A-key', text: 'from-A', enter: true }]);
+    const localKeys = await (await fetch(`${b}/api/quick-keys?token=Btoken`)).json();
+    assert.deepEqual(localKeys.keys, [{ type: 'preset', id: 'esc' }]);
 
     // A scoped single-session share never sees relayed remotes.
     const share = createSessionShareToken('Btoken', 'local1');

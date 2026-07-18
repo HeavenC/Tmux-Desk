@@ -29,6 +29,7 @@ const MESSAGES = {
     'list.tagsAssociatedAria': '已关联 Tag',
     'list.manageTagsAria': '管理 {name} 的 Tag',
     'list.sessionSub': '{windows} 窗口 · {panes} 面板 · {cmd}',
+    'list.localHost': '本机',
 
     'share.badge': '共享会话',
 
@@ -60,6 +61,7 @@ const MESSAGES = {
     'quick.empty': '快捷栏为空。',
     'quick.dragHandleAria': '拖动排序',
     'quick.keyTypeMeta': '按键',
+    'quick.readonlyNote': '当前会话在远程主机上，快捷栏为只读（跟随该主机）。',
 
     'sheet.manageTagTitle': '管理 Tag',
     'sheet.noTagsHint': '还没有 Tag，请先在 Mac 桌面端创建。',
@@ -112,6 +114,7 @@ const MESSAGES = {
     'list.tagsAssociatedAria': 'Associated tags',
     'list.manageTagsAria': 'Manage tags for {name}',
     'list.sessionSub': '{windows} windows · {panes} panes · {cmd}',
+    'list.localHost': 'Local',
 
     'share.badge': 'Shared session',
 
@@ -143,6 +146,7 @@ const MESSAGES = {
     'quick.empty': 'Quick bar is empty.',
     'quick.dragHandleAria': 'Drag to reorder',
     'quick.keyTypeMeta': 'Key',
+    'quick.readonlyNote': 'This session runs on a remote host; its quick bar is read-only (follows that host).',
 
     'sheet.manageTagTitle': 'Manage Tags',
     'sheet.noTagsHint': 'No tags yet — create one on the Mac desktop app first.',

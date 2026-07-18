@@ -95,6 +95,9 @@ const state = {
   relockTimer: null,
   composing: false,
   quickKeys: [],
+  // Non-null when the open session lives on a relayed remote host: its quick-key
+  // bar overrides the local one for display/sending, and is read-only here.
+  remoteQuickKeys: null,
   panelOpen: false,
 };
 
@@ -390,7 +393,12 @@ function renderSessionList(sessions) {
     const name = document.createElement('span');
     name.className = 'session-name';
     name.textContent = session.name || session.id;
-    head.append(name, dot);
+    // Which host this session lives on: local sessions show 本机, relayed remote
+    // sessions show the alias configured for that remote connection.
+    const host = document.createElement('span');
+    host.className = `session-host${session.source ? ' remote' : ''}`;
+    host.textContent = session.source && session.source.label ? session.source.label : t('list.localHost');
+    head.append(name, host, dot);
 
     const sub = document.createElement('div');
     sub.className = 'session-sub';
@@ -922,6 +930,7 @@ function openSession(session) {
   state.windows = [];
   el('term-title').textContent = session.name || session.id;
   renderWindowPicker();
+  syncQuickKeysForSession(session);
   showView('terminal');
   ensureTerminalCreated();
   state.term.reset();
@@ -940,6 +949,7 @@ function backToList() {
   state.ws = null;
   hideDisconnectBanner();
   setCtrlActive(false);
+  state.remoteQuickKeys = null;
   showView('list');
   loadSessions();
 }
@@ -1023,10 +1033,41 @@ function quickKeyLabel(key) {
   return key.type === 'preset' ? (PRESET_KEYS[key.id]?.label ?? key.id) : key.label;
 }
 
+// The bar actually shown/typed: a relayed remote session's bar wins over the
+// local one so the floating shortcuts follow the session's owning host.
+function effectiveQuickKeys() {
+  return Array.isArray(state.remoteQuickKeys) ? state.remoteQuickKeys : state.quickKeys;
+}
+
+// Remote sessions are a read-only takeover, so their relayed bar can't be edited
+// from here (edits would otherwise silently mutate this device's local bar).
+function quickKeysReadonly() {
+  return Array.isArray(state.remoteQuickKeys);
+}
+
+// Load the quick-key bar for the session being opened. Remote sessions carry a
+// source; ask the server for that host's bar (it relays upstream). Local
+// sessions clear the override and fall back to this device's own bar.
+async function syncQuickKeysForSession(session) {
+  if (!session || !session.source) {
+    state.remoteQuickKeys = null;
+    renderQuickKeys();
+    return;
+  }
+  try {
+    const body = await fetchJson(apiUrl('/api/quick-keys', { session: session.id }));
+    const keys = (Array.isArray(body.keys) ? body.keys : []).map(normalizeQuickKey).filter(Boolean);
+    state.remoteQuickKeys = keys.length ? keys : null;
+  } catch {
+    state.remoteQuickKeys = null;
+  }
+  renderQuickKeys();
+}
+
 function renderQuickKeys() {
   const container = el('quickpanel-keys');
   if (!container) return;
-  container.replaceChildren(...state.quickKeys.map((key, index) => {
+  container.replaceChildren(...effectiveQuickKeys().map((key, index) => {
     const button = document.createElement('button');
     button.className = 'qk-btn';
     button.type = 'button';
@@ -1040,7 +1081,7 @@ function renderQuickKeys() {
 }
 
 function runQuickKey(index) {
-  const key = state.quickKeys[index];
+  const key = effectiveQuickKeys()[index];
   if (!key) return;
   if (key.type === 'preset') {
     const preset = PRESET_KEYS[key.id];
@@ -1065,6 +1106,7 @@ function renderQuickPresets() {
     button.type = 'button';
     button.textContent = preset.label;
     button.addEventListener('click', () => {
+      if (quickKeysReadonly()) return;
       state.quickKeys.push({ type: 'preset', id });
       saveQuickKeys();
       renderQuickKeys();
@@ -1077,28 +1119,35 @@ function renderQuickPresets() {
 function renderQuickCurrent() {
   const list = el('qk-current');
   if (!list) return;
-  if (!state.quickKeys.length) {
+  const readonly = quickKeysReadonly();
+  const keys = effectiveQuickKeys();
+  if (!keys.length) {
     const empty = document.createElement('p');
     empty.className = 'qk-empty';
     empty.textContent = t('quick.empty');
     list.replaceChildren(empty);
     return;
   }
-  list.replaceChildren(...state.quickKeys.map((key, index) => {
+  list.replaceChildren(...keys.map((key, index) => {
     const row = document.createElement('div');
     row.className = 'qk-row';
     row.dataset.index = String(index);
-    const handle = document.createElement('span');
-    handle.className = 'qk-handle';
-    handle.textContent = '≡';
-    handle.setAttribute('aria-label', t('quick.dragHandleAria'));
-    handle.addEventListener('pointerdown', (event) => startQkDrag(event, index));
     const label = document.createElement('span');
     label.className = 'qk-row-label';
     label.textContent = quickKeyLabel(key);
     const meta = document.createElement('span');
     meta.className = 'qk-row-meta';
     meta.textContent = key.type === 'text' ? (key.text + (key.enter ? ' ⏎' : '')) : t('quick.keyTypeMeta');
+    if (readonly) {
+      // Relayed remote bar: display only, no drag handle / delete.
+      row.append(label, meta);
+      return row;
+    }
+    const handle = document.createElement('span');
+    handle.className = 'qk-handle';
+    handle.textContent = '≡';
+    handle.setAttribute('aria-label', t('quick.dragHandleAria'));
+    handle.addEventListener('pointerdown', (event) => startQkDrag(event, index));
     const remove = document.createElement('button');
     remove.className = 'btn secondary btn-sm';
     remove.type = 'button';
@@ -1159,7 +1208,12 @@ function startQkDrag(event, fromIndex) {
 }
 
 function openQuickEdit() {
-  refreshQuickKeysFromServer();
+  const readonly = quickKeysReadonly();
+  // The add/preset/reset controls edit this device's local bar; hide them while a
+  // read-only remote bar is on screen so the editor matches what's shown.
+  document.querySelectorAll('#quickedit-modal .qk-editable').forEach((node) => { node.hidden = readonly; });
+  el('qk-readonly-note').hidden = !readonly;
+  if (!readonly) refreshQuickKeysFromServer();
   renderQuickPresets();
   renderQuickCurrent();
   el('quickedit-modal').hidden = false;
@@ -1171,6 +1225,7 @@ function closeQuickEdit() {
 
 function addQuickTextKey(event) {
   event.preventDefault();
+  if (quickKeysReadonly()) return;
   const label = el('qk-text-label').value.trim().slice(0, 16);
   const text = el('qk-text-value').value.slice(0, 200);
   if (!label || !text) { showToast(t('toast.fillLabelAndText')); return; }
@@ -1185,6 +1240,7 @@ function addQuickTextKey(event) {
 }
 
 function resetQuickKeys() {
+  if (quickKeysReadonly()) return;
   state.quickKeys = [...DEFAULT_QUICKKEYS];
   saveQuickKeys();
   renderQuickKeys();

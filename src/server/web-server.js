@@ -368,6 +368,19 @@ function startWebServer({
     }
     if (req.method === 'GET' && url.pathname === '/api/quick-keys') {
       if (scope !== null) return sendJson(res, 200, { ok: true, keys: [] });
+      // The floating quick-key bar follows the session's owning host: when the
+      // client is viewing a relayed remote session, return that upstream host's
+      // bar (relayed through this host) instead of the local one.
+      const parsed = parseTarget(url.searchParams.get('session'));
+      if (parsed && parsed.kind === 'remote') {
+        const connection = await findReshareConnection(parsed.connId);
+        if (connection) {
+          try {
+            const payload = await upstreamRequest(connection, '/api/quick-keys', { params: { session: parsed.id } });
+            return sendJson(res, 200, { ok: true, keys: Array.isArray(payload.keys) ? payload.keys : [] });
+          } catch { /* upstream unreachable — fall back to this host's bar */ }
+        }
+      }
       const preferences = await preferencesStore.load();
       return sendJson(res, 200, { ok: true, keys: preferences.webQuickKeys });
     }

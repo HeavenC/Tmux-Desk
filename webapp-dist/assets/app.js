@@ -11724,6 +11724,7 @@ ${s3.join("\n")}
           "list.tagsAssociatedAria": "\u5DF2\u5173\u8054 Tag",
           "list.manageTagsAria": "\u7BA1\u7406 {name} \u7684 Tag",
           "list.sessionSub": "{windows} \u7A97\u53E3 \xB7 {panes} \u9762\u677F \xB7 {cmd}",
+          "list.localHost": "\u672C\u673A",
           "share.badge": "\u5171\u4EAB\u4F1A\u8BDD",
           "filter.all": "\u5168\u90E8",
           "filter.favorites": "\u6536\u85CF",
@@ -11750,6 +11751,7 @@ ${s3.join("\n")}
           "quick.empty": "\u5FEB\u6377\u680F\u4E3A\u7A7A\u3002",
           "quick.dragHandleAria": "\u62D6\u52A8\u6392\u5E8F",
           "quick.keyTypeMeta": "\u6309\u952E",
+          "quick.readonlyNote": "\u5F53\u524D\u4F1A\u8BDD\u5728\u8FDC\u7A0B\u4E3B\u673A\u4E0A\uFF0C\u5FEB\u6377\u680F\u4E3A\u53EA\u8BFB\uFF08\u8DDF\u968F\u8BE5\u4E3B\u673A\uFF09\u3002",
           "sheet.manageTagTitle": "\u7BA1\u7406 Tag",
           "sheet.noTagsHint": "\u8FD8\u6CA1\u6709 Tag\uFF0C\u8BF7\u5148\u5728 Mac \u684C\u9762\u7AEF\u521B\u5EFA\u3002",
           "sheet.copyTitle": "\u9009\u62E9\u5E76\u590D\u5236",
@@ -11795,6 +11797,7 @@ ${s3.join("\n")}
           "list.tagsAssociatedAria": "Associated tags",
           "list.manageTagsAria": "Manage tags for {name}",
           "list.sessionSub": "{windows} windows \xB7 {panes} panes \xB7 {cmd}",
+          "list.localHost": "Local",
           "share.badge": "Shared session",
           "filter.all": "All",
           "filter.favorites": "Favorites",
@@ -11821,6 +11824,7 @@ ${s3.join("\n")}
           "quick.empty": "Quick bar is empty.",
           "quick.dragHandleAria": "Drag to reorder",
           "quick.keyTypeMeta": "Key",
+          "quick.readonlyNote": "This session runs on a remote host; its quick bar is read-only (follows that host).",
           "sheet.manageTagTitle": "Manage Tags",
           "sheet.noTagsHint": "No tags yet \u2014 create one on the Mac desktop app first.",
           "sheet.copyTitle": "Select & Copy",
@@ -12003,6 +12007,9 @@ ${s3.join("\n")}
     relockTimer: null,
     composing: false,
     quickKeys: [],
+    // Non-null when the open session lives on a relayed remote host: its quick-key
+    // bar overrides the local one for display/sending, and is read-only here.
+    remoteQuickKeys: null,
     panelOpen: false
   };
   var el = (id) => document.getElementById(id);
@@ -12256,7 +12263,10 @@ ${s3.join("\n")}
       const name = document.createElement("span");
       name.className = "session-name";
       name.textContent = session.name || session.id;
-      head.append(name, dot);
+      const host = document.createElement("span");
+      host.className = `session-host${session.source ? " remote" : ""}`;
+      host.textContent = session.source && session.source.label ? session.source.label : t("list.localHost");
+      head.append(name, host, dot);
       const sub = document.createElement("div");
       sub.className = "session-sub";
       sub.textContent = t("list.sessionSub", {
@@ -12715,6 +12725,7 @@ ${s3.join("\n")}
     state.windows = [];
     el("term-title").textContent = session.name || session.id;
     renderWindowPicker();
+    syncQuickKeysForSession(session);
     showView("terminal");
     ensureTerminalCreated();
     state.term.reset();
@@ -12732,6 +12743,7 @@ ${s3.join("\n")}
     state.ws = null;
     hideDisconnectBanner();
     setCtrlActive(false);
+    state.remoteQuickKeys = null;
     showView("list");
     loadSessions();
   }
@@ -12808,10 +12820,31 @@ ${s3.join("\n")}
   function quickKeyLabel(key) {
     return key.type === "preset" ? PRESET_KEYS[key.id]?.label ?? key.id : key.label;
   }
+  function effectiveQuickKeys() {
+    return Array.isArray(state.remoteQuickKeys) ? state.remoteQuickKeys : state.quickKeys;
+  }
+  function quickKeysReadonly() {
+    return Array.isArray(state.remoteQuickKeys);
+  }
+  async function syncQuickKeysForSession(session) {
+    if (!session || !session.source) {
+      state.remoteQuickKeys = null;
+      renderQuickKeys();
+      return;
+    }
+    try {
+      const body = await fetchJson(apiUrl("/api/quick-keys", { session: session.id }));
+      const keys = (Array.isArray(body.keys) ? body.keys : []).map(normalizeQuickKey).filter(Boolean);
+      state.remoteQuickKeys = keys.length ? keys : null;
+    } catch {
+      state.remoteQuickKeys = null;
+    }
+    renderQuickKeys();
+  }
   function renderQuickKeys() {
     const container = el("quickpanel-keys");
     if (!container) return;
-    container.replaceChildren(...state.quickKeys.map((key, index) => {
+    container.replaceChildren(...effectiveQuickKeys().map((key, index) => {
       const button = document.createElement("button");
       button.className = "qk-btn";
       button.type = "button";
@@ -12824,7 +12857,7 @@ ${s3.join("\n")}
     if (state.ctrlActive) setCtrlActive(true);
   }
   function runQuickKey(index) {
-    const key = state.quickKeys[index];
+    const key = effectiveQuickKeys()[index];
     if (!key) return;
     if (key.type === "preset") {
       const preset = PRESET_KEYS[key.id];
@@ -12849,6 +12882,7 @@ ${s3.join("\n")}
       button.type = "button";
       button.textContent = preset.label;
       button.addEventListener("click", () => {
+        if (quickKeysReadonly()) return;
         state.quickKeys.push({ type: "preset", id });
         saveQuickKeys();
         renderQuickKeys();
@@ -12860,28 +12894,34 @@ ${s3.join("\n")}
   function renderQuickCurrent() {
     const list = el("qk-current");
     if (!list) return;
-    if (!state.quickKeys.length) {
+    const readonly = quickKeysReadonly();
+    const keys = effectiveQuickKeys();
+    if (!keys.length) {
       const empty = document.createElement("p");
       empty.className = "qk-empty";
       empty.textContent = t("quick.empty");
       list.replaceChildren(empty);
       return;
     }
-    list.replaceChildren(...state.quickKeys.map((key, index) => {
+    list.replaceChildren(...keys.map((key, index) => {
       const row = document.createElement("div");
       row.className = "qk-row";
       row.dataset.index = String(index);
-      const handle = document.createElement("span");
-      handle.className = "qk-handle";
-      handle.textContent = "\u2261";
-      handle.setAttribute("aria-label", t("quick.dragHandleAria"));
-      handle.addEventListener("pointerdown", (event) => startQkDrag(event, index));
       const label = document.createElement("span");
       label.className = "qk-row-label";
       label.textContent = quickKeyLabel(key);
       const meta = document.createElement("span");
       meta.className = "qk-row-meta";
       meta.textContent = key.type === "text" ? key.text + (key.enter ? " \u23CE" : "") : t("quick.keyTypeMeta");
+      if (readonly) {
+        row.append(label, meta);
+        return row;
+      }
+      const handle = document.createElement("span");
+      handle.className = "qk-handle";
+      handle.textContent = "\u2261";
+      handle.setAttribute("aria-label", t("quick.dragHandleAria"));
+      handle.addEventListener("pointerdown", (event) => startQkDrag(event, index));
       const remove = document.createElement("button");
       remove.className = "btn secondary btn-sm";
       remove.type = "button";
@@ -12935,7 +12975,12 @@ ${s3.join("\n")}
     document.addEventListener("pointercancel", onUp);
   }
   function openQuickEdit() {
-    refreshQuickKeysFromServer();
+    const readonly = quickKeysReadonly();
+    document.querySelectorAll("#quickedit-modal .qk-editable").forEach((node) => {
+      node.hidden = readonly;
+    });
+    el("qk-readonly-note").hidden = !readonly;
+    if (!readonly) refreshQuickKeysFromServer();
     renderQuickPresets();
     renderQuickCurrent();
     el("quickedit-modal").hidden = false;
@@ -12945,6 +12990,7 @@ ${s3.join("\n")}
   }
   function addQuickTextKey(event) {
     event.preventDefault();
+    if (quickKeysReadonly()) return;
     const label = el("qk-text-label").value.trim().slice(0, 16);
     const text = el("qk-text-value").value.slice(0, 200);
     if (!label || !text) {
@@ -12961,6 +13007,7 @@ ${s3.join("\n")}
     el("qk-text-label").focus();
   }
   function resetQuickKeys() {
+    if (quickKeysReadonly()) return;
     state.quickKeys = [...DEFAULT_QUICKKEYS];
     saveQuickKeys();
     renderQuickKeys();

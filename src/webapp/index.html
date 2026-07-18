@@ -95,11 +95,12 @@
           </div>
         </header>
         <div class="qk-scroll">
-          <section class="qk-section">
+          <p id="qk-readonly-note" class="qk-readonly-note" data-i18n="quick.readonlyNote" hidden>当前会话在远程主机上，快捷栏为只读（跟随该主机）。</p>
+          <section class="qk-section qk-editable">
             <h3 class="qk-section-title" data-i18n="quick.presetSectionTitle">常用按键 / 组合键</h3>
             <div id="qk-presets" class="qk-presets"></div>
           </section>
-          <section class="qk-section">
+          <section class="qk-section qk-editable">
             <h3 class="qk-section-title" data-i18n="quick.customSectionTitle">自定义文本（如 /usage、!、任意命令）</h3>
             <form id="qk-add-text" class="qk-add-text">
               <input id="qk-text-label" class="qk-input" type="text" data-i18n-ph="quick.labelPlaceholder" placeholder="按钮名" maxlength="16" autocomplete="off">
@@ -114,7 +115,7 @@
           </section>
         </div>
         <footer class="sheet-footer">
-          <button id="qk-reset" class="btn secondary" data-i18n="quick.resetDefault" type="button">恢复默认</button>
+          <button id="qk-reset" class="btn secondary qk-editable" data-i18n="quick.resetDefault" type="button">恢复默认</button>
           <button id="quickedit-close" class="btn primary" data-i18n="common.done" type="button">完成</button>
         </footer>
       </div>
