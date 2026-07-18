@@ -87,6 +87,20 @@
             ></div>
 
             <aside class="session-sidebar">
+                <div class="source-bar no-drag" id="sourceBar">
+                    <button
+                        type="button"
+                        class="source-switcher"
+                        id="sourceButton"
+                        aria-haspopup="true"
+                        aria-expanded="false"
+                    >
+                        <span class="source-icon" id="sourceIcon"></span>
+                        <span class="source-label" id="sourceLabel" data-i18n="source.local">本机</span>
+                        <span class="source-status-dot" id="sourceStatusDot"></span>
+                        <span class="source-caret" id="sourceCaret"></span>
+                    </button>
+                </div>
                 <header class="sidebar-header no-drag">
                     <div>
                         <h1 data-i18n="session.title">会话</h1>
@@ -280,6 +294,7 @@
         </div>
 
         <div class="popover hidden no-drag" id="themePopover" role="menu"></div>
+        <div class="popover source-popover hidden no-drag" id="sourcePopover" role="menu"></div>
         <div
             class="context-menu hidden no-drag"
             id="contextMenu"
@@ -290,6 +305,57 @@
             id="toastStack"
             aria-live="polite"
         ></div>
+
+        <div class="modal-backdrop hidden no-drag" id="remoteModal">
+            <form class="modal compact" id="remoteForm">
+                <header>
+                    <div>
+                        <h2 data-i18n="remote.addTitle">添加远程主机</h2>
+                        <p data-i18n="remote.addSubtitle">接管另一台运行 Tmux Desk 的机器上的 tmux 会话。</p>
+                    </div>
+                    <button
+                        type="button"
+                        class="icon-button modal-close"
+                        aria-label="关闭"
+                        data-i18n-aria="action.close"
+                    ></button>
+                </header>
+                <label class="field"
+                    ><span data-i18n="remote.fieldLabel">名称（可选）</span
+                    ><input
+                        id="remoteLabelInput"
+                        maxlength="40"
+                        autocomplete="off"
+                        spellcheck="false"
+                        data-i18n-ph="remote.fieldLabelPh"
+                        placeholder="虚拟机"
+                /></label>
+                <label class="field"
+                    ><span data-i18n="remote.fieldUrl">地址</span
+                    ><input
+                        id="remoteUrlInput"
+                        required
+                        autocomplete="off"
+                        spellcheck="false"
+                        placeholder="http://192.168.64.3:8790"
+                /></label>
+                <label class="field"
+                    ><span data-i18n="remote.fieldToken">访问令牌</span
+                    ><input
+                        id="remoteTokenInput"
+                        autocomplete="off"
+                        spellcheck="false"
+                        data-i18n-ph="remote.fieldTokenPh"
+                        placeholder="留空则从带 token 的地址中提取"
+                /></label>
+                <p class="field-hint" data-i18n="remote.hint">在远程 Tmux Desk 的“共享”面板复制带 token 的地址，直接粘贴到“地址”即可，令牌可留空。</p>
+                <footer>
+                    <button type="button" class="button modal-cancel" data-i18n="action.cancel">
+                        取消</button
+                    ><button type="submit" class="button primary" data-i18n="remote.connect">连接</button>
+                </footer>
+            </form>
+        </div>
 
         <div class="modal-backdrop hidden no-drag" id="sessionModal">
             <form class="modal" id="sessionForm">
@@ -545,14 +611,32 @@
                     <section>
                         <div class="settings-section-heading">
                             <h3>Tag</h3>
-                            <button
-                                type="button"
-                                class="button"
-                                id="settingsNewTagButton"
-                                data-i18n="tag.new"
-                            >
-                                新建标签
-                            </button>
+                            <div class="settings-heading-actions">
+                                <button
+                                    type="button"
+                                    class="button"
+                                    id="tagImportButton"
+                                    data-i18n="tag.import"
+                                >
+                                    导入
+                                </button>
+                                <button
+                                    type="button"
+                                    class="button"
+                                    id="tagExportButton"
+                                    data-i18n="tag.export"
+                                >
+                                    导出
+                                </button>
+                                <button
+                                    type="button"
+                                    class="button"
+                                    id="settingsNewTagButton"
+                                    data-i18n="tag.new"
+                                >
+                                    新建标签
+                                </button>
+                            </div>
                         </div>
                         <div
                             class="tag-settings-list"

@@ -1,6 +1,7 @@
 const path = require('node:path');
 const { normalizeTagId, normalizeTagName } = require('../shared/tag-model');
 const { validateTmuxSettings } = require('../shared/tmux-settings');
+const { parseConnectionInput } = require('../shared/remote-connection');
 const { discoverCodebases } = require('./codebase-import');
 
 const TARGET_PATTERNS = {
@@ -27,6 +28,11 @@ const IPC_CHANNELS = Object.freeze([
   'tags:delete',
   'tags:set-pinned',
   'tags:reorder-pinned',
+  'tags:export',
+  'tags:import',
+  'remotes:add',
+  'remotes:remove',
+  'remotes:set-reshare',
   'windows:select',
   'panes:select',
   'panes:kill',
@@ -196,7 +202,18 @@ function validateFilePath(value) {
   return value;
 }
 
-function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, chooseDirectory, fileBridge, webControl, setAppLocale, keepAwakeController }) {
+function buildTagExport(preferences) {
+  return {
+    type: 'tmux-desk-tags',
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    tags: preferences.tags,
+    sessionTags: preferences.sessionTags,
+    favorites: preferences.favorites,
+  };
+}
+
+function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, chooseDirectory, fileBridge, tagFileIO, webControl, setAppLocale, keepAwakeController }) {
   const requireWebControl = () => {
     if (!webControl) throw new Error('Web 服务不可用');
     return webControl;
@@ -257,6 +274,31 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
     'tags:reorder-pinned': (_event, ids) => {
       if (!Array.isArray(ids) || ids.length > 200) throw new Error('Tag 顺序无效');
       return preferencesStore.reorderPinnedTags(ids.map((id) => normalizeTagId(id)));
+    },
+    'tags:export': async () => {
+      const preferences = await preferencesStore.load();
+      return tagFileIO.exportToFile(buildTagExport(preferences));
+    },
+    'tags:import': async () => {
+      const { canceled, payload } = await tagFileIO.importFromFile();
+      if (canceled) return { canceled: true };
+      const preferences = await preferencesStore.importTagConfig(payload);
+      return { canceled: false, preferences };
+    },
+    'remotes:add': (_event, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('远程连接参数无效');
+      const parsed = parseConnectionInput(input);
+      return preferencesStore.addRemoteConnection(parsed);
+    },
+    'remotes:remove': (_event, id) => {
+      if (typeof id !== 'string' || !id) throw new Error('远程连接编号无效');
+      return preferencesStore.removeRemoteConnection(id);
+    },
+    'remotes:set-reshare': (_event, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.id !== 'string') {
+        throw new Error('远程连接参数无效');
+      }
+      return preferencesStore.setRemoteReshare(input.id, input.reshare === true);
     },
     'windows:select': (_event, target) => tmuxService.selectWindow(validateTarget(target, 'window')),
     'panes:select': (_event, target) => tmuxService.selectPane(validateTarget(target, 'pane')),

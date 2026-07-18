@@ -442,6 +442,20 @@ class TerminalView {
 
   focus() { this.terminal.focus(); }
 
+  // Swap the backing api (local IPC ↔ a RemoteApi) so one TerminalView can attach
+  // to either the local machine or a taken-over remote host. The caller detaches
+  // the old session first; here we just re-point the data/exit subscriptions.
+  setApi(api) {
+    if (this.api === api) return;
+    this.unsubscribeData?.();
+    this.unsubscribeExit?.();
+    this.terminalId = null;
+    this.pendingData.clear();
+    this.api = api;
+    this.unsubscribeData = api.onTerminalData((payload) => this.handleData(payload));
+    this.unsubscribeExit = api.onTerminalExit((payload) => this.handleExit(payload));
+  }
+
   async detach() {
     this.attachRequest += 1;
     this.terminalId = null;

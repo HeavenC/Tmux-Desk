@@ -11672,8 +11672,9 @@ ${s3.join("\n")}
         const sorted = (Array.isArray(sessions) ? sessions : []).filter((session) => session && typeof session.name === "string" && session.name.trim()).slice().sort(byRecentActivity);
         const seen = /* @__PURE__ */ new Set();
         return sorted.filter((session) => {
-          if (seen.has(session.name)) return false;
-          seen.add(session.name);
+          const key = `${session.source && session.source.id ? session.source.id : "local"}\0${session.name}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
           return true;
         });
       }

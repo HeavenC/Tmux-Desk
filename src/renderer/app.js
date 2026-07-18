@@ -7,16 +7,23 @@ const { resolveTerminalFileReference } = require('../shared/terminal-file-link')
 const { DEFAULT_TMUX_SETTINGS, TMUX_SETTING_FIELDS, parseAdvancedConfig } = require('../shared/tmux-settings');
 const { applyTheme, resolveTheme } = require('./theme');
 const { TerminalView } = require('./terminal-view');
+const { RemoteApi } = require('./remote-api');
+const remoteStore = require('./remote-connections');
 const { t, applyStaticI18n, setLocale, getLocale, resolveLocale, loadStoredLanguage, saveLanguage } = require('./i18n');
 
 const api = window.tmuxDesk;
+// The local IPC bridge is one "source"; each remote takeover host is another.
+// activeApi() resolves the currently-selected source to an object with the same
+// method shape TerminalView + the session code expect.
+const localApi = api;
+const remoteApis = new Map();
 const $ = (selector) => document.querySelector(selector);
 const refs = {};
 const state = {
   systemStatus: { installed: false, path: null, version: null },
   preferences: {
     theme: 'light', favorites: [], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null, sidebarWidth: null,
-    tagRailExpanded: false, tagRailWidth: null, keepAwake: false,
+    tagRailExpanded: false, tagRailWidth: null, keepAwake: false, remoteConnections: [],
     tmuxSettings: { ...DEFAULT_TMUX_SETTINGS },
   },
   sessions: [],
@@ -27,6 +34,9 @@ const state = {
   refreshing: false,
   commandIndex: 0,
   files: { open: false, root: null },
+  source: { kind: 'local', id: 'local' },
+  remoteConnections: [],
+  sourceStatus: 'online',
 };
 
 const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
@@ -34,12 +44,15 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 let terminalView = null;
 let pollTimer = null;
 let selectionToken = 0;
+let sourceToken = 0;
 let tagActivationToken = 0;
 let draggedTabName = null;
 
 function cacheElements() {
   for (const id of [
     'appShell', 'tagRail', 'newTagButton', 'sessionSummary', 'refreshButton', 'newSessionButton', 'searchIcon', 'sessionSearch', 'sessionList',
+    'sourceBar', 'sourceButton', 'sourceIcon', 'sourceLabel', 'sourceStatusDot', 'sourceCaret', 'sourcePopover',
+    'remoteModal', 'remoteForm', 'remoteLabelInput', 'remoteUrlInput', 'remoteTokenInput',
     'tmuxStatusDot', 'tmuxStatusText', 'themeButton', 'settingsButton', 'activeSessionName',
     'activeSessionPath', 'attachedBadge', 'workspaceViewBadge', 'panePickerWrap', 'panePicker', 'panePickerIcon',
     'sessionMenuButton', 'sessionTabs', 'terminalSurface', 'terminalMount', 'paneCloseLayer', 'terminalReconnect',
@@ -47,7 +60,7 @@ function cacheElements() {
     'emptyInstallButton', 'emptyRefreshButton', 'emptyAllButton', 'workspaceStatus', 'commandHint', 'themePopover', 'contextMenu', 'toastStack',
     'sessionModal', 'sessionForm', 'sessionNameInput', 'sessionCwdInput', 'startupCommandInput',
     'chooseDirectoryButton', 'renameModal', 'renameForm', 'renameInput', 'killModal', 'killMessage',
-    'confirmKillButton', 'settingsModal', 'themeCards', 'languageCards', 'tagSettingsList', 'settingsNewTagButton', 'settingsTmuxVersion', 'commandPalette',
+    'confirmKillButton', 'settingsModal', 'themeCards', 'languageCards', 'tagSettingsList', 'settingsNewTagButton', 'tagImportButton', 'tagExportButton', 'settingsTmuxVersion', 'commandPalette',
     'commandInput', 'commandSearchIcon', 'commandResults',
     'duplicateModal', 'duplicateForm', 'duplicateInput', 'duplicateMessage',
     'importModal', 'importList', 'importTitle', 'importSubtitle', 'importSelectAll', 'importCreateButton',
@@ -1179,6 +1192,7 @@ function closeActivePane() {
 // Close (kill) a split pane, then refresh so the overlay and terminal reflect
 // the collapsed layout. tmux reflows the surviving panes to fill the space.
 async function closePane(paneId) {
+  if (!requireLocal()) return;
   try {
     await api.killPane(paneId);
     await refreshDetail();
@@ -1193,7 +1207,7 @@ async function refreshDetail() {
   if (!session) return;
   const targetId = session.id;
   try {
-    const detail = await api.getSessionDetail(targetId);
+    const detail = await sessionApi().getSessionDetail(targetId);
     if (state.selectedSessionId !== targetId) return;
     state.detail = detail;
     renderDetail();
@@ -1405,7 +1419,11 @@ async function selectSession(session) {
   renderWorkspace();
   renderDetail();
   try {
-    state.preferences = await api.savePreferences({ lastSession: session.name });
+    // lastSession is a local-machine preference; a remote session name could
+    // collide with a local one, so only persist it for the local source.
+    if (!isRemoteActive()) {
+      state.preferences = await api.savePreferences({ lastSession: session.name });
+    }
     await Promise.all([refreshDetail(), terminalView.attach(session.id)]);
     if (token !== selectionToken) return;
     refs.workspaceStatus.textContent = t('workspace.statusAttached', { windows: session.windows || 0, panes: session.paneCount || 0 });
@@ -1417,13 +1435,24 @@ async function selectSession(session) {
   }
 }
 
-async function refreshSessions({ initial = false, notify = false } = {}) {
+async function refreshSessions({ initial = false, notify = false, poll = false } = {}) {
   if (state.refreshing) return;
   state.refreshing = true;
+  const token = sourceToken;
   refs.refreshButton.classList.add('spinning');
   try {
-    if (initial || !state.systemStatus.installed) state.systemStatus = await api.getSystemStatus();
-    const sessions = state.systemStatus.installed ? await api.listSessions() : [];
+    if (isRemoteActive()) {
+      // A remote host that answers /api/sessions has usable tmux; skip the local
+      // tmux probe entirely.
+      state.systemStatus = { installed: true };
+    } else if (initial || !state.systemStatus.installed) {
+      state.systemStatus = await api.getSystemStatus();
+    }
+    const sessions = state.systemStatus.installed ? await sessionApi().listSessions() : [];
+    // A source switch (or another concurrent refresh) happened while we awaited;
+    // these results belong to the old source — drop them.
+    if (token !== sourceToken) return;
+    if (isRemoteActive() && state.sourceStatus !== 'online') { state.sourceStatus = 'online'; renderSourceBar(); }
     const previousId = state.selectedSessionId;
     state.sessions = sessions;
     if (previousId && !sessions.some((session) => session.id === previousId)) {
@@ -1455,7 +1484,13 @@ async function refreshSessions({ initial = false, notify = false } = {}) {
     }
     if (notify) toast(t('toast.sessionsRefreshed'));
   } catch (error) {
-    toast(friendlyError(error), 'error');
+    if (isRemoteActive() && state.sourceStatus !== 'offline') {
+      state.sourceStatus = 'offline';
+      renderSourceBar();
+    }
+    // Background polls fail quietly (a remote blip shouldn't spam toasts); only
+    // user-initiated refreshes surface the error.
+    if (!poll) toast(friendlyError(error), 'error');
   } finally {
     state.refreshing = false;
     refs.refreshButton.classList.remove('spinning');
@@ -1506,13 +1541,27 @@ function placePopoverAt(popover, x, y) {
 function closeFloatingMenus() {
   refs.contextMenu.classList.add('hidden');
   refs.themePopover.classList.add('hidden');
+  closeSourcePopover();
 }
 
 function openSessionMenu(session, anchor) {
   closeFloatingMenus();
+  const copyName = menuButton({ iconName: 'copy', title: t('menu.copyName'), action: async () => {
+    closeFloatingMenus();
+    await navigator.clipboard.writeText(session.name);
+    toast(t('toast.nameCopied'));
+  } });
+  const connect = menuButton({ iconName: 'terminal', title: t('menu.connectSession'), action: () => { closeFloatingMenus(); selectSession(session); } });
+  if (isRemoteActive()) {
+    // Remote takeover is read-only: only navigation + copy, no session mutation
+    // and no re-sharing through the local web server (which lacks this session).
+    refs.contextMenu.replaceChildren(connect, separator(), copyName);
+    placePopover(refs.contextMenu, anchor);
+    return;
+  }
   const isFavorite = state.preferences.favorites.includes(session.name);
   refs.contextMenu.replaceChildren(
-    menuButton({ iconName: 'terminal', title: t('menu.connectSession'), action: () => { closeFloatingMenus(); selectSession(session); } }),
+    connect,
     menuButton({ iconName: 'star', title: isFavorite ? t('menu.unfavorite') : t('menu.favorite'), action: async () => {
       closeFloatingMenus();
       try { await toggleFavorite(session); }
@@ -1523,11 +1572,7 @@ function openSessionMenu(session, anchor) {
     separator(),
     menuButton({ iconName: 'edit', title: t('action.rename'), action: () => { closeFloatingMenus(); openRenameModal(session); } }),
     menuButton({ iconName: 'copy', title: t('menu.duplicateSession'), action: () => { closeFloatingMenus(); openDuplicateModal(session); } }),
-    menuButton({ iconName: 'copy', title: t('menu.copyName'), action: async () => {
-      closeFloatingMenus();
-      await navigator.clipboard.writeText(session.name);
-      toast(t('toast.nameCopied'));
-    } }),
+    copyName,
     separator(),
     menuButton({ iconName: 'trash', title: t('menu.closeSession'), danger: true, action: () => { closeFloatingMenus(); openKillModal(session); } }),
   );
@@ -1571,6 +1616,31 @@ function openTagEditor(tag = null) {
   refs.tagNameInput.select();
 }
 
+async function exportTags() {
+  try {
+    const result = await api.exportTags();
+    if (!result?.canceled) toast(t('toast.tagsExported'));
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+  }
+}
+
+async function importTags() {
+  try {
+    const outcome = await api.importTags();
+    if (outcome?.canceled) return;
+    state.preferences = outcome.preferences;
+    renderTagSettings();
+    renderTagRail();
+    renderSessionList();
+    renderSessionTabs();
+    renderWorkspace();
+    toast(t('toast.tagsImported'));
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+  }
+}
+
 function openTagDeleteModal(tag) {
   refs.tagDeleteModal.dataset.tagId = tag.id;
   refs.tagDeleteMessage.textContent = t('tag.deleteMessage', { name: tag.name });
@@ -1611,6 +1681,7 @@ function openSessionTagsModal(session = selectedSession()) {
 }
 
 function openNewSessionModal() {
+  if (!requireLocal()) return;
   refs.sessionForm.reset();
   const session = selectedSession();
   refs.sessionCwdInput.value = session?.path || '';
@@ -2106,6 +2177,7 @@ function cycleTheme() {
 
 async function toggleFavorite(session) {
   if (!session) return;
+  if (!requireLocal()) return;
   state.preferences = await api.toggleFavorite(session.name);
   renderTagRail();
   renderSessionList();
@@ -2119,6 +2191,243 @@ async function toggleSelectedFavorite() {
   await toggleFavorite(selectedSession());
 }
 
+// ── Session sources (local + remote takeover) ────────────────────────────────
+
+function isRemoteActive() {
+  return state.source.kind === 'remote';
+}
+
+function activeConnection() {
+  if (!isRemoteActive()) return null;
+  return state.remoteConnections.find((connection) => connection.id === state.source.id) || null;
+}
+
+// The api backing the active source. Terminal attach, session listing and detail
+// all route through this; management ops stay on localApi (and are gated off for
+// remote by requireLocal).
+function sessionApi() {
+  if (!isRemoteActive()) return localApi;
+  return remoteApis.get(state.source.id) || localApi;
+}
+
+function ensureRemoteApi(connection) {
+  let remote = remoteApis.get(connection.id);
+  if (!remote) {
+    remote = new RemoteApi({ base: connection.base, token: connection.token });
+    remoteApis.set(connection.id, remote);
+  }
+  return remote;
+}
+
+// Guard for mutating actions that only make sense on the local machine. Remote
+// takeover is deliberately read-only in this first cut.
+function requireLocal() {
+  if (isRemoteActive()) { toast(t('remote.readOnly')); return false; }
+  return true;
+}
+
+function loadRemoteConnections() {
+  state.remoteConnections = state.preferences.remoteConnections || [];
+}
+
+// One-time migration of remote connections saved by an earlier build in
+// localStorage into the main-process preferences store.
+async function migrateLegacyRemoteConnections() {
+  const legacy = remoteStore.loadLegacyConnections();
+  if (!legacy.length) return;
+  for (const entry of legacy) {
+    try {
+      const { preferences } = await api.addRemote(entry);
+      state.preferences = preferences;
+    } catch { /* skip malformed legacy entry */ }
+  }
+  remoteStore.clearLegacy();
+  loadRemoteConnections();
+}
+
+function sourceStatusLabel() {
+  if (!isRemoteActive()) return '';
+  if (state.sourceStatus === 'offline') return t('source.offline');
+  if (state.sourceStatus === 'connecting') return t('source.connecting');
+  return t('source.online');
+}
+
+function renderSourceBar() {
+  if (!refs.sourceButton) return;
+  const connection = activeConnection();
+  const localMode = !isRemoteActive();
+  refs.sourceIcon.innerHTML = icon(localMode ? 'laptop' : 'external', 16);
+  refs.sourceLabel.textContent = localMode ? t('source.local') : (connection?.label || t('source.local'));
+  refs.sourceButton.title = localMode ? t('source.localHint') : `${connection?.base || ''} · ${sourceStatusLabel()}`;
+  refs.sourceCaret.innerHTML = icon('chevron', 14);
+  refs.sourceBar.dataset.remote = String(!localMode);
+  refs.sourceStatusDot.dataset.status = localMode ? 'local' : state.sourceStatus;
+  refs.sourceStatusDot.hidden = localMode;
+  // New-session is local-only; hide the affordance while a remote source is active.
+  if (refs.newSessionButton) refs.newSessionButton.hidden = !localMode;
+}
+
+function closeSourcePopover() {
+  refs.sourcePopover?.classList.add('hidden');
+  refs.sourceButton?.setAttribute('aria-expanded', 'false');
+}
+
+function sourceRow({ iconName, label, sublabel, active, onClick, onRemove, reshare, onToggleReshare }) {
+  const row = document.createElement('div');
+  row.className = `source-row${active ? ' active' : ''}`;
+  const main = document.createElement('button');
+  main.type = 'button';
+  main.className = 'source-row-main';
+  main.innerHTML = icon(iconName, 15);
+  const text = document.createElement('span');
+  text.className = 'source-row-text';
+  const name = document.createElement('span');
+  name.className = 'source-row-name';
+  name.textContent = label;
+  text.append(name);
+  if (sublabel) {
+    const sub = document.createElement('span');
+    sub.className = 'source-row-sub';
+    sub.textContent = sublabel;
+    text.append(sub);
+  }
+  main.append(text);
+  if (active) {
+    const check = document.createElement('span');
+    check.className = 'source-row-check';
+    check.innerHTML = icon('check', 14);
+    main.append(check);
+  }
+  main.addEventListener('click', onClick);
+  row.append(main);
+  if (onToggleReshare) {
+    const reshareToggle = document.createElement('button');
+    reshareToggle.type = 'button';
+    reshareToggle.className = `source-row-reshare${reshare ? ' on' : ''}`;
+    reshareToggle.title = reshare ? t('source.reshareOn') : t('source.reshareOff');
+    reshareToggle.setAttribute('aria-label', t('source.reshareTitle'));
+    reshareToggle.setAttribute('aria-pressed', String(Boolean(reshare)));
+    reshareToggle.innerHTML = icon('external', 13);
+    reshareToggle.addEventListener('click', (event) => { event.stopPropagation(); onToggleReshare(); });
+    row.append(reshareToggle);
+  }
+  if (onRemove) {
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'source-row-remove';
+    remove.title = t('source.removeRemote');
+    remove.setAttribute('aria-label', t('source.removeRemote'));
+    remove.innerHTML = icon('close', 13);
+    remove.addEventListener('click', (event) => { event.stopPropagation(); onRemove(); });
+    row.append(remove);
+  }
+  return row;
+}
+
+function renderSourcePopover() {
+  const popover = refs.sourcePopover;
+  popover.replaceChildren();
+  popover.append(sourceRow({
+    iconName: 'laptop',
+    label: t('source.local'),
+    sublabel: t('source.localHint'),
+    active: !isRemoteActive(),
+    onClick: () => switchSource({ kind: 'local', id: 'local' }),
+  }));
+  for (const connection of state.remoteConnections) {
+    popover.append(sourceRow({
+      iconName: 'external',
+      label: connection.label,
+      sublabel: connection.base,
+      active: isRemoteActive() && state.source.id === connection.id,
+      onClick: () => switchSource({ kind: 'remote', id: connection.id }),
+      onRemove: () => removeRemoteConnection(connection),
+      reshare: connection.reshare === true,
+      onToggleReshare: () => toggleRemoteReshare(connection),
+    }));
+  }
+  const add = document.createElement('button');
+  add.type = 'button';
+  add.className = 'source-add';
+  add.innerHTML = `${icon('plus', 15)}<span>${t('source.addRemote')}</span>`;
+  add.addEventListener('click', () => { closeSourcePopover(); openRemoteModal(); });
+  popover.append(add);
+}
+
+function toggleSourcePopover() {
+  if (!refs.sourcePopover.classList.contains('hidden')) { closeSourcePopover(); return; }
+  closeFloatingMenus();
+  renderSourcePopover();
+  refs.sourcePopover.classList.remove('hidden');
+  refs.sourceButton.setAttribute('aria-expanded', 'true');
+  placePopover(refs.sourcePopover, refs.sourceButton);
+}
+
+async function switchSource(source) {
+  if (source.kind === state.source.kind && source.id === state.source.id) { closeSourcePopover(); return; }
+  closeSourcePopover();
+  if (source.kind === 'remote') {
+    const connection = state.remoteConnections.find((entry) => entry.id === source.id);
+    if (!connection) return;
+    ensureRemoteApi(connection);
+  }
+  // Tear down the current attachment before repointing the terminal at the new
+  // source so no stray data from the old session leaks in.
+  selectionToken += 1;
+  sourceToken += 1;
+  try { await terminalView.detach(); } catch { /* nothing attached */ }
+  state.source = source;
+  state.selectedSessionId = null;
+  state.detail = { windows: [], panes: [] };
+  state.sessions = [];
+  state.query = '';
+  if (refs.sessionSearch) refs.sessionSearch.value = '';
+  state.view = { kind: 'all' };
+  state.sourceStatus = source.kind === 'remote' ? 'connecting' : 'online';
+  terminalView.setApi(sessionApi());
+  renderSourceBar();
+  renderTagRail();
+  renderSessionList();
+  renderSessionTabs();
+  renderWorkspace();
+  await refreshSessions({ initial: true });
+}
+
+function openRemoteModal() {
+  refs.remoteLabelInput.value = '';
+  refs.remoteUrlInput.value = '';
+  refs.remoteTokenInput.value = '';
+  openModal(refs.remoteModal, refs.remoteUrlInput);
+}
+
+async function removeRemoteConnection(connection) {
+  if (!window.confirm(t('remote.removeConfirm', { name: connection.label }))) return;
+  const wasActive = isRemoteActive() && state.source.id === connection.id;
+  try {
+    state.preferences = await api.removeRemote(connection.id);
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+    return;
+  }
+  loadRemoteConnections();
+  const remote = remoteApis.get(connection.id);
+  if (remote) { remote.dispose(); remoteApis.delete(connection.id); }
+  if (wasActive) await switchSource({ kind: 'local', id: 'local' });
+  else if (!refs.sourcePopover.classList.contains('hidden')) renderSourcePopover();
+  renderSourceBar();
+}
+
+async function toggleRemoteReshare(connection) {
+  try {
+    state.preferences = await api.setRemoteReshare({ id: connection.id, reshare: !connection.reshare });
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+    return;
+  }
+  loadRemoteConnections();
+  if (!refs.sourcePopover.classList.contains('hidden')) renderSourcePopover();
+}
+
 function bindEvents() {
   refs.refreshButton.addEventListener('click', () => refreshSessions({ notify: true }));
   refs.emptyRefreshButton.addEventListener('click', () => refreshSessions({ initial: !state.systemStatus.installed, notify: true }));
@@ -2128,6 +2437,8 @@ function bindEvents() {
   refs.newTagButton.addEventListener('click', () => openTagEditor());
   refs.tagRailToggleButton.addEventListener('click', () => setTagRailExpanded(!state.preferences.tagRailExpanded));
   refs.settingsNewTagButton.addEventListener('click', () => openTagEditor());
+  refs.tagExportButton.addEventListener('click', exportTags);
+  refs.tagImportButton.addEventListener('click', importTags);
   refs.keepAwakeToggle.addEventListener('change', () => setKeepAwakePreference(refs.keepAwakeToggle.checked));
   refs.tmuxResetButton.addEventListener('click', resetTmuxSettings);
   refs.tmuxAdvancedApplyButton.addEventListener('click', applyAdvancedTmuxSettings);
@@ -2138,6 +2449,26 @@ function bindEvents() {
   refs.sessionSearch.addEventListener('input', () => { state.query = refs.sessionSearch.value; renderSessionList(); });
   document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => setView({ kind: button.dataset.view })));
   refs.settingsButton.addEventListener('click', openSettings);
+  refs.sourceButton.addEventListener('click', toggleSourcePopover);
+  refs.remoteForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submit = refs.remoteForm.querySelector('[type="submit"]');
+    submit.disabled = true;
+    try {
+      const { preferences, connection } = await api.addRemote({
+        label: refs.remoteLabelInput.value,
+        url: refs.remoteUrlInput.value,
+        token: refs.remoteTokenInput.value,
+      });
+      state.preferences = preferences;
+      loadRemoteConnections();
+      closeModal(refs.remoteModal);
+      await switchSource({ kind: 'remote', id: connection.id });
+      if (state.sourceStatus === 'offline') toast(t('remote.offlineHint'), 'error');
+      else toast(t('remote.connected', { name: connection.label }));
+    } catch (error) { toast(friendlyError(error), 'error'); }
+    finally { submit.disabled = false; }
+  });
   refs.commandHint.addEventListener('click', openCommandPalette);
   refs.themeButton.addEventListener('click', () => {
     if (!refs.themePopover.classList.contains('hidden')) return closeFloatingMenus();
@@ -2150,6 +2481,7 @@ function bindEvents() {
     if (session) openSessionMenu(session, refs.sessionMenuButton);
   });
   refs.panePicker.addEventListener('change', async () => {
+    if (!requireLocal()) return;
     try { await api.selectPane(refs.panePicker.value); await refreshDetail(); terminalView.focus(); }
     catch (error) { toast(friendlyError(error), 'error'); }
   });
@@ -2318,11 +2650,14 @@ function bindEvents() {
   refs.commandInput.addEventListener('input', () => { state.commandIndex = 0; renderCommandResults(); });
   refs.commandPalette.addEventListener('mousedown', (event) => { if (event.target === refs.commandPalette) closeCommandPalette(); });
   document.addEventListener('mousedown', (event) => {
-    if (!refs.contextMenu.contains(event.target) && !refs.themePopover.contains(event.target)) closeFloatingMenus();
+    if (!refs.contextMenu.contains(event.target)
+      && !refs.themePopover.contains(event.target)
+      && !refs.sourcePopover.contains(event.target)
+      && !refs.sourceButton.contains(event.target)) closeFloatingMenus();
   });
   window.addEventListener('keydown', handleKeyboard);
   systemTheme.addEventListener('change', () => { if (state.preferences.theme === 'system') applyCurrentTheme(); });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshSessions(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshSessions({ poll: true }); });
   api.onAppCommand((command) => handleAppCommand(command));
   window.addEventListener('beforeunload', () => {
     clearInterval(pollTimer);
@@ -2348,7 +2683,7 @@ function handleKeyboard(event) {
   else if (meta && event.shiftKey && event.key.toLowerCase() === 't') { event.preventDefault(); cycleTheme(); }
   else if (meta && /^[1-9]$/.test(event.key)) {
     const windowInfo = state.detail.windows[Number(event.key) - 1];
-    if (windowInfo) { event.preventDefault(); api.selectWindow(windowInfo.id).then(refreshDetail).catch((error) => toast(friendlyError(error), 'error')); }
+    if (windowInfo) { event.preventDefault(); sessionApi().selectWindow(windowInfo.id).then(refreshDetail).catch((error) => toast(friendlyError(error), 'error')); }
   } else if (event.metaKey && !event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
     && state.view.kind !== 'all' && selectedSession()) {
     event.preventDefault();
@@ -2386,6 +2721,7 @@ function handleAppCommand(command) {
 // splits keep subdividing). The terminal reflects it since we attach to the
 // whole window.
 async function splitActivePane(orientation) {
+  if (!requireLocal()) return;
   const session = selectedSession();
   if (!session) { toast(t('toast.noSession')); return; }
   try {
@@ -2429,14 +2765,19 @@ async function initialize() {
     onOpenFile: (reference) => openTerminalFileReference(reference),
   });
   bindEvents();
+  loadRemoteConnections();
+  renderSourceBar();
   try {
     state.preferences = await api.getPreferences();
+    await migrateLegacyRemoteConnections();
+    loadRemoteConnections();
+    renderSourceBar();
     applyCurrentTheme();
     applySidebarWidth();
     applyTagRailWidth();
     applyTagRailExpanded();
     await refreshSessions({ initial: true });
-    pollTimer = setInterval(() => { if (!document.hidden) refreshSessions(); }, 2000);
+    pollTimer = setInterval(() => { if (!document.hidden) refreshSessions({ poll: true }); }, 2000);
   } catch (error) {
     toast(friendlyError(error), 'error');
     renderWorkspace();

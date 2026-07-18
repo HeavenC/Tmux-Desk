@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, powerMonitor, powerSaveBlocker, session, shell } = require('electron');
 const path = require('node:path');
+const fs = require('node:fs/promises');
 const { execFile } = require('node:child_process');
 
 const { registerIpc } = require('./ipc');
@@ -17,7 +18,11 @@ const CSP = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self'",
-  "connect-src 'none'",
+  // Remote takeover: the renderer opens fetch + WebSocket to user-added remote
+  // Tmux Desk hosts (arbitrary http(s)/ws(s) origins), so connect-src can't be
+  // 'none'. script-src stays 'self', so there's no remote-code path — only the
+  // RemoteApi's own requests to hosts the user explicitly trusted.
+  "connect-src 'self' http: https: ws: wss:",
   "object-src 'none'",
   "base-uri 'none'",
   "frame-src 'none'",
@@ -219,6 +224,36 @@ async function bootstrap() {
           else execFile('/usr/bin/open', ['-a', appPath, target], done);
         });
         return { canceled: false, app: path.basename(appPath, isWin ? '.exe' : '.app') };
+      },
+    },
+    tagFileIO: {
+      exportToFile: async (data) => {
+        const result = await dialog.showSaveDialog(mainWindow, {
+          title: '导出标签配置',
+          defaultPath: 'tmux-desk-tags.json',
+          filters: [{ name: 'JSON', extensions: ['json'] }],
+        });
+        if (result.canceled || !result.filePath) return { canceled: true };
+        await fs.writeFile(result.filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+        return { canceled: false, path: result.filePath };
+      },
+      importFromFile: async () => {
+        const result = await dialog.showOpenDialog(mainWindow, {
+          title: '导入标签配置',
+          filters: [{ name: 'JSON', extensions: ['json'] }],
+          properties: ['openFile'],
+        });
+        if (result.canceled || !result.filePaths[0]) return { canceled: true };
+        let payload;
+        try {
+          payload = JSON.parse(await fs.readFile(result.filePaths[0], 'utf8'));
+        } catch {
+          throw new Error('无法解析标签文件，请确认是有效的 JSON');
+        }
+        if (!payload || payload.type !== 'tmux-desk-tags') {
+          throw new Error('不是 Tmux Desk 标签文件');
+        }
+        return { canceled: false, payload };
       },
     },
   });

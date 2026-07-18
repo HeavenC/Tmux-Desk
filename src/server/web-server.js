@@ -6,8 +6,9 @@ const os = require('node:os');
 const path = require('node:path');
 const { promisify } = require('node:util');
 
-const { WebSocketServer } = require('ws');
+const { WebSocketServer, WebSocket } = require('ws');
 
+const { parseTarget, qualifyTarget, toWsBase } = require('../shared/remote-connection');
 const { validateSessionTags } = require('../main/ipc');
 const {
   PreferencesStore,
@@ -253,6 +254,63 @@ function startWebServer({
     return (await service.listSessions()).filter((session) => !session.name.startsWith(WEB_SESSION_PREFIX));
   }
 
+  // Remote takeover hosts this machine is allowed to relay onward. Only hosts the
+  // user explicitly opted into ("允许再分享") are exposed to web clients.
+  function reshareConnections(preferences) {
+    return (preferences.remoteConnections || [])
+      .filter((connection) => connection.reshare && connection.base && connection.token);
+  }
+
+  async function findReshareConnection(connId) {
+    const preferences = await preferencesStore.load();
+    return reshareConnections(preferences).find((connection) => connection.id === connId) || null;
+  }
+
+  // Issue a REST call to an upstream remote host as its client, using that host's
+  // stored token. Times out so one dead remote can't hang an aggregate request.
+  async function upstreamRequest(connection, pathname, { method = 'GET', body, params } = {}) {
+    const url = new URL(`${connection.base}${pathname}`);
+    url.searchParams.set('token', connection.token);
+    if (params) for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
+    const options = { method };
+    if (body !== undefined) {
+      options.headers = { 'Content-Type': 'application/json' };
+      options.body = JSON.stringify(body);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload || payload.ok === false) {
+        throw new Error((payload && payload.error) || `远程请求失败（${response.status}）`);
+      }
+      return payload;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // Merge reshare-enabled remotes' sessions into the local list, qualifying each
+  // remote session id (r:<connId>:<$n>) so ids never collide across hosts. A dead
+  // or unreachable remote is skipped rather than failing the whole list.
+  async function aggregateRemoteSessions(preferences) {
+    const remotes = reshareConnections(preferences);
+    const results = await Promise.all(remotes.map(async (connection) => {
+      try {
+        const payload = await upstreamRequest(connection, '/api/sessions');
+        return (payload.sessions || []).map((session) => ({
+          ...session,
+          id: qualifyTarget(connection.id, session.id),
+          source: { id: connection.id, label: connection.label },
+        }));
+      } catch {
+        return [];
+      }
+    }));
+    return results.flat();
+  }
+
   function findScopedSession(sessions, sessionName) {
     if (sessionName === null) return null;
     return sessions.find((session) => session.name === sessionName) || null;
@@ -284,9 +342,14 @@ function startWebServer({
         preferencesStore.load(),
       ]);
       const scopedSession = findScopedSession(sessions, scope);
+      // Full-token clients also see reshare-enabled remotes' sessions (relayed
+      // through this host); scoped single-session shares stay strictly local.
+      const remoteSessions = scope === null ? await aggregateRemoteSessions(preferences) : [];
       return sendJson(res, 200, {
         ok: true,
-        sessions: scope === null ? sessions : (scopedSession ? [scopedSession] : []),
+        sessions: scope === null
+          ? [...sessions, ...remoteSessions]
+          : (scopedSession ? [scopedSession] : []),
         preferences: publicPreferences(preferences, scope === null ? undefined : (scopedSession?.name || '')),
       });
     }
@@ -318,12 +381,36 @@ function startWebServer({
     }
     if (req.method === 'GET' && url.pathname === '/api/session-detail') {
       const target = url.searchParams.get('session');
+      const parsed = parseTarget(target);
+      if (parsed && parsed.kind === 'remote') {
+        if (scope !== null) return sendError(res, 403, '无权访问此会话');
+        const connection = await findReshareConnection(parsed.connId);
+        if (!connection) return sendError(res, 404, '远程会话不可用');
+        const detail = await upstreamRequest(connection, '/api/session-detail', { params: { session: parsed.id } });
+        return sendJson(res, 200, { ok: true, windows: detail.windows || [], panes: detail.panes || [] });
+      }
       if (!await requireScopedTarget(res, scope, target)) return;
       const detail = await service.getSessionDetail(target);
       return sendJson(res, 200, { ok: true, ...detail });
     }
     if (req.method === 'POST' && url.pathname === '/api/select-window') {
       const { grouped, windowIndex } = await readJsonBody(req);
+      const parsedGrouped = parseTarget(grouped);
+      if (parsedGrouped && parsedGrouped.kind === 'remote') {
+        // The grouped id was rewritten to r:<connId>:<$n> when the relayed WS
+        // reported ready; route the switch back to that upstream host.
+        if (scope !== null) return sendError(res, 403, '无权访问此会话');
+        if (!Number.isInteger(windowIndex) || windowIndex < 0 || windowIndex > 999) {
+          return sendError(res, 400, '无效的窗口序号');
+        }
+        const connection = await findReshareConnection(parsedGrouped.connId);
+        if (!connection) return sendError(res, 404, '远程会话不可用');
+        await upstreamRequest(connection, '/api/select-window', {
+          method: 'POST',
+          body: { grouped: parsedGrouped.id, windowIndex },
+        });
+        return sendJson(res, 200, { ok: true });
+      }
       if (typeof grouped !== 'string' || !SESSION_TARGET.test(grouped) || !liveGrouped.has(grouped)) {
         return sendError(res, 400, '无效的派生会话');
       }
@@ -382,6 +469,73 @@ function startWebServer({
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(payload));
   }
 
+  // Relay a downstream client's terminal WS to an upstream remote host, byte for
+  // byte. The only rewrite is the 'ready' message's grouped id, qualified to
+  // r:<connId>:<$n> so a later /api/select-window routes back to this host.
+  function proxyRemoteWs(downstream, connection, sessionId, cols, rows) {
+    const upstreamUrl = new URL(`${toWsBase(connection.base)}/ws`);
+    upstreamUrl.searchParams.set('token', connection.token);
+    upstreamUrl.searchParams.set('session', sessionId);
+    upstreamUrl.searchParams.set('cols', String(cols));
+    upstreamUrl.searchParams.set('rows', String(rows));
+
+    let upstream;
+    try {
+      upstream = new WebSocket(upstreamUrl.toString());
+    } catch {
+      wsSend(downstream, { type: 'error', message: '无法连接远程主机' });
+      try { downstream.close(); } catch { /* already closed */ }
+      return;
+    }
+
+    const pending = [];
+    let sawReady = false;
+    let closed = false;
+    const teardown = () => {
+      if (closed) return;
+      closed = true;
+      try { upstream.close(); } catch { /* already closing */ }
+      try { downstream.close(); } catch { /* already closing */ }
+    };
+
+    upstream.on('open', () => {
+      for (const message of pending.splice(0)) {
+        if (upstream.readyState === WebSocket.OPEN) upstream.send(message);
+      }
+    });
+    upstream.on('message', (raw) => {
+      if (downstream.readyState !== downstream.OPEN) return;
+      if (!sawReady) {
+        let message = null;
+        try { message = JSON.parse(String(raw)); } catch { /* forward as-is below */ }
+        if (message && message.type === 'ready') {
+          sawReady = true;
+          if (message.grouped) message.grouped = qualifyTarget(connection.id, message.grouped);
+          downstream.send(JSON.stringify(message));
+          return;
+        }
+      }
+      // Post-ready (and any non-ready pre-ready frame): forward verbatim.
+      downstream.send(typeof raw === 'string' ? raw : raw.toString());
+    });
+    upstream.on('close', teardown);
+    upstream.on('error', () => {
+      wsSend(downstream, { type: 'error', message: '远程连接错误' });
+      teardown();
+    });
+
+    downstream.on('message', (raw) => {
+      const text = typeof raw === 'string' ? raw : raw.toString();
+      if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
+      else pending.push(text);
+    });
+    downstream.on('close', teardown);
+    downstream.on('error', teardown);
+    // Keep the heartbeat sweep from terminating this relayed client.
+    downstream.isAlive = true;
+    downstream.on('pong', () => { downstream.isAlive = true; });
+  }
+
   wss.on('connection', async (ws, req) => {
     const url = new URL(req.url, 'http://internal');
     const access = authenticateUrl(url);
@@ -390,9 +544,28 @@ function startWebServer({
     const cols = Number(url.searchParams.get('cols')) || 80;
     const rows = Number(url.searchParams.get('rows')) || 24;
 
-    if (typeof sourceId !== 'string' || !SESSION_TARGET.test(sourceId)) {
+    const parsedSource = parseTarget(sourceId);
+    if (!parsedSource) {
       wsSend(ws, { type: 'error', message: '无效的会话目标' });
       ws.close();
+      return;
+    }
+
+    if (parsedSource.kind === 'remote') {
+      // Relayed session: only full-token clients may reach remotes, and only
+      // reshare-enabled hosts are routable.
+      if (scope !== null) {
+        wsSend(ws, { type: 'error', message: '无权访问此会话' });
+        ws.close();
+        return;
+      }
+      const connection = await findReshareConnection(parsedSource.connId);
+      if (!connection) {
+        wsSend(ws, { type: 'error', message: '远程会话不可用' });
+        ws.close();
+        return;
+      }
+      proxyRemoteWs(ws, connection, parsedSource.id, cols, rows);
       return;
     }
 

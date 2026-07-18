@@ -26,6 +26,10 @@ const DEFAULT_PREFERENCES = Object.freeze({
   tagRailWidth: null,
   keepAwake: false,
   webQuickKeys: [],
+  // Remote takeover hosts this machine can attach/relay. Stored here (not in the
+  // renderer) so the web-server can read reshare-enabled hosts' tokens to proxy.
+  // Excluded from publicPreferences, so tokens never reach web clients.
+  remoteConnections: [],
   // The app-managed tmux profile is deliberately complete and deterministic:
   // a user does not need a ~/.tmux.conf to get the same iTerm-like behavior.
   tmuxSettings: DEFAULT_TMUX_SETTINGS,
@@ -127,6 +131,7 @@ function normalizePreferences(value = {}) {
       ? value.keepAwake
       : DEFAULT_PREFERENCES.keepAwake,
     webQuickKeys: normalizeWebQuickKeys(value.webQuickKeys),
+    remoteConnections: normalizeRemoteConnections(value.remoteConnections),
     tmuxSettings: normalizeTmuxSettings(value.tmuxSettings, value.tmuxDefaults),
   };
 }
@@ -147,6 +152,24 @@ function normalizeWebQuickKeys(value) {
       if (label && text) out.push({ type: 'text', label, text, enter: item.enter === true });
     }
     if (out.length >= 40) break;
+  }
+  return out;
+}
+
+function normalizeRemoteConnections(value) {
+  if (!Array.isArray(value)) return [];
+  const seenIds = new Set();
+  const out = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const id = typeof item.id === 'string' && /^[a-zA-Z0-9-]{1,64}$/.test(item.id) ? item.id : null;
+    const base = typeof item.base === 'string' && /^https?:\/\//i.test(item.base) ? item.base.replace(/\/+$/, '') : null;
+    const token = typeof item.token === 'string' && item.token ? item.token : null;
+    if (!id || !base || !token || seenIds.has(id)) continue;
+    seenIds.add(id);
+    const label = typeof item.label === 'string' && item.label.trim() ? item.label.trim().slice(0, 60) : base;
+    out.push({ id, base, token, label, reshare: item.reshare === true });
+    if (out.length >= 50) break;
   }
   return out;
 }
@@ -386,6 +409,53 @@ class PreferencesStore {
     return this.update(() => ({ webQuickKeys }));
   }
 
+  // Add (or update, if the same base already exists) a remote takeover host.
+  // Returns { preferences, connection } so the caller can act on the stored id.
+  async addRemoteConnection({ base, token, label } = {}) {
+    if (typeof base !== 'string' || !/^https?:\/\//i.test(base) || typeof token !== 'string' || !token) {
+      throw new Error('远程连接参数无效');
+    }
+    const normalizedBase = base.replace(/\/+$/, '');
+    let connection = null;
+    const preferences = await this.update((current) => {
+      const list = [...current.remoteConnections];
+      const existing = list.find((entry) => entry.base === normalizedBase);
+      if (existing) {
+        existing.token = token;
+        if (label) existing.label = String(label).slice(0, 60);
+        connection = { ...existing };
+        return { remoteConnections: list };
+      }
+      const id = `remote-${this.createId()}`.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 64);
+      connection = {
+        id,
+        base: normalizedBase,
+        token,
+        label: label ? String(label).slice(0, 60) : normalizedBase,
+        reshare: false,
+      };
+      return { remoteConnections: [...list, connection] };
+    });
+    // Re-read the stored copy so the caller gets the normalized connection.
+    const stored = preferences.remoteConnections.find((entry) => entry.base === normalizedBase) || connection;
+    return { preferences, connection: stored };
+  }
+
+  async removeRemoteConnection(id) {
+    return this.update((current) => ({
+      remoteConnections: current.remoteConnections.filter((entry) => entry.id !== id),
+    }));
+  }
+
+  async setRemoteReshare(id, reshare) {
+    const enabled = reshare === true;
+    return this.update((current) => ({
+      remoteConnections: current.remoteConnections.map((entry) => (
+        entry.id === id ? { ...entry, reshare: enabled } : entry
+      )),
+    }));
+  }
+
   async setSessionTags(name, ids) {
     const sessionName = normalizeSessionName(name);
     if (!Array.isArray(ids)) throw new Error('Tag 列表无效');
@@ -418,6 +488,56 @@ class PreferencesStore {
       const sessionTags = { ...current.sessionTags };
       delete sessionTags[sessionName];
       return { sessionTags };
+    });
+  }
+
+  // Merge a tag configuration exported from another machine. Never destructive:
+  // tags union by name (existing ids win, so cross-machine assignments still
+  // resolve), imported ids are remapped, session→tag assignments and favorites
+  // union in. Unknown ids are dropped by normalizePreferences on write.
+  async importTagConfig(payload) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      throw new Error('标签文件无效');
+    }
+    const importedTags = normalizeTags(payload.tags);
+    const importedSessionTags = payload.sessionTags && typeof payload.sessionTags === 'object'
+      && !Array.isArray(payload.sessionTags) ? payload.sessionTags : {};
+    const importedFavorites = Array.isArray(payload.favorites) ? payload.favorites : [];
+    if (!importedTags.length && !Object.keys(importedSessionTags).length && !importedFavorites.length) {
+      throw new Error('标签文件不含可导入的数据');
+    }
+    return this.update((current) => {
+      const byNameLower = new Map(current.tags.map((tag) => [tag.name.toLocaleLowerCase(), tag]));
+      const existingIds = new Set(current.tags.map((tag) => tag.id));
+      const idRemap = new Map();
+      const additions = [];
+      for (const tag of importedTags) {
+        const match = byNameLower.get(tag.name.toLocaleLowerCase());
+        if (match) { idRemap.set(tag.id, match.id); continue; }
+        let id = tag.id;
+        if (existingIds.has(id)) id = normalizeTagId(`tag-${this.createId()}`);
+        existingIds.add(id);
+        idRemap.set(tag.id, id);
+        const added = { id, name: tag.name, color: tag.color };
+        if (tag.pinned) added.pinned = true;
+        additions.push(added);
+        byNameLower.set(tag.name.toLocaleLowerCase(), added);
+      }
+      const tags = [...current.tags, ...additions];
+      const availableIds = new Set(tags.map((tag) => tag.id));
+      const sessionTags = {};
+      for (const [name, ids] of Object.entries(current.sessionTags)) sessionTags[name] = [...ids];
+      for (const [rawName, rawIds] of Object.entries(importedSessionTags)) {
+        const name = normalizeSessionKey(rawName);
+        if (!name || !Array.isArray(rawIds)) continue;
+        const mapped = rawIds
+          .map((id) => (typeof id === 'string' ? (idRemap.get(id) || id) : null))
+          .filter((id) => availableIds.has(id));
+        if (!mapped.length) continue;
+        sessionTags[name] = [...new Set([...(sessionTags[name] || []), ...mapped])];
+      }
+      const favorites = normalizeFavorites([...current.favorites, ...importedFavorites]);
+      return { tags, sessionTags, favorites };
     });
   }
 
