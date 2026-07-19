@@ -645,6 +645,11 @@ function startWebServer({
         try {
           if (message.type === 'input') manager.write({ terminalId, data: message.data });
           if (message.type === 'resize') manager.resize({ terminalId, cols: message.cols, rows: message.rows });
+          // Wheel scroll: drive tmux copy-mode on the grouped session this client
+          // views (never mouse events — a foreground agent that grabbed mouse
+          // reporting would otherwise swallow them). copy-mode -e auto-exits to the
+          // live screen when scrolled past the bottom, so the tail is always reachable.
+          if (message.type === 'scroll') service.scrollSession(groupedId, message.lines).catch(() => {});
           // Browser tab gained focus: send a focus-in report so tmux marks this
           // client as the "latest" one — with window-size=latest the shared
           // window then snaps to THIS client's width instead of staying at the

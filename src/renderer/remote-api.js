@@ -153,19 +153,36 @@ class RemoteApi {
     return this.ws && this.ws.readyState === WebSocket.OPEN;
   }
 
-  writeTerminal({ terminalId, data } = {}) {
+  // These mirror the local IPC bridge (window.tmuxDesk), whose methods all return
+  // a Promise from ipcRenderer.invoke — terminal-view chains `.catch()` on the
+  // result (write/resize responses to xterm's device-attribute, color and focus
+  // queries). Returning a bare boolean here throws "….catch is not a function"
+  // inside xterm's parser on every such reply, corrupting the remote data/redraw
+  // stream. Keep them `async` so a boolean is wrapped in a resolved Promise.
+  async writeTerminal({ terminalId, data } = {}) {
     if (terminalId !== this.terminalId || !this.wsReady()) return false;
     this.ws.send(JSON.stringify({ type: 'input', data }));
     return true;
   }
 
-  resizeTerminal({ terminalId, cols, rows } = {}) {
+  async resizeTerminal({ terminalId, cols, rows } = {}) {
     if (terminalId !== this.terminalId || !this.wsReady()) return false;
     this.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
     return true;
   }
 
-  detachTerminal() {
+  // Wheel scroll over the takeover WS. terminal-view drives this with the source
+  // session id, but the WS is already bound to one attached (grouped) session on
+  // the remote host, so only the line delta matters — the remote's own scroll
+  // handler runs tmux copy-mode against the session this socket views. Relayed
+  // (reshared) hosts forward this frame upstream verbatim, so it works B→C too.
+  async scrollTerminal({ lines } = {}) {
+    if (!this.wsReady() || !Number.isInteger(lines) || lines === 0) return false;
+    this.ws.send(JSON.stringify({ type: 'scroll', lines }));
+    return true;
+  }
+
+  async detachTerminal() {
     this.closeSocket(true);
     this.terminalId = null;
     this.grouped = null;

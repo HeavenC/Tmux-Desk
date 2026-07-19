@@ -216,6 +216,38 @@ test('session, window, and pane controls use validated exact argument arrays', a
   await assert.rejects(() => service.killPane('@2'), /无效的 tmux 面板目标/);
 });
 
+test('scrollSession drives copy-mode up and scroll-down toward the live screen', async () => {
+  const calls = [];
+  const service = new TmuxService({
+    tmuxPath: '/tmp/tmux',
+    fsImpl: executableFs(['/tmp/tmux']),
+    socketName: 'isolated',
+    execFileImpl: async (file, args) => {
+      calls.push(args);
+      return { stdout: '', stderr: '' };
+    },
+  });
+
+  await service.scrollSession('$4', -40); // scroll up into history
+  await service.scrollSession('$4', 999);  // scroll down, clamped to 500
+  await service.scrollSession('$4', 0);    // no-op, no tmux call
+  assert.deepEqual(calls, [
+    ['-L', 'isolated', 'copy-mode', '-e', '-t', '$4',
+      ';', 'send-keys', '-t', '$4', '-X', '-N', '40', 'scroll-up'],
+    ['-L', 'isolated', 'send-keys', '-t', '$4', '-X', '-N', '500', 'scroll-down'],
+  ]);
+  await assert.rejects(() => service.scrollSession('@2', -1), /无效的 tmux 会话目标/);
+});
+
+test('scrollSession swallows the "not in a mode" error at the live bottom', async () => {
+  const service = new TmuxService({
+    tmuxPath: '/tmp/tmux',
+    fsImpl: executableFs(['/tmp/tmux']),
+    execFileImpl: async () => { throw new Error('not in a mode'); },
+  });
+  await service.scrollSession('$1', 5); // must not throw
+});
+
 test('listSessions treats only no-server errors as an empty result', async () => {
   const noServer = new TmuxService({
     tmuxPath: '/tmp/tmux',
