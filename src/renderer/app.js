@@ -23,7 +23,7 @@ const state = {
   systemStatus: { installed: false, path: null, version: null },
   preferences: {
     theme: 'light', favorites: [], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null, sidebarWidth: null,
-    tagRailExpanded: false, tagRailWidth: null, keepAwake: false, remoteConnections: [],
+    tagRailExpanded: false, tagRailWidth: null, keepAwake: false, autoShare: false, remoteConnections: [],
     tmuxSettings: { ...DEFAULT_TMUX_SETTINGS },
   },
   sessions: [],
@@ -69,7 +69,7 @@ function cacheElements() {
     'sessionTagsModal', 'sessionTagsForm', 'sessionTagsMessage', 'sessionTagsList',
     'tagDeleteModal', 'tagDeleteMessage', 'confirmTagDeleteButton',
     'filesToggleButton', 'fileBrowser', 'fbTree', 'fbPath', 'fbRevealButton', 'fbRefreshButton', 'fbCollapseButton',
-    'sidebarResizer', 'tagRailResizer', 'tagRailToggleButton', 'settingsScroll', 'keepAwakeToggle',
+    'sidebarResizer', 'tagRailResizer', 'tagRailToggleButton', 'settingsScroll', 'keepAwakeToggle', 'autoShareToggle',
     'tmuxSettingsGroups', 'tmuxResetButton', 'tmuxAdvancedConfig', 'tmuxAdvancedError', 'tmuxAdvancedApplyButton',
   ]) refs[id] = document.getElementById(id);
 }
@@ -377,6 +377,25 @@ async function setKeepAwakePreference(enabled) {
   } finally {
     refs.keepAwakeToggle.disabled = false;
   }
+}
+
+async function setAutoSharePreference(enabled) {
+  const previous = state.preferences.autoShare === true;
+  refs.autoShareToggle.disabled = true;
+  try {
+    state.preferences = await api.savePreferences({ autoShare: enabled });
+  } catch (error) {
+    refs.autoShareToggle.checked = previous;
+    toast(friendlyError(error), 'error');
+    refs.autoShareToggle.disabled = false;
+    return;
+  }
+  // Best-effort immediate start so flipping the switch does something visible;
+  // the persisted preference is what actually re-opens sharing on the next launch.
+  if (enabled) {
+    try { await api.webStart(); } catch (error) { toast(friendlyError(error), 'error'); }
+  }
+  refs.autoShareToggle.disabled = false;
 }
 
 async function saveTmuxSettings(next, input) {
@@ -1729,6 +1748,7 @@ function openSettings() {
   renderLanguageControls();
   renderTagSettings();
   refs.keepAwakeToggle.checked = state.preferences.keepAwake === true;
+  refs.autoShareToggle.checked = state.preferences.autoShare === true;
   renderTmuxSettings();
   openModal(refs.settingsModal, refs.settingsModal.querySelector('.theme-card'));
 }
@@ -2440,6 +2460,7 @@ function bindEvents() {
   refs.tagExportButton.addEventListener('click', exportTags);
   refs.tagImportButton.addEventListener('click', importTags);
   refs.keepAwakeToggle.addEventListener('change', () => setKeepAwakePreference(refs.keepAwakeToggle.checked));
+  refs.autoShareToggle.addEventListener('change', () => setAutoSharePreference(refs.autoShareToggle.checked));
   refs.tmuxResetButton.addEventListener('click', resetTmuxSettings);
   refs.tmuxAdvancedApplyButton.addEventListener('click', applyAdvancedTmuxSettings);
   refs.emptyInstallButton.addEventListener('click', async () => {

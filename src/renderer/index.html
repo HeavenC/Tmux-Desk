@@ -592,6 +592,22 @@
                         </label>
                     </section>
                     <section>
+                        <h3 data-i18n="settings.share">共享</h3>
+                        <label class="settings-toggle-row" for="autoShareToggle">
+                            <span class="settings-toggle-copy">
+                                <strong data-i18n="settings.autoShare">启动后自动开启共享</strong>
+                                <span data-i18n="settings.autoShareDescription">应用启动时自动开启手机 / 跨设备共享（Web 服务），无需每次手动点开共享面板。</span>
+                            </span>
+                            <input
+                                type="checkbox"
+                                id="autoShareToggle"
+                                class="settings-switch"
+                                role="switch"
+                                data-i18n-aria="settings.autoShare"
+                            />
+                        </label>
+                    </section>
+                    <section>
                         <div class="settings-section-heading">
                             <h3 data-i18n="settings.tmux">终端体验</h3>
                             <button type="button" class="button" id="tmuxResetButton" data-i18n="settings.tmuxReset">恢复 iTerm 风格默认值</button>

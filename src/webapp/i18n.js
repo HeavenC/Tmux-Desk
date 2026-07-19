@@ -37,6 +37,10 @@ const MESSAGES = {
     'filter.favorites': '收藏',
     'filter.titleCount': '{label}（{count}）',
 
+    'host.aria': '主机筛选',
+    'host.all': '全部主机',
+    'host.local': '本机',
+
     'time.justNow': '刚刚',
     'time.minutesAgo': '{n} 分钟前',
     'time.hoursAgo': '{n} 小时前',
@@ -121,6 +125,10 @@ const MESSAGES = {
     'filter.all': 'All',
     'filter.favorites': 'Favorites',
     'filter.titleCount': '{label} ({count})',
+
+    'host.aria': 'Host filter',
+    'host.all': 'All hosts',
+    'host.local': 'Local',
 
     'time.justNow': 'just now',
     'time.minutesAgo': '{n}m ago',

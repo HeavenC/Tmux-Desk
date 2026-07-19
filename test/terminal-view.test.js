@@ -85,7 +85,7 @@ function createView() {
   const openedFiles = [];
   const TerminalView = loadTerminalView();
   const view = new TerminalView({
-    container: {},
+    container: { addEventListener() {}, removeEventListener() {} },
     api: {
       writeTerminal(payload) { writes.push(payload); return Promise.resolve(true); },
       onTerminalData() { return () => {}; },

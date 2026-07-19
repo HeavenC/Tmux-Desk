@@ -182,6 +182,7 @@ class TerminalView {
     this.unsubscribeData = api.onTerminalData((payload) => this.handleData(payload));
     this.unsubscribeExit = api.onTerminalExit((payload) => this.handleExit(payload));
     this.container = container;
+    this.setupLocalWheelScroll();
     this.fitRetries = 0;
     this.resizeObserver = new ResizeObserver(() => this.scheduleFit());
     this.resizeObserver.observe(container);
@@ -189,6 +190,32 @@ class TerminalView {
     // xterm re-round its cell width, so the canvas can outgrow the container by
     // a column without any element resize — refit on every DPR change.
     this.watchDevicePixelRatio();
+  }
+
+  // iTerm-style wheel scrolling. With tmux `mouse on`, xterm forwards the wheel
+  // to tmux as a mouse event, which drops tmux into copy-mode — and from there
+  // scrolling back down often fails to return to the live bottom line (the
+  // reported "can't scroll to the bottom" of agent terminals). Intercept the
+  // wheel in the capture phase and drive xterm's own 10k-line scrollback instead,
+  // so the viewport bottom is always the live screen. Full-screen apps (anything
+  // on the alternate buffer: vim/less/htop) still own the wheel — we let those
+  // through untouched.
+  setupLocalWheelScroll() {
+    this.wheelRemainder = 0;
+    this.onWheelCapture = (event) => {
+      if (this.terminal.buffer.active.type === 'alternate') return;
+      const cellHeight = this.getGridMetrics()?.cellHeight || 17;
+      // deltaMode 1 = lines, 0 = pixels; normalise everything to line units.
+      const lineDelta = event.deltaMode === 1 ? event.deltaY : event.deltaY / cellHeight;
+      this.wheelRemainder += lineDelta;
+      const lines = Math.trunc(this.wheelRemainder);
+      this.wheelRemainder -= lines;
+      if (lines) this.terminal.scrollLines(lines);
+      // Keep the wheel from reaching xterm (which would relay it to tmux).
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    this.container.addEventListener('wheel', this.onWheelCapture, { capture: true, passive: false });
   }
 
   watchDevicePixelRatio() {
@@ -475,6 +502,7 @@ class TerminalView {
     }
     this.compositionOverlay?.remove();
     this.dprMedia?.removeEventListener('change', this.onDprChange);
+    this.container?.removeEventListener('wheel', this.onWheelCapture, { capture: true });
     this.resizeObserver.disconnect();
     this.dataDisposable.dispose();
     this.selectionChangeDisposable?.dispose();

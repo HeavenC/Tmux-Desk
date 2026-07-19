@@ -25,6 +25,8 @@ const DEFAULT_PREFERENCES = Object.freeze({
   tagRailExpanded: false,
   tagRailWidth: null,
   keepAwake: false,
+  // Start the mobile/cross-device web share automatically when the app launches.
+  autoShare: false,
   webQuickKeys: [],
   // Remote takeover hosts this machine can attach/relay. Stored here (not in the
   // renderer) so the web-server can read reshare-enabled hosts' tokens to proxy.
@@ -130,6 +132,9 @@ function normalizePreferences(value = {}) {
     keepAwake: typeof value.keepAwake === 'boolean'
       ? value.keepAwake
       : DEFAULT_PREFERENCES.keepAwake,
+    autoShare: typeof value.autoShare === 'boolean'
+      ? value.autoShare
+      : DEFAULT_PREFERENCES.autoShare,
     webQuickKeys: normalizeWebQuickKeys(value.webQuickKeys),
     remoteConnections: normalizeRemoteConnections(value.remoteConnections),
     tmuxSettings: normalizeTmuxSettings(value.tmuxSettings, value.tmuxDefaults),

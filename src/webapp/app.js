@@ -76,6 +76,8 @@ const state = {
   sessions: [],
   preferences: { tags: [], favorites: [], sessionTags: {}, tabOrders: {} },
   listView: { kind: 'all' },
+  // Host filter: null = every host, 'local' = 本机, or a relayed source id.
+  hostFilter: null,
   currentSession: null,
   grouped: null,
   windows: [],
@@ -116,6 +118,7 @@ function applySharedSessionMode() {
   document.documentElement.dataset.sharedSession = String(shared);
   document.querySelectorAll('.shared-mode-badge').forEach((badge) => { badge.hidden = !shared; });
   el('workspace-filters').hidden = shared;
+  if (el('host-filters')) el('host-filters').hidden = shared;
   el('back-btn').hidden = shared;
   if (shared) closeSessionTagsModal();
 }
@@ -218,6 +221,7 @@ function toggleLanguage() {
 function relocalize() {
   applyStaticI18n();
   updateLangButton();
+  renderHostFilters();
   renderWorkspaceFilters();
   if (state.currentView === 'list' && state.sessions.length) {
     setListState({ loading: false, error: null, sessions: currentListSessions() });
@@ -264,8 +268,49 @@ function ensureListView() {
   }
 }
 
+// Sessions on the host the user filtered to (null = every host). Local sessions
+// carry no `source`; relayed remote sessions carry `source.id`.
+function sessionsOnHost(sessions, hostKey) {
+  if (hostKey === null || hostKey === undefined) return sessions;
+  if (hostKey === 'local') return sessions.filter((s) => !(s && s.source && s.source.id));
+  return sessions.filter((s) => s && s.source && s.source.id === hostKey);
+}
+
+function hostFilteredSessions() {
+  return sessionsOnHost(state.sessions, state.hostFilter);
+}
+
+// Distinct hosts present in the current aggregated session list.
+function availableHosts() {
+  const remotes = [];
+  const seen = new Set();
+  let hasLocal = false;
+  for (const session of state.sessions) {
+    if (session && session.source && session.source.id) {
+      if (!seen.has(session.source.id)) {
+        seen.add(session.source.id);
+        remotes.push({ id: session.source.id, label: (session.source.label && String(session.source.label)) || session.source.id });
+      }
+    } else if (session && typeof session.name === 'string') {
+      hasLocal = true;
+    }
+  }
+  return { hasLocal, remotes };
+}
+
+// Drop a stale host filter (host disconnected / no longer relaying) back to all.
+function ensureHostFilter() {
+  if (state.hostFilter === null) return;
+  const { hasLocal, remotes } = availableHosts();
+  if (state.hostFilter === 'local') {
+    if (!hasLocal) state.hostFilter = null;
+    return;
+  }
+  if (!remotes.some((host) => host.id === state.hostFilter)) state.hostFilter = null;
+}
+
 function currentListSessions() {
-  return mobileSessionsForView(state.sessions, state.preferences, state.listView);
+  return mobileSessionsForView(hostFilteredSessions(), state.preferences, state.listView);
 }
 
 function sessionsForShare(sessions) {
@@ -366,10 +411,58 @@ function renderWorkspaceFilters() {
   filters.replaceChildren(...views.map(({ view, label, tag }) => createWorkspaceFilter(
     view,
     label,
-    liveCountForView(state.sessions, state.preferences, view),
+    liveCountForView(hostFilteredSessions(), state.preferences, view),
     tag,
   )));
   filters.querySelector('.workspace-filter.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+function createHostFilter(hostKey, label, count) {
+  const active = state.hostFilter === hostKey;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `workspace-filter${active ? ' active' : ''}`;
+  button.setAttribute('aria-pressed', String(active));
+  button.title = t('filter.titleCount', { label, count });
+  const text = document.createElement('span');
+  text.className = 'workspace-filter-label';
+  text.textContent = label;
+  const badge = document.createElement('span');
+  badge.className = 'workspace-filter-count';
+  badge.textContent = String(count);
+  button.append(text, badge);
+  button.addEventListener('click', () => {
+    state.hostFilter = hostKey;
+    renderHostFilters();
+    ensureListView();
+    renderWorkspaceFilters();
+    setListState({ loading: false, error: null, sessions: currentListSessions() });
+  });
+  return button;
+}
+
+// Host filter row (above the all/favorites/tag filters). Only shown when the
+// aggregated list actually spans more than one host — mirrors the desktop
+// source switcher, but as a touch-friendly chip row.
+function renderHostFilters() {
+  const nav = el('host-filters');
+  if (!nav) return;
+  ensureHostFilter();
+  const { hasLocal, remotes } = availableHosts();
+  const distinctHostCount = (hasLocal ? 1 : 0) + remotes.length;
+  if (state.share || distinctHostCount < 2) {
+    nav.replaceChildren();
+    nav.hidden = true;
+    return;
+  }
+  nav.hidden = false;
+  const prefs = state.preferences;
+  const countOn = (hostKey) => mobileSessionsForView(sessionsOnHost(state.sessions, hostKey), prefs, { kind: 'all' }).length;
+  const chips = [createHostFilter(null, t('host.all'), countOn(null))];
+  if (hasLocal) chips.push(createHostFilter('local', t('host.local'), countOn('local')));
+  for (const host of remotes) chips.push(createHostFilter(host.id, host.label, countOn(host.id)));
+  nav.replaceChildren(...chips);
+  nav.querySelector('.workspace-filter.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 function tagsForSession(sessionName) {
@@ -463,6 +556,7 @@ async function loadSessions() {
     state.preferences = normalizePreferenceProjection(body.preferences);
     applyServerQuickKeys(state.preferences.webQuickKeys);
     ensureListView();
+    renderHostFilters();
     renderWorkspaceFilters();
     setListState({ loading: false, error: null, sessions: currentListSessions() });
     if (state.share && state.currentView === 'list' && state.sessions.length === 1) {
@@ -535,6 +629,7 @@ async function saveSessionTags(event) {
     });
     state.preferences = normalizePreferenceProjection(body.preferences);
     ensureListView();
+    renderHostFilters();
     renderWorkspaceFilters();
     setListState({ loading: false, error: null, sessions: currentListSessions() });
     closeSessionTagsModal();

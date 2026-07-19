@@ -39,7 +39,7 @@ test('malformed and invalid preferences fall back to normalized defaults', async
     }), 'utf8');
     assert.deepEqual(await store.load(), {
       theme: 'light', favorites: ['api'], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null,
-      sidebarWidth: null, tagRailExpanded: false, tagRailWidth: null, keepAwake: false, webQuickKeys: [], remoteConnections: [],
+      sidebarWidth: null, tagRailExpanded: false, tagRailWidth: null, keepAwake: false, autoShare: false, webQuickKeys: [], remoteConnections: [],
       tmuxSettings: { ...DEFAULT_TMUX_SETTINGS },
     });
   });

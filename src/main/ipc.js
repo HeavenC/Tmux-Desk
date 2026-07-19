@@ -156,7 +156,7 @@ function validateTabOrders(value) {
 
 function validatePreferencesPatch(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('偏好设置无效');
-  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders', 'keepAwake', 'tmuxSettings']);
+  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders', 'keepAwake', 'autoShare', 'tmuxSettings']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new Error('偏好字段无效');
   }
@@ -189,6 +189,10 @@ function validatePreferencesPatch(value) {
   if ('keepAwake' in value) {
     if (typeof value.keepAwake !== 'boolean') throw new Error('保持唤醒设置无效');
     result.keepAwake = value.keepAwake;
+  }
+  if ('autoShare' in value) {
+    if (typeof value.autoShare !== 'boolean') throw new Error('自动共享设置无效');
+    result.autoShare = value.autoShare;
   }
   if ('tmuxSettings' in value) result.tmuxSettings = validateTmuxSettings(value.tmuxSettings);
   if ('tabOrders' in value) result.tabOrders = validateTabOrders(value.tabOrders);

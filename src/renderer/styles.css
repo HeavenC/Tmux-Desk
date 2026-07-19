@@ -136,10 +136,14 @@ body.sidebar-resizing { user-select: none; }
 body.sidebar-resizing * { cursor: col-resize !important; }
 body.tag-rail-resizing { user-select: none; }
 body.tag-rail-resizing * { cursor: col-resize !important; }
+/* Draggable strip across the top of the window (frameless hiddenInset titlebar).
+   It must stay hit-testable — `pointer-events: none` silently disables
+   `-webkit-app-region: drag` in Chromium, which is why the window couldn't be
+   moved. Interactive controls that live under this 48px strip (the source
+   switcher) raise their own z-index above it so they stay clickable + no-drag. */
 .drag-region {
   position: fixed; z-index: 50; top: 0; left: 0; right: 0; height: 48px;
   -webkit-app-region: drag;
-  pointer-events: none;
 }
 
 .activity-rail {
@@ -247,6 +251,9 @@ body.tag-rail-resizing * { cursor: col-resize !important; }
   flex: none;
   padding: 10px 12px 0;
   -webkit-app-region: no-drag;
+  /* Sits inside the top drag strip — raise it above `.drag-region` (z-index 50)
+     so the switcher stays clickable while the rest of the strip drags. */
+  position: relative; z-index: 51;
 }
 .source-switcher {
   width: 100%; height: 34px;

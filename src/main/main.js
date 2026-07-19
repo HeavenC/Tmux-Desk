@@ -182,6 +182,12 @@ async function bootstrap() {
     sendEvent: sendToRenderer,
   });
   webControl = createWebControl({ preferencesStore });
+  // Auto-open the mobile/cross-device web share at launch when the user opted in.
+  // Fire-and-forget: a failure (e.g. the port is held by an external daemon) must
+  // not block window creation — the share panel surfaces the state either way.
+  if ((await preferencesStore.load()).autoShare) {
+    webControl.start().catch((error) => console.error('自动开启共享失败:', error));
+  }
   registerIpc({
     ipcMain,
     setAppLocale: setMenuLocale,

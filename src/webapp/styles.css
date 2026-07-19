@@ -260,6 +260,27 @@ body {
   background: var(--count-active-bg);
 }
 
+/* Host filter row: a lighter, more compact sibling above the workspace filters
+   so it reads as a secondary axis, not a duplicate of the all/favorites/tag row. */
+.host-filters {
+  min-height: 46px;
+  padding: 6px 12px;
+  gap: 6px;
+}
+
+.host-filters .workspace-filter {
+  min-height: 34px;
+  padding: 0 11px;
+  border-radius: 18px;
+  font-size: 12px;
+}
+
+.host-filters .workspace-filter-count {
+  min-width: 18px;
+  height: 18px;
+  font-size: 10px;
+}
+
 .tag-color-dot {
   width: 9px;
   height: 9px;
