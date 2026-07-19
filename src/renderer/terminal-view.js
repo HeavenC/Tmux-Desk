@@ -192,30 +192,57 @@ class TerminalView {
     this.watchDevicePixelRatio();
   }
 
-  // iTerm-style wheel scrolling. With tmux `mouse on`, xterm forwards the wheel
-  // to tmux as a mouse event, which drops tmux into copy-mode — and from there
-  // scrolling back down often fails to return to the live bottom line (the
-  // reported "can't scroll to the bottom" of agent terminals). Intercept the
-  // wheel in the capture phase and drive xterm's own 10k-line scrollback instead,
-  // so the viewport bottom is always the live screen. Full-screen apps (anything
-  // on the alternate buffer: vim/less/htop) still own the wheel — we let those
-  // through untouched.
+  // Wheel scrolling. This app is always a tmux client, and tmux runs on the outer
+  // terminal's ALTERNATE screen (it emits \e[?1049h on attach), so xterm.js has no
+  // scrollback of its own to move — scrolling MUST go through tmux copy-mode. We
+  // capture the wheel and drive tmux's copy-mode via the command channel
+  // (api.scrollTerminal → TmuxService.scrollSession) instead of letting xterm
+  // forward it as a mouse event: the command path works even when the pane's
+  // foreground app (Claude Code, codebuddy…) grabbed mouse reporting and swallowed
+  // the wheel — the reported "can't scroll to the bottom" case — and reliably
+  // returns to the live bottom. When the API can't scroll (e.g. a read-only remote
+  // takeover), fall through to xterm's default so remote panes aren't left dead.
   setupLocalWheelScroll() {
     this.wheelRemainder = 0;
+    this.pendingScrollLines = 0;
     this.onWheelCapture = (event) => {
-      if (this.terminal.buffer.active.type === 'alternate') return;
+      if (typeof this.api.scrollTerminal !== 'function' || !this.sessionId) return;
       const cellHeight = this.getGridMetrics()?.cellHeight || 17;
-      // deltaMode 1 = lines, 0 = pixels; normalise everything to line units.
+      // deltaMode 1 = lines, 0 = pixels; normalise to line units. deltaY>0 = down
+      // (toward the live bottom), <0 = up (into history) — same sign tmux wants.
       const lineDelta = event.deltaMode === 1 ? event.deltaY : event.deltaY / cellHeight;
       this.wheelRemainder += lineDelta;
       const lines = Math.trunc(this.wheelRemainder);
       this.wheelRemainder -= lines;
-      if (lines) this.terminal.scrollLines(lines);
-      // Keep the wheel from reaching xterm (which would relay it to tmux).
+      if (lines) {
+        this.pendingScrollLines += lines;
+        this.flushScroll();
+      }
+      // Stop xterm from also relaying the wheel to tmux as a mouse event.
       event.preventDefault();
       event.stopPropagation();
     };
     this.container.addEventListener('wheel', this.onWheelCapture, { capture: true, passive: false });
+  }
+
+  // Coalesce a flurry of wheel deltas into one tmux call (~a frame) and never
+  // overlap calls — each spawns a tmux process, and back-to-back copy-mode
+  // scrolls would otherwise race.
+  flushScroll() {
+    if (this.scrollTimer || this.scrollInFlight) return;
+    this.scrollTimer = setTimeout(() => {
+      this.scrollTimer = null;
+      const lines = this.pendingScrollLines;
+      this.pendingScrollLines = 0;
+      if (!lines || !this.sessionId || typeof this.api.scrollTerminal !== 'function') return;
+      this.scrollInFlight = true;
+      Promise.resolve(this.api.scrollTerminal({ sessionId: this.sessionId, lines }))
+        .catch(() => {})
+        .finally(() => {
+          this.scrollInFlight = false;
+          if (this.pendingScrollLines) this.flushScroll();
+        });
+    }, 16);
   }
 
   watchDevicePixelRatio() {
@@ -292,6 +319,8 @@ class TerminalView {
   async attach(sessionId) {
     const request = ++this.attachRequest;
     this.terminalId = null;
+    // Remembered so the wheel handler can drive tmux copy-mode on this session.
+    this.sessionId = typeof sessionId === 'string' ? sessionId : null;
     this.pendingData.clear();
     this.terminal.reset();
     this.fitAddon.fit();
@@ -486,6 +515,7 @@ class TerminalView {
   async detach() {
     this.attachRequest += 1;
     this.terminalId = null;
+    this.sessionId = null;
     this.pendingData.clear();
     await this.api.detachTerminal();
   }
@@ -494,6 +524,7 @@ class TerminalView {
     cancelAnimationFrame(this.fitFrame);
     clearTimeout(this.selectionChangeTimer);
     clearTimeout(this.compositionShiftTimer);
+    clearTimeout(this.scrollTimer);
     if (this.compositionTextarea) {
       this.compositionTextarea.removeEventListener('compositionstart', this.onCompositionUpdate);
       this.compositionTextarea.removeEventListener('compositionupdate', this.onCompositionUpdate);

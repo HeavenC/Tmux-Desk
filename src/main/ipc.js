@@ -47,6 +47,7 @@ const IPC_CHANNELS = Object.freeze([
   'terminal:attach',
   'terminal:write',
   'terminal:resize',
+  'terminal:scroll',
   'terminal:detach',
   'web:status',
   'web:start',
@@ -125,6 +126,10 @@ function validateTerminalPayload(kind, value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('终端参数无效');
   if (kind === 'attach') {
     return { sessionId: validateTarget(value.sessionId), ...validateTerminalSize(value.cols, value.rows) };
+  }
+  if (kind === 'scroll') {
+    if (!Number.isInteger(value.lines)) throw new Error('滚动量无效');
+    return { sessionId: validateTarget(value.sessionId), lines: Math.max(-500, Math.min(500, value.lines)) };
   }
   const terminalId = validateTerminalId(value.terminalId);
   if (kind === 'write') {
@@ -342,6 +347,10 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
     },
     'terminal:write': (_event, payload) => terminalManager.write(validateTerminalPayload('write', payload)),
     'terminal:resize': (_event, payload) => terminalManager.resize(validateTerminalPayload('resize', payload)),
+    'terminal:scroll': (_event, payload) => {
+      const { sessionId, lines } = validateTerminalPayload('scroll', payload);
+      return tmuxService.scrollSession(sessionId, lines).then(() => true);
+    },
     'terminal:detach': () => { terminalManager.dispose(); return true; },
     'web:status': (_event, sessionName) => requireWebControl().status(validateOptionalSessionName(sessionName)),
     'web:start': (_event, sessionName) => requireWebControl().start(validateOptionalSessionName(sessionName)),

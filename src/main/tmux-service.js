@@ -326,6 +326,35 @@ class TmuxService {
     await this.run(['select-pane', '-t', paneTarget]);
   }
 
+  // Wheel scrolling for a tmux front-end. tmux drives the *alternate* screen of
+  // the outer terminal (it emits \e[?1049h on attach), so xterm has no scrollback
+  // of its own to move — scrolling must go through tmux's copy-mode + history
+  // (history-limit 50000). Driving it from the command channel (instead of
+  // forwarding the wheel as a mouse event) works even when the pane's foreground
+  // app grabbed mouse reporting — the exact case where agent TUIs (Claude Code,
+  // codebuddy) swallow the wheel and the user "can't scroll". `copy-mode -e` makes
+  // scrolling back down past the newest line exit copy-mode straight to the live
+  // screen, so the bottom is always reachable. lines<0 = up (into history),
+  // lines>0 = down (toward live).
+  async scrollSession(sessionTarget, lines) {
+    validateTarget(sessionTarget, SESSION_TARGET, '会话');
+    if (!Number.isInteger(lines) || lines === 0) return;
+    const count = String(Math.min(500, Math.abs(lines)));
+    try {
+      if (lines < 0) {
+        // Enter copy-mode (idempotent) and scroll up — one tmux call via `;`.
+        await this.run(['copy-mode', '-e', '-t', sessionTarget,
+          ';', 'send-keys', '-t', sessionTarget, '-X', '-N', count, 'scroll-up']);
+      } else {
+        // Only meaningful in copy-mode; a no-op error at the live bottom is fine.
+        await this.run(['send-keys', '-t', sessionTarget, '-X', '-N', count, 'scroll-down']);
+      }
+    } catch {
+      // scroll-down while already at the live bottom (not in copy-mode) throws
+      // "not in a mode" — that just means we're already there. Ignore.
+    }
+  }
+
   // Close a single split pane (the inverse of splitPane). Killing panes until
   // one is left restores the window to its unsplit state. The UI only offers
   // this while a window has >=2 panes, so it never kills the last pane.

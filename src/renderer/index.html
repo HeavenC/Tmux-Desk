@@ -9,7 +9,6 @@
     </head>
     <body>
         <div class="app-shell" id="appShell">
-            <div class="drag-region" aria-hidden="true"></div>
             <nav class="activity-rail" aria-label="主导航" data-i18n-aria="rail.mainNav">
                 <div class="app-mark" title="Tmux Desk"><span>&gt;_</span></div>
                 <div class="rail-divider" aria-hidden="true"></div>
@@ -101,7 +100,7 @@
                         <span class="source-caret" id="sourceCaret"></span>
                     </button>
                 </div>
-                <header class="sidebar-header no-drag">
+                <header class="sidebar-header">
                     <div>
                         <h1 data-i18n="session.title">会话</h1>
                         <p id="sessionSummary" data-i18n="session.loading">正在读取本机 tmux…</p>
@@ -155,7 +154,7 @@
             ></div>
 
             <main class="workspace">
-                <header class="workspace-header no-drag">
+                <header class="workspace-header">
                     <div class="session-heading">
                         <div class="session-title-row">
                             <h2 id="activeSessionName">Tmux Desk</h2>
@@ -173,7 +172,7 @@
                         <p id="activeSessionPath" data-i18n="session.selectLocal">选择一个本机会话开始工作</p>
                     </div>
                     <div class="workspace-actions">
-                        <label class="pane-picker hidden" id="panePickerWrap">
+                        <label class="pane-picker no-drag hidden" id="panePickerWrap">
                             <span id="panePickerIcon"></span>
                             <select
                                 id="panePicker"

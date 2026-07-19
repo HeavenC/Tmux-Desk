@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('tmuxDesk', Object.freeze({
   attachTerminal: (payload) => ipcRenderer.invoke('terminal:attach', payload),
   writeTerminal: (payload) => ipcRenderer.invoke('terminal:write', payload),
   resizeTerminal: (payload) => ipcRenderer.invoke('terminal:resize', payload),
+  scrollTerminal: (payload) => ipcRenderer.invoke('terminal:scroll', payload),
   detachTerminal: () => ipcRenderer.invoke('terminal:detach'),
   webStatus: (sessionName) => ipcRenderer.invoke('web:status', sessionName),
   webStart: (sessionName) => ipcRenderer.invoke('web:start', sessionName),

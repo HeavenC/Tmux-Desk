@@ -136,15 +136,13 @@ body.sidebar-resizing { user-select: none; }
 body.sidebar-resizing * { cursor: col-resize !important; }
 body.tag-rail-resizing { user-select: none; }
 body.tag-rail-resizing * { cursor: col-resize !important; }
-/* Draggable strip across the top of the window (frameless hiddenInset titlebar).
-   It must stay hit-testable — `pointer-events: none` silently disables
-   `-webkit-app-region: drag` in Chromium, which is why the window couldn't be
-   moved. Interactive controls that live under this 48px strip (the source
-   switcher) raise their own z-index above it so they stay clickable + no-drag. */
-.drag-region {
-  position: fixed; z-index: 50; top: 0; left: 0; right: 0; height: 48px;
-  -webkit-app-region: drag;
-}
+/* Window dragging (frameless hiddenInset titlebar): `-webkit-app-region: drag`
+   is applied to the top-of-column layout containers (the rail top, the two
+   headers) — NOT a `position: fixed` overlay. Verified the hard way: Chromium
+   in this Electron does NOT register draggable regions from fixed/out-of-flow
+   elements, only from normal-flow boxes. Interactive children stay clickable via
+   the global `.no-drag, button, input, select { app-region: no-drag }` rule. */
+.activity-rail, .workspace-header, .sidebar-header { -webkit-app-region: drag; }
 
 .activity-rail {
   min-width: 0; overflow: hidden;
@@ -251,9 +249,6 @@ body.tag-rail-resizing * { cursor: col-resize !important; }
   flex: none;
   padding: 10px 12px 0;
   -webkit-app-region: no-drag;
-  /* Sits inside the top drag strip — raise it above `.drag-region` (z-index 50)
-     so the switcher stays clickable while the rest of the strip drags. */
-  position: relative; z-index: 51;
 }
 .source-switcher {
   width: 100%; height: 34px;
@@ -319,6 +314,7 @@ body.tag-rail-resizing * { cursor: col-resize !important; }
   height: 88px; flex: none;
   display: flex; align-items: flex-end; justify-content: space-between;
   padding: 0 14px 13px 16px;
+  -webkit-app-region: drag;
 }
 .sidebar-header h1 { margin: 0; font-size: 17px; line-height: 1.3; font-weight: 650; letter-spacing: -.25px; }
 .sidebar-header p { margin: 2px 0 0; color: var(--text-tertiary); font-size: 11px; }
@@ -410,6 +406,7 @@ kbd {
   display: flex; align-items: flex-end; justify-content: space-between; gap: 20px;
   padding: 0 17px 12px 20px;
   border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
 }
 .session-heading { min-width: 0; }
 .session-title-row { display: flex; align-items: center; gap: 8px; }
