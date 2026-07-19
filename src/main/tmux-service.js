@@ -328,19 +328,42 @@ class TmuxService {
 
   // Wheel scrolling for a tmux front-end. tmux drives the *alternate* screen of
   // the outer terminal (it emits \e[?1049h on attach), so xterm has no scrollback
-  // of its own to move — scrolling must go through tmux's copy-mode + history
-  // (history-limit 50000). Driving it from the command channel (instead of
-  // forwarding the wheel as a mouse event) works even when the pane's foreground
-  // app grabbed mouse reporting — the exact case where agent TUIs (Claude Code,
-  // codebuddy) swallow the wheel and the user "can't scroll". `copy-mode -e` makes
-  // scrolling back down past the newest line exit copy-mode straight to the live
-  // screen, so the bottom is always reachable. lines<0 = up (into history),
-  // lines>0 = down (toward live).
+  // of its own to move — scrolling has to be translated per pane state, mirroring
+  // what tmux's own wheel bindings decide:
+  //   1. Pane already in copy-mode → keep driving copy-mode.
+  //   2. Alt-screen app that enabled mouse reporting (Claude Code) → forward the
+  //      wheel as SGR mouse events; the app scrolls its own viewport. Copy-mode
+  //      would be useless here: the alternate screen accumulates no history.
+  //   3. Alt-screen app without mouse (pagers) → arrow-key emulation, same as
+  //      tmux's built-in wheel fallback.
+  //   4. Normal screen → copy-mode + history (history-limit 50000) from the
+  //      command channel, which works even when a TUI grabbed mouse reporting
+  //      but does NOT handle scrolling itself (the "can't scroll" agent case).
+  // `copy-mode -e` makes scrolling back down past the newest line exit
+  // copy-mode straight to the live screen, so the bottom is always reachable.
+  // lines<0 = up (into history), lines>0 = down (toward live).
   async scrollSession(sessionTarget, lines) {
     validateTarget(sessionTarget, SESSION_TARGET, '会话');
     if (!Number.isInteger(lines) || lines === 0) return;
     const count = String(Math.min(500, Math.abs(lines)));
     try {
+      const { stdout } = await this.run(['display-message', '-p', '-t', sessionTarget,
+        '#{pane_in_mode} #{alternate_on} #{mouse_any_flag} #{pane_width} #{pane_height}']);
+      const [inMode, altOn, mouseAny, paneWidth, paneHeight] =
+        String(stdout || '').trim().split(/\s+/).map(Number);
+      if (inMode !== 1 && altOn === 1) {
+        if (mouseAny === 1) {
+          // One SGR wheel event (64 = up, 65 = down) per line, at the pane
+          // centre; capped — apps scroll a chunk per event anyway.
+          const x = Math.max(1, Math.round(paneWidth / 2) || 1);
+          const y = Math.max(1, Math.round(paneHeight / 2) || 1);
+          const seq = `\u001b[<${lines < 0 ? 64 : 65};${x};${y}M`.repeat(Math.min(Number(count), 30));
+          await this.run(['send-keys', '-t', sessionTarget, '-l', seq]);
+        } else {
+          await this.run(['send-keys', '-t', sessionTarget, '-N', count, lines < 0 ? 'Up' : 'Down']);
+        }
+        return;
+      }
       if (lines < 0) {
         // Enter copy-mode (idempotent) and scroll up — one tmux call via `;`.
         await this.run(['copy-mode', '-e', '-t', sessionTarget,

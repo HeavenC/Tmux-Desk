@@ -216,27 +216,75 @@ test('session, window, and pane controls use validated exact argument arrays', a
   await assert.rejects(() => service.killPane('@2'), /无效的 tmux 面板目标/);
 });
 
-test('scrollSession drives copy-mode up and scroll-down toward the live screen', async () => {
-  const calls = [];
-  const service = new TmuxService({
+// The state probe every scrollSession issues before deciding how to scroll:
+// '#{pane_in_mode} #{alternate_on} #{mouse_any_flag} #{pane_width} #{pane_height}'
+const SCROLL_PROBE = ['display-message', '-p', '-t', '$4',
+  '#{pane_in_mode} #{alternate_on} #{mouse_any_flag} #{pane_width} #{pane_height}'];
+
+function scrollService(paneState, calls) {
+  return new TmuxService({
     tmuxPath: '/tmp/tmux',
     fsImpl: executableFs(['/tmp/tmux']),
     socketName: 'isolated',
     execFileImpl: async (file, args) => {
       calls.push(args);
+      if (args.includes('display-message')) return { stdout: `${paneState}\n`, stderr: '' };
       return { stdout: '', stderr: '' };
     },
   });
+}
+
+test('scrollSession drives copy-mode up and scroll-down toward the live screen', async () => {
+  const calls = [];
+  const service = scrollService('0 0 0 120 40', calls); // normal screen
 
   await service.scrollSession('$4', -40); // scroll up into history
   await service.scrollSession('$4', 999);  // scroll down, clamped to 500
   await service.scrollSession('$4', 0);    // no-op, no tmux call
   assert.deepEqual(calls, [
+    ['-L', 'isolated', ...SCROLL_PROBE],
     ['-L', 'isolated', 'copy-mode', '-e', '-t', '$4',
       ';', 'send-keys', '-t', '$4', '-X', '-N', '40', 'scroll-up'],
+    ['-L', 'isolated', ...SCROLL_PROBE],
     ['-L', 'isolated', 'send-keys', '-t', '$4', '-X', '-N', '500', 'scroll-down'],
   ]);
   await assert.rejects(() => service.scrollSession('@2', -1), /无效的 tmux 会话目标/);
+});
+
+test('scrollSession forwards SGR wheel events to alt-screen apps with mouse reporting', async () => {
+  const calls = [];
+  const service = scrollService('0 1 1 129 39', calls); // Claude Code-style pane
+
+  await service.scrollSession('$4', -3);
+  await service.scrollSession('$4', 100); // event count capped at 30
+  const up = `\u001b[<64;65;20M`;
+  const down = `\u001b[<65;65;20M`;
+  assert.deepEqual(calls.filter((args) => !args.includes('display-message')), [
+    ['-L', 'isolated', 'send-keys', '-t', '$4', '-l', up.repeat(3)],
+    ['-L', 'isolated', 'send-keys', '-t', '$4', '-l', down.repeat(30)],
+  ]);
+});
+
+test('scrollSession falls back to arrow keys for alt-screen apps without mouse', async () => {
+  const calls = [];
+  const service = scrollService('0 1 0 129 39', calls); // pager-style pane
+
+  await service.scrollSession('$4', -5);
+  await service.scrollSession('$4', 5);
+  assert.deepEqual(calls.filter((args) => !args.includes('display-message')), [
+    ['-L', 'isolated', 'send-keys', '-t', '$4', '-N', '5', 'Up'],
+    ['-L', 'isolated', 'send-keys', '-t', '$4', '-N', '5', 'Down'],
+  ]);
+});
+
+test('scrollSession keeps driving copy-mode when the alt-screen pane is already in a mode', async () => {
+  const calls = [];
+  const service = scrollService('1 1 1 129 39', calls); // user already scrolled into copy-mode
+
+  await service.scrollSession('$4', 10);
+  assert.deepEqual(calls.filter((args) => !args.includes('display-message')), [
+    ['-L', 'isolated', 'send-keys', '-t', '$4', '-X', '-N', '10', 'scroll-down'],
+  ]);
 });
 
 test('scrollSession swallows the "not in a mode" error at the live bottom', async () => {
