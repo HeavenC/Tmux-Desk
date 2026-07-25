@@ -11696,6 +11696,164 @@ ${s3.join("\n")}
     }
   });
 
+  // src/shared/quick-key.js
+  var require_quick_key = __commonJS({
+    "src/shared/quick-key.js"(exports, module) {
+      var NAMED_KEYS2 = {
+        enter: { label: "\u23CE", base: "\r", code: 13 },
+        tab: { label: "\u21E5", base: "	", code: 9 },
+        escape: { label: "Esc", base: "\x1B", code: 27 },
+        backspace: { label: "\u232B", base: "\x7F", code: 127 },
+        space: { label: "\u2423", base: " ", code: 32 },
+        up: { label: "\u2191", csi: "A" },
+        down: { label: "\u2193", csi: "B" },
+        right: { label: "\u2192", csi: "C" },
+        left: { label: "\u2190", csi: "D" },
+        home: { label: "Home", csi: "H" },
+        end: { label: "End", csi: "F" },
+        insert: { label: "Ins", tilde: 2 },
+        delete: { label: "Del", tilde: 3 },
+        pageup: { label: "PgUp", tilde: 5 },
+        pagedown: { label: "PgDn", tilde: 6 },
+        f1: { label: "F1", ss3: "P" },
+        f2: { label: "F2", ss3: "Q" },
+        f3: { label: "F3", ss3: "R" },
+        f4: { label: "F4", ss3: "S" },
+        f5: { label: "F5", tilde: 15 },
+        f6: { label: "F6", tilde: 17 },
+        f7: { label: "F7", tilde: 18 },
+        f8: { label: "F8", tilde: 19 },
+        f9: { label: "F9", tilde: 20 },
+        f10: { label: "F10", tilde: 21 },
+        f11: { label: "F11", tilde: 23 },
+        f12: { label: "F12", tilde: 24 }
+      };
+      var MODIFIERS2 = [
+        { id: "ctrl", symbol: "\u2303", bit: 4 },
+        { id: "alt", symbol: "\u2325", bit: 2 },
+        { id: "shift", symbol: "\u21E7", bit: 1 },
+        { id: "meta", symbol: "\u2318", bit: 8 }
+      ];
+      var CTRL_PUNCTUATION = { "@": 0, "[": 27, "\\": 28, "]": 29, "^": 30, "_": 31, "?": 127, " ": 0 };
+      function isNamedKey(key) {
+        return typeof key === "string" && Object.prototype.hasOwnProperty.call(NAMED_KEYS2, key);
+      }
+      function normalizeComboKey2(value) {
+        if (typeof value !== "string" || !value) return null;
+        const named = value.toLowerCase();
+        if (isNamedKey(named)) return named;
+        const chars = [...value];
+        if (chars.length !== 1) return null;
+        const char = chars[0];
+        const code = char.codePointAt(0);
+        if (code < 32 || code === 127) return null;
+        return char;
+      }
+      function modifierMask(combo) {
+        return MODIFIERS2.reduce((mask, mod) => combo[mod.id] ? mask | mod.bit : mask, 0);
+      }
+      function ctrlCode(char) {
+        if (/^[a-zA-Z]$/.test(char)) return char.toUpperCase().charCodeAt(0) - 64;
+        const punctuation = CTRL_PUNCTUATION[char];
+        return punctuation === void 0 ? null : punctuation;
+      }
+      function csiU(code, mask) {
+        return mask ? `\x1B[${code};${mask + 1}u` : `\x1B[${code}u`;
+      }
+      function comboSequence2(combo) {
+        const key = normalizeComboKey2(combo && combo.key);
+        if (!key) return "";
+        const mask = modifierMask(combo);
+        const { ctrl, alt, shift, meta } = {
+          ctrl: Boolean(combo.ctrl),
+          alt: Boolean(combo.alt),
+          shift: Boolean(combo.shift),
+          meta: Boolean(combo.meta)
+        };
+        if (isNamedKey(key)) {
+          const spec = NAMED_KEYS2[key];
+          if (spec.csi) return mask ? `\x1B[1;${mask + 1}${spec.csi}` : `\x1B[${spec.csi}`;
+          if (spec.ss3) return mask ? `\x1B[1;${mask + 1}${spec.ss3}` : `\x1BO${spec.ss3}`;
+          if (spec.tilde) return mask ? `\x1B[${spec.tilde};${mask + 1}~` : `\x1B[${spec.tilde}~`;
+          if (!mask) return spec.base;
+          if (key === "tab" && shift && !ctrl && !alt && !meta) return "\x1B[Z";
+          if (key === "space" && ctrl && !shift && !meta) return alt ? "\x1B\0" : "\0";
+          if (!ctrl && !shift && !meta && alt) return `\x1B${spec.base}`;
+          return csiU(spec.code, mask);
+        }
+        const control = ctrl ? ctrlCode(key) : null;
+        if (meta || ctrl && shift || ctrl && control === null) {
+          return csiU(key.toLowerCase().codePointAt(0), mask);
+        }
+        let out = key;
+        if (shift) out = out.toUpperCase();
+        if (ctrl) out = String.fromCharCode(control);
+        if (alt) out = `\x1B${out}`;
+        return out;
+      }
+      function comboKeyLabel(key) {
+        if (isNamedKey(key)) return NAMED_KEYS2[key].label;
+        return /^[a-z]$/.test(key) ? key.toUpperCase() : key;
+      }
+      function comboLabel2(combo) {
+        const key = normalizeComboKey2(combo && combo.key);
+        if (!key) return "";
+        if (typeof combo.label === "string" && combo.label.trim()) return combo.label.trim();
+        const mods = MODIFIERS2.filter((mod) => combo[mod.id]).map((mod) => mod.symbol).join("");
+        return mods + comboKeyLabel(key);
+      }
+      function describeSequence2(sequence) {
+        return [...String(sequence)].map((char) => {
+          const code = char.codePointAt(0);
+          if (code === 27) return "\\e";
+          if (code === 13) return "\\r";
+          if (code === 10) return "\\n";
+          if (code === 9) return "\\t";
+          if (code === 0) return "\\0";
+          if (code < 32 || code === 127) return `\\x${code.toString(16).padStart(2, "0")}`;
+          return char;
+        }).join("");
+      }
+      function normalizeCombo(item) {
+        const key = normalizeComboKey2(item && item.key);
+        if (!key) return null;
+        const combo = { type: "combo", key };
+        for (const mod of MODIFIERS2) {
+          if (item[mod.id] === true) combo[mod.id] = true;
+        }
+        if (typeof item.label === "string" && item.label.trim()) combo.label = item.label.trim().slice(0, 16);
+        return combo;
+      }
+      function normalizeQuickKeyEntry2(item, { isPreset } = {}) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+        if (item.type === "preset") {
+          if (typeof item.id !== "string" || !item.id || item.id.length > 40) return null;
+          if (typeof isPreset === "function" && !isPreset(item.id)) return null;
+          return { type: "preset", id: item.id };
+        }
+        if (item.type === "combo") return normalizeCombo(item);
+        if (item.type === "text" && typeof item.label === "string" && typeof item.text === "string") {
+          const label = item.label.slice(0, 16);
+          const text = item.text.slice(0, 200);
+          if (!label || !text) return null;
+          return { type: "text", label, text, enter: item.enter === true };
+        }
+        return null;
+      }
+      module.exports = {
+        NAMED_KEYS: NAMED_KEYS2,
+        MODIFIERS: MODIFIERS2,
+        comboSequence: comboSequence2,
+        comboLabel: comboLabel2,
+        comboKeyLabel,
+        describeSequence: describeSequence2,
+        normalizeCombo,
+        normalizeComboKey: normalizeComboKey2,
+        normalizeQuickKeyEntry: normalizeQuickKeyEntry2
+      };
+    }
+  });
+
   // src/webapp/i18n.js
   var require_i18n = __commonJS({
     "src/webapp/i18n.js"(exports, module) {
@@ -11745,6 +11903,12 @@ ${s3.join("\n")}
           "quick.editTitle": "\u7F16\u8F91\u5FEB\u6377\u680F",
           "quick.editHint": "\u70B9\u6309\u4E0B\u65B9\u6309\u952E\u6DFB\u52A0\uFF0C\u6216\u81EA\u5B9A\u4E49\u6587\u672C\uFF1B\u5DF2\u6DFB\u52A0\u7684\u53EF\u5220\u9664\u3002",
           "quick.presetSectionTitle": "\u5E38\u7528\u6309\u952E / \u7EC4\u5408\u952E",
+          "quick.comboSectionTitle": "\u81EA\u5B9A\u4E49\u7EC4\u5408\u952E\uFF08\u2303 \u2325 \u21E7 \u2318 + \u6309\u952E\uFF09",
+          "quick.comboKeyPlaceholder": "\u6309\u952E\uFF08\u8F93\u5165 c\uFF0C\u6216\u76F4\u63A5\u6309\u4E0B\u7EC4\u5408\u952E\uFF09",
+          "quick.comboNamedBlank": "\u7279\u6B8A\u952E\u2026",
+          "quick.comboPreviewEmpty": "\u9009\u62E9\u4FEE\u9970\u952E\u5E76\u6307\u5B9A\u4E00\u4E2A\u6309\u952E",
+          "quick.comboExtendedHint": "\u8BE5\u7EC4\u5408\u6CA1\u6709\u4F20\u7EDF\u7F16\u7801\uFF0C\u5C06\u4EE5\u6269\u5C55\u6309\u952E\uFF08CSI u\uFF09\u53D1\u9001\uFF1B\u5E94\u7528\u672A\u5F00\u542F\u6269\u5C55\u6309\u952E\u65F6\uFF0Ctmux \u4F1A\u81EA\u52A8\u964D\u7EA7\u3002",
+          "quick.comboMetaHint": "tmux \u7684\u6309\u952E\u6A21\u578B\u6CA1\u6709 \u2318\uFF0C\u4F1A\u628A\u5B83\u5F53\u4F5C \u2325 \u4F20\u7ED9\u5E94\u7528\uFF1B\u2318 \u7EC4\u5408\u5EFA\u8BAE\u6539\u7528 \u2303 / \u2325 / \u21E7\u3002",
           "quick.customSectionTitle": "\u81EA\u5B9A\u4E49\u6587\u672C\uFF08\u5982 /usage\u3001!\u3001\u4EFB\u610F\u547D\u4EE4\uFF09",
           "quick.labelPlaceholder": "\u6309\u94AE\u540D",
           "quick.textPlaceholder": "\u53D1\u9001\u6587\u672C",
@@ -11767,6 +11931,7 @@ ${s3.join("\n")}
           "toast.sessionEnded": "\u4F1A\u8BDD\u5DF2\u7ED3\u675F",
           "toast.genericError": "\u53D1\u751F\u9519\u8BEF",
           "toast.fillLabelAndText": "\u8BF7\u586B\u5199\u6309\u94AE\u540D\u548C\u53D1\u9001\u6587\u672C",
+          "toast.pickComboKey": "\u8BF7\u5148\u6307\u5B9A\u7EC4\u5408\u952E\u4E2D\u7684\u6309\u952E",
           "toast.fullscreenDenied": "\u5168\u5C4F\u88AB\u6D4F\u89C8\u5668\u62D2\u7EDD",
           "toast.fullscreenSafariHint": "\u5728 Safari \u4E2D\u70B9\u51FB\u5206\u4EAB \u2192 \u6DFB\u52A0\u5230\u4E3B\u5C4F\u5E55\uFF0C\u5373\u53EF\u5168\u5C4F\u4F7F\u7528",
           "error.badResponse": "\u670D\u52A1\u5668\u54CD\u5E94\u683C\u5F0F\u9519\u8BEF",
@@ -11821,6 +11986,12 @@ ${s3.join("\n")}
           "quick.editTitle": "Edit Quick Bar",
           "quick.editHint": "Tap a key below to add it, or add custom text; added keys can be removed.",
           "quick.presetSectionTitle": "Common keys / combos",
+          "quick.comboSectionTitle": "Custom combo (\u2303 \u2325 \u21E7 \u2318 + key)",
+          "quick.comboKeyPlaceholder": "Key (type c, or press the combo)",
+          "quick.comboNamedBlank": "Special key\u2026",
+          "quick.comboPreviewEmpty": "Pick modifiers and one key",
+          "quick.comboExtendedHint": "No legacy encoding for this combo \u2014 it goes out as an extended key (CSI u); tmux downgrades it for apps that do not enable extended keys.",
+          "quick.comboMetaHint": "tmux has no \u2318 in its key model and re-encodes it as \u2325 before the app sees it; prefer \u2303 / \u2325 / \u21E7 combos.",
           "quick.customSectionTitle": "Custom text (e.g. /usage, !, any command)",
           "quick.labelPlaceholder": "Button name",
           "quick.textPlaceholder": "Text to send",
@@ -11843,6 +12014,7 @@ ${s3.join("\n")}
           "toast.sessionEnded": "Session ended",
           "toast.genericError": "An error occurred",
           "toast.fillLabelAndText": "Please fill in a button name and text to send",
+          "toast.pickComboKey": "Pick the key for this combo first",
           "toast.fullscreenDenied": "Fullscreen was denied by the browser",
           "toast.fullscreenSafariHint": "In Safari, tap Share \u2192 Add to Home Screen to use fullscreen",
           "error.badResponse": "Malformed server response",
@@ -11894,6 +12066,15 @@ ${s3.join("\n")}
   var { FitAddon } = require_addon_fit();
   var { ClipboardAddon } = require_addon_clipboard();
   var { liveCountForView, mobileSessionsForView } = require_mobile_session_model();
+  var {
+    NAMED_KEYS,
+    MODIFIERS,
+    comboSequence,
+    comboLabel,
+    describeSequence,
+    normalizeComboKey,
+    normalizeQuickKeyEntry
+  } = require_quick_key();
   var { t, applyStaticI18n, setLocale, getLocale, detectLocale } = require_i18n();
   var LIST_REFRESH_MS = 15e3;
   var PING_INTERVAL_MS = 25e3;
@@ -12015,6 +12196,8 @@ ${s3.join("\n")}
     relockTimer: null,
     composing: false,
     quickKeys: [],
+    // In-progress custom combo in the editor sheet (modifiers + one key).
+    comboDraft: { key: "", ctrl: false, alt: false, shift: false, meta: false },
     // Non-null when the open session lives on a relayed remote host: its quick-key
     // bar overrides the local one for display/sending, and is read-only here.
     remoteQuickKeys: null,
@@ -12136,6 +12319,7 @@ ${s3.join("\n")}
     renderQuickKeys();
     if (!el("quickedit-modal").hidden) {
       renderQuickPresets();
+      renderQuickComboBuilder({ rebuild: true });
       renderQuickCurrent();
     }
     syncFullscreenButton();
@@ -12836,12 +13020,7 @@ ${s3.join("\n")}
     loadSessions();
   }
   function normalizeQuickKey(item) {
-    if (!item || typeof item !== "object") return null;
-    if (item.type === "preset" && PRESET_KEYS[item.id]) return { type: "preset", id: item.id };
-    if (item.type === "text" && typeof item.label === "string" && typeof item.text === "string") {
-      return { type: "text", label: item.label.slice(0, 16), text: item.text.slice(0, 200), enter: item.enter === true };
-    }
-    return null;
+    return normalizeQuickKeyEntry(item, { isPreset: (id) => Boolean(PRESET_KEYS[id]) });
   }
   function loadQuickKeys() {
     let stored = null;
@@ -12906,7 +13085,9 @@ ${s3.join("\n")}
     }
   }
   function quickKeyLabel(key) {
-    return key.type === "preset" ? PRESET_KEYS[key.id]?.label ?? key.id : key.label;
+    if (key.type === "preset") return PRESET_KEYS[key.id]?.label ?? key.id;
+    if (key.type === "combo") return comboLabel(key);
+    return key.label;
   }
   function effectiveQuickKeys() {
     return Array.isArray(state.remoteQuickKeys) ? state.remoteQuickKeys : state.quickKeys;
@@ -12939,6 +13120,7 @@ ${s3.join("\n")}
       button.textContent = quickKeyLabel(key);
       if (key.type === "preset" && PRESET_KEYS[key.id]?.ctrl) button.classList.add("qk-ctrl");
       if (key.type === "text") button.title = key.text + (key.enter ? " \u23CE" : "");
+      if (key.type === "combo") button.title = describeSequence(comboSequence(key));
       bindTap(button, () => runQuickKey(index));
       return button;
     }));
@@ -12955,6 +13137,9 @@ ${s3.join("\n")}
         return;
       }
       sendWsInput(preset.seq);
+    } else if (key.type === "combo") {
+      const sequence = comboSequence(key);
+      if (sequence) sendWsInput(sequence);
     } else {
       sendWsInput(key.text);
       if (key.enter) sendWsInput("\r");
@@ -12979,6 +13164,143 @@ ${s3.join("\n")}
       return button;
     }));
   }
+  var MOD_NAMES = { ctrl: "Ctrl", alt: "Option", shift: "Shift", meta: "Cmd" };
+  var NAMED_KEY_TITLES = {
+    enter: "Enter",
+    tab: "Tab",
+    escape: "Esc",
+    backspace: "Backspace",
+    space: "Space",
+    up: "Up",
+    down: "Down",
+    left: "Left",
+    right: "Right",
+    home: "Home",
+    end: "End",
+    insert: "Insert",
+    delete: "Delete",
+    pageup: "PageUp",
+    pagedown: "PageDown"
+  };
+  var RECORDED_KEY_NAMES = {
+    Escape: "escape",
+    Tab: "tab",
+    Enter: "enter",
+    Backspace: "backspace",
+    " ": "space",
+    ArrowUp: "up",
+    ArrowDown: "down",
+    ArrowLeft: "left",
+    ArrowRight: "right",
+    Home: "home",
+    End: "end",
+    Insert: "insert",
+    Delete: "delete",
+    PageUp: "pageup",
+    PageDown: "pagedown"
+  };
+  function renderQuickComboMods() {
+    const container = el("qk-combo-mods");
+    if (!container) return;
+    container.replaceChildren(...MODIFIERS.map((mod) => {
+      const button = document.createElement("button");
+      button.className = "qk-mod";
+      button.type = "button";
+      button.dataset.mod = mod.id;
+      button.textContent = `${mod.symbol} ${MOD_NAMES[mod.id]}`;
+      button.setAttribute("aria-pressed", String(Boolean(state.comboDraft[mod.id])));
+      button.classList.toggle("active", Boolean(state.comboDraft[mod.id]));
+      button.addEventListener("click", () => {
+        state.comboDraft[mod.id] = !state.comboDraft[mod.id];
+        renderQuickComboBuilder();
+      });
+      return button;
+    }));
+  }
+  function renderQuickComboNamed() {
+    const select = el("qk-combo-named");
+    if (!select) return;
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = t("quick.comboNamedBlank");
+    const options = Object.entries(NAMED_KEYS).map(([id, spec]) => {
+      const option = document.createElement("option");
+      option.value = id;
+      const name = NAMED_KEY_TITLES[id] || spec.label;
+      option.textContent = name === spec.label ? name : `${spec.label} ${name}`;
+      return option;
+    });
+    select.replaceChildren(blank, ...options);
+    const draftKey = state.comboDraft.key;
+    select.value = NAMED_KEYS[draftKey] ? draftKey : "";
+  }
+  function renderQuickComboBuilder({ rebuild = false } = {}) {
+    const form = el("qk-add-combo");
+    if (!form) return;
+    renderQuickComboMods();
+    if (rebuild) renderQuickComboNamed();
+    const named = el("qk-combo-named");
+    const charInput = el("qk-combo-key");
+    const key = state.comboDraft.key;
+    const isNamed = Boolean(NAMED_KEYS[key]);
+    named.value = isNamed ? key : "";
+    if (charInput.value !== (isNamed ? "" : key)) charInput.value = isNamed ? "" : key;
+    const preview = el("qk-combo-preview");
+    const hint = el("qk-combo-hint");
+    if (!key) {
+      preview.textContent = t("quick.comboPreviewEmpty");
+      hint.hidden = true;
+      return;
+    }
+    const sequence = comboSequence(state.comboDraft);
+    preview.textContent = `${comboLabel(state.comboDraft)}  \u2192  ${describeSequence(sequence)}`;
+    if (state.comboDraft.meta) {
+      hint.textContent = t("quick.comboMetaHint");
+      hint.hidden = false;
+    } else if (/^\x1b\[\d+(;\d+)?u$/.test(sequence)) {
+      hint.textContent = t("quick.comboExtendedHint");
+      hint.hidden = false;
+    } else {
+      hint.hidden = true;
+    }
+  }
+  function setComboDraftKey(key) {
+    state.comboDraft.key = normalizeComboKey(key) || "";
+    renderQuickComboBuilder();
+  }
+  function recordComboKeydown(event) {
+    if (event.key === "Shift" || event.key === "Control" || event.key === "Alt" || event.key === "Meta") return;
+    const named = RECORDED_KEY_NAMES[event.key];
+    const printable = [...event.key || ""].length === 1 ? event.key : null;
+    const hasModifier = event.ctrlKey || event.altKey || event.metaKey;
+    if (!named && !(printable && hasModifier)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    state.comboDraft.ctrl = event.ctrlKey;
+    state.comboDraft.alt = event.altKey;
+    state.comboDraft.meta = event.metaKey;
+    state.comboDraft.shift = event.shiftKey && (Boolean(named) || /^[A-Za-z]$/.test(printable || ""));
+    state.comboDraft.key = named || (state.comboDraft.shift ? printable.toLowerCase() : printable);
+    renderQuickComboBuilder();
+  }
+  function addQuickComboKey(event) {
+    event.preventDefault();
+    if (quickKeysReadonly()) return;
+    if (!state.comboDraft.key) {
+      showToast(t("toast.pickComboKey"));
+      return;
+    }
+    const combo = { type: "combo", key: state.comboDraft.key };
+    for (const mod of MODIFIERS) {
+      if (state.comboDraft[mod.id]) combo[mod.id] = true;
+    }
+    state.quickKeys.push(combo);
+    saveQuickKeys();
+    renderQuickKeys();
+    renderQuickCurrent();
+    state.comboDraft = { key: "", ctrl: false, alt: false, shift: false, meta: false };
+    renderQuickComboBuilder();
+  }
   function renderQuickCurrent() {
     const list = el("qk-current");
     if (!list) return;
@@ -13000,7 +13322,9 @@ ${s3.join("\n")}
       label.textContent = quickKeyLabel(key);
       const meta = document.createElement("span");
       meta.className = "qk-row-meta";
-      meta.textContent = key.type === "text" ? key.text + (key.enter ? " \u23CE" : "") : t("quick.keyTypeMeta");
+      if (key.type === "text") meta.textContent = key.text + (key.enter ? " \u23CE" : "");
+      else if (key.type === "combo") meta.textContent = describeSequence(comboSequence(key));
+      else meta.textContent = t("quick.keyTypeMeta");
       if (readonly) {
         row.append(label, meta);
         return row;
@@ -13070,6 +13394,7 @@ ${s3.join("\n")}
     el("qk-readonly-note").hidden = !readonly;
     if (!readonly) refreshQuickKeysFromServer();
     renderQuickPresets();
+    renderQuickComboBuilder({ rebuild: true });
     renderQuickCurrent();
     el("quickedit-modal").hidden = false;
   }
@@ -13378,6 +13703,10 @@ ${s3.join("\n")}
     el("quickedit-close").addEventListener("click", closeQuickEdit);
     el("qk-reset").addEventListener("click", resetQuickKeys);
     el("qk-add-text").addEventListener("submit", addQuickTextKey);
+    el("qk-add-combo").addEventListener("submit", addQuickComboKey);
+    el("qk-combo-key").addEventListener("input", (event) => setComboDraftKey(event.target.value.slice(-1)));
+    el("qk-combo-key").addEventListener("keydown", recordComboKeydown);
+    el("qk-combo-named").addEventListener("change", (event) => setComboDraftKey(event.target.value));
     el("quickedit-modal").addEventListener("click", (event) => {
       if (event.target === el("quickedit-modal")) closeQuickEdit();
     });

@@ -102,6 +102,21 @@
             <div id="qk-presets" class="qk-presets"></div>
           </section>
           <section class="qk-section qk-editable">
+            <h3 class="qk-section-title" data-i18n="quick.comboSectionTitle">自定义组合键（⌃ ⌥ ⇧ ⌘ + 按键）</h3>
+            <form id="qk-add-combo" class="qk-add-combo">
+              <div id="qk-combo-mods" class="qk-mods"></div>
+              <div class="qk-combo-row">
+                <input id="qk-combo-key" class="qk-input qk-combo-key" type="text" data-i18n-ph="quick.comboKeyPlaceholder" placeholder="按键（输入 c，或直接按下组合键）" maxlength="1" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+                <select id="qk-combo-named" class="qk-input qk-combo-named"></select>
+              </div>
+              <div class="qk-combo-foot">
+                <span id="qk-combo-preview" class="qk-combo-preview"></span>
+                <button class="btn primary btn-sm" data-i18n="common.add" type="submit">添加</button>
+              </div>
+              <p id="qk-combo-hint" class="qk-combo-hint" hidden></p>
+            </form>
+          </section>
+          <section class="qk-section qk-editable">
             <h3 class="qk-section-title" data-i18n="quick.customSectionTitle">自定义文本（如 /usage、!、任意命令）</h3>
             <form id="qk-add-text" class="qk-add-text">
               <input id="qk-text-label" class="qk-input" type="text" data-i18n-ph="quick.labelPlaceholder" placeholder="按钮名" maxlength="16" autocomplete="off">

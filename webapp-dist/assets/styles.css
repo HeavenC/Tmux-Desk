@@ -706,6 +706,24 @@ body {
   background: var(--chip); color: var(--text); font-size: 14px;
 }
 .qk-add-text { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.qk-add-combo { display: flex; flex-direction: column; gap: 8px; }
+.qk-mods { display: flex; flex-wrap: wrap; gap: 8px; }
+.qk-mod {
+  min-height: 36px; padding: 0 12px;
+  border: 1px solid var(--chip-border); border-radius: 10px;
+  background: var(--chip); color: var(--text); font-size: 13px;
+}
+.qk-mod.active { border-color: var(--accent, #1769e0); background: var(--accent, #1769e0); color: #fff; }
+.qk-combo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.qk-combo-key { flex: 0 1 160px; text-align: center; }
+.qk-combo-named { flex: 1 1 140px; }
+.qk-combo-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.qk-combo-preview {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--text-muted, #8a929e); font-size: 13px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.qk-combo-hint { margin: 0; color: var(--text-muted, #8a929e); font-size: 12px; line-height: 1.4; }
 .qk-input {
   flex: 1 1 120px; min-width: 0; min-height: 40px;
   padding: 0 12px; border: 1px solid var(--chip-border); border-radius: 10px;

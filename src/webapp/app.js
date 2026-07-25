@@ -2,6 +2,15 @@ const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
 const { ClipboardAddon } = require('@xterm/addon-clipboard');
 const { liveCountForView, mobileSessionsForView } = require('./mobile-session-model');
+const {
+  NAMED_KEYS,
+  MODIFIERS,
+  comboSequence,
+  comboLabel,
+  describeSequence,
+  normalizeComboKey,
+  normalizeQuickKeyEntry,
+} = require('../shared/quick-key');
 const { t, applyStaticI18n, setLocale, getLocale, detectLocale } = require('./i18n');
 
 const LIST_REFRESH_MS = 15000;
@@ -97,6 +106,8 @@ const state = {
   relockTimer: null,
   composing: false,
   quickKeys: [],
+  // In-progress custom combo in the editor sheet (modifiers + one key).
+  comboDraft: { key: '', ctrl: false, alt: false, shift: false, meta: false },
   // Non-null when the open session lives on a relayed remote host: its quick-key
   // bar overrides the local one for display/sending, and is read-only here.
   remoteQuickKeys: null,
@@ -229,6 +240,7 @@ function relocalize() {
   renderQuickKeys();
   if (!el('quickedit-modal').hidden) {
     renderQuickPresets();
+    renderQuickComboBuilder({ rebuild: true });
     renderQuickCurrent();
   }
   syncFullscreenButton();
@@ -1053,12 +1065,7 @@ function backToList() {
 // ---- Quick bar: a customizable, draggable floating key panel --------------
 
 function normalizeQuickKey(item) {
-  if (!item || typeof item !== 'object') return null;
-  if (item.type === 'preset' && PRESET_KEYS[item.id]) return { type: 'preset', id: item.id };
-  if (item.type === 'text' && typeof item.label === 'string' && typeof item.text === 'string') {
-    return { type: 'text', label: item.label.slice(0, 16), text: item.text.slice(0, 200), enter: item.enter === true };
-  }
-  return null;
+  return normalizeQuickKeyEntry(item, { isPreset: (id) => Boolean(PRESET_KEYS[id]) });
 }
 
 function loadQuickKeys() {
@@ -1126,7 +1133,9 @@ function applyServerQuickKeys(serverKeys) {
 }
 
 function quickKeyLabel(key) {
-  return key.type === 'preset' ? (PRESET_KEYS[key.id]?.label ?? key.id) : key.label;
+  if (key.type === 'preset') return PRESET_KEYS[key.id]?.label ?? key.id;
+  if (key.type === 'combo') return comboLabel(key);
+  return key.label;
 }
 
 // The bar actually shown/typed: a relayed remote session's bar wins over the
@@ -1170,6 +1179,7 @@ function renderQuickKeys() {
     button.textContent = quickKeyLabel(key);
     if (key.type === 'preset' && PRESET_KEYS[key.id]?.ctrl) button.classList.add('qk-ctrl');
     if (key.type === 'text') button.title = key.text + (key.enter ? ' ⏎' : '');
+    if (key.type === 'combo') button.title = describeSequence(comboSequence(key));
     bindTap(button, () => runQuickKey(index));
     return button;
   }));
@@ -1184,6 +1194,9 @@ function runQuickKey(index) {
     if (!preset) return;
     if (preset.ctrl) { setCtrlActive(!state.ctrlActive); return; }
     sendWsInput(preset.seq);
+  } else if (key.type === 'combo') {
+    const sequence = comboSequence(key);
+    if (sequence) sendWsInput(sequence);
   } else {
     sendWsInput(key.text);
     if (key.enter) sendWsInput('\r');
@@ -1212,6 +1225,143 @@ function renderQuickPresets() {
   }));
 }
 
+// ---- Custom combo builder (⌃⌥⇧⌘ + one key) ----
+
+// Physical-keyboard `event.key` values that map onto a named combo key. Plain
+// characters aren't listed: they're taken from the event's key verbatim.
+// Names shown in the builder. Kept as plain key names (not translated): they're
+// what's printed on the keyboard in both locales.
+const MOD_NAMES = { ctrl: 'Ctrl', alt: 'Option', shift: 'Shift', meta: 'Cmd' };
+const NAMED_KEY_TITLES = {
+  enter: 'Enter', tab: 'Tab', escape: 'Esc', backspace: 'Backspace', space: 'Space',
+  up: 'Up', down: 'Down', left: 'Left', right: 'Right',
+  home: 'Home', end: 'End', insert: 'Insert', delete: 'Delete',
+  pageup: 'PageUp', pagedown: 'PageDown',
+};
+
+const RECORDED_KEY_NAMES = {
+  Escape: 'escape', Tab: 'tab', Enter: 'enter', Backspace: 'backspace', ' ': 'space',
+  ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+  Home: 'home', End: 'end', Insert: 'insert', Delete: 'delete',
+  PageUp: 'pageup', PageDown: 'pagedown',
+};
+
+function renderQuickComboMods() {
+  const container = el('qk-combo-mods');
+  if (!container) return;
+  container.replaceChildren(...MODIFIERS.map((mod) => {
+    const button = document.createElement('button');
+    button.className = 'qk-mod';
+    button.type = 'button';
+    button.dataset.mod = mod.id;
+    button.textContent = `${mod.symbol} ${MOD_NAMES[mod.id]}`;
+    button.setAttribute('aria-pressed', String(Boolean(state.comboDraft[mod.id])));
+    button.classList.toggle('active', Boolean(state.comboDraft[mod.id]));
+    button.addEventListener('click', () => {
+      state.comboDraft[mod.id] = !state.comboDraft[mod.id];
+      renderQuickComboBuilder();
+    });
+    return button;
+  }));
+}
+
+function renderQuickComboNamed() {
+  const select = el('qk-combo-named');
+  if (!select) return;
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = t('quick.comboNamedBlank');
+  const options = Object.entries(NAMED_KEYS).map(([id, spec]) => {
+    const option = document.createElement('option');
+    option.value = id;
+    const name = NAMED_KEY_TITLES[id] || spec.label;
+    option.textContent = name === spec.label ? name : `${spec.label} ${name}`;
+    return option;
+  });
+  select.replaceChildren(blank, ...options);
+  const draftKey = state.comboDraft.key;
+  select.value = NAMED_KEYS[draftKey] ? draftKey : '';
+}
+
+// Repaint the whole builder from `state.comboDraft` (chips, key fields, preview).
+function renderQuickComboBuilder({ rebuild = false } = {}) {
+  const form = el('qk-add-combo');
+  if (!form) return;
+  renderQuickComboMods();
+  if (rebuild) renderQuickComboNamed();
+  const named = el('qk-combo-named');
+  const charInput = el('qk-combo-key');
+  const key = state.comboDraft.key;
+  const isNamed = Boolean(NAMED_KEYS[key]);
+  named.value = isNamed ? key : '';
+  if (charInput.value !== (isNamed ? '' : key)) charInput.value = isNamed ? '' : key;
+
+  const preview = el('qk-combo-preview');
+  const hint = el('qk-combo-hint');
+  if (!key) {
+    preview.textContent = t('quick.comboPreviewEmpty');
+    hint.hidden = true;
+    return;
+  }
+  const sequence = comboSequence(state.comboDraft);
+  preview.textContent = `${comboLabel(state.comboDraft)}  →  ${describeSequence(sequence)}`;
+  // Two caveats worth surfacing, verified against tmux 3.7:
+  //  - ⌘/Super doesn't exist in tmux's key model at all; it re-encodes it as ⌥.
+  //  - Everything else legacy can't express (Ctrl+Shift…) goes out as CSI u,
+  //    which tmux downgrades for apps that never asked for extended keys.
+  if (state.comboDraft.meta) {
+    hint.textContent = t('quick.comboMetaHint');
+    hint.hidden = false;
+  } else if (/^\x1b\[\d+(;\d+)?u$/.test(sequence)) {
+    hint.textContent = t('quick.comboExtendedHint');
+    hint.hidden = false;
+  } else {
+    hint.hidden = true;
+  }
+}
+
+function setComboDraftKey(key) {
+  state.comboDraft.key = normalizeComboKey(key) || '';
+  renderQuickComboBuilder();
+}
+
+// Record a real key press when a physical keyboard is attached. Plain typing is
+// left to the input event so soft keyboards still work; we only intercept keys
+// that carry a modifier or are a named key we can encode.
+function recordComboKeydown(event) {
+  if (event.key === 'Shift' || event.key === 'Control' || event.key === 'Alt' || event.key === 'Meta') return;
+  const named = RECORDED_KEY_NAMES[event.key];
+  const printable = [...(event.key || '')].length === 1 ? event.key : null;
+  const hasModifier = event.ctrlKey || event.altKey || event.metaKey;
+  if (!named && !(printable && hasModifier)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  state.comboDraft.ctrl = event.ctrlKey;
+  state.comboDraft.alt = event.altKey;
+  state.comboDraft.meta = event.metaKey;
+  // A shifted character already arrives shifted (⇧2 → "@"), so only keep Shift
+  // for named keys and letters, where it changes the encoding rather than the char.
+  state.comboDraft.shift = event.shiftKey && (Boolean(named) || /^[A-Za-z]$/.test(printable || ''));
+  state.comboDraft.key = named || (state.comboDraft.shift ? printable.toLowerCase() : printable);
+  renderQuickComboBuilder();
+}
+
+function addQuickComboKey(event) {
+  event.preventDefault();
+  if (quickKeysReadonly()) return;
+  if (!state.comboDraft.key) { showToast(t('toast.pickComboKey')); return; }
+  const combo = { type: 'combo', key: state.comboDraft.key };
+  for (const mod of MODIFIERS) {
+    if (state.comboDraft[mod.id]) combo[mod.id] = true;
+  }
+  state.quickKeys.push(combo);
+  saveQuickKeys();
+  renderQuickKeys();
+  renderQuickCurrent();
+  state.comboDraft = { key: '', ctrl: false, alt: false, shift: false, meta: false };
+  renderQuickComboBuilder();
+}
+
 function renderQuickCurrent() {
   const list = el('qk-current');
   if (!list) return;
@@ -1233,7 +1383,9 @@ function renderQuickCurrent() {
     label.textContent = quickKeyLabel(key);
     const meta = document.createElement('span');
     meta.className = 'qk-row-meta';
-    meta.textContent = key.type === 'text' ? (key.text + (key.enter ? ' ⏎' : '')) : t('quick.keyTypeMeta');
+    if (key.type === 'text') meta.textContent = key.text + (key.enter ? ' ⏎' : '');
+    else if (key.type === 'combo') meta.textContent = describeSequence(comboSequence(key));
+    else meta.textContent = t('quick.keyTypeMeta');
     if (readonly) {
       // Relayed remote bar: display only, no drag handle / delete.
       row.append(label, meta);
@@ -1311,6 +1463,7 @@ function openQuickEdit() {
   el('qk-readonly-note').hidden = !readonly;
   if (!readonly) refreshQuickKeysFromServer();
   renderQuickPresets();
+  renderQuickComboBuilder({ rebuild: true });
   renderQuickCurrent();
   el('quickedit-modal').hidden = false;
 }
@@ -1655,6 +1808,10 @@ function setupStaticHandlers() {
   el('quickedit-close').addEventListener('click', closeQuickEdit);
   el('qk-reset').addEventListener('click', resetQuickKeys);
   el('qk-add-text').addEventListener('submit', addQuickTextKey);
+  el('qk-add-combo').addEventListener('submit', addQuickComboKey);
+  el('qk-combo-key').addEventListener('input', (event) => setComboDraftKey(event.target.value.slice(-1)));
+  el('qk-combo-key').addEventListener('keydown', recordComboKeydown);
+  el('qk-combo-named').addEventListener('change', (event) => setComboDraftKey(event.target.value));
   el('quickedit-modal').addEventListener('click', (event) => {
     if (event.target === el('quickedit-modal')) closeQuickEdit();
   });

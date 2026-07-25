@@ -4,6 +4,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const lockfile = require('proper-lockfile');
 const { DEFAULT_TMUX_SETTINGS, normalizeTmuxSettings } = require('../shared/tmux-settings');
+const { normalizeQuickKeyEntry } = require('../shared/quick-key');
 const {
   TAG_COLORS,
   normalizeSessionKey,
@@ -142,20 +143,14 @@ function normalizePreferences(value = {}) {
 }
 
 // The mobile web toolbar's user-defined keys, stored on this machine so every
-// phone that connects shares them. Validated structurally; the web client drops
-// any preset id it no longer recognizes.
+// phone that connects shares them. Validated structurally (shared with the web
+// client); the web client drops any preset id it no longer recognizes.
 function normalizeWebQuickKeys(value) {
   if (!Array.isArray(value)) return [];
   const out = [];
   for (const item of value) {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
-    if (item.type === 'preset' && typeof item.id === 'string' && item.id && item.id.length <= 40) {
-      out.push({ type: 'preset', id: item.id });
-    } else if (item.type === 'text' && typeof item.label === 'string' && typeof item.text === 'string') {
-      const label = item.label.slice(0, 16);
-      const text = item.text.slice(0, 200);
-      if (label && text) out.push({ type: 'text', label, text, enter: item.enter === true });
-    }
+    const entry = normalizeQuickKeyEntry(item);
+    if (entry) out.push(entry);
     if (out.length >= 40) break;
   }
   return out;
