@@ -11,6 +11,7 @@ const {
   normalizeComboKey,
   normalizeQuickKeyEntry,
 } = require('../shared/quick-key');
+const { createSpring, createVelocityTracker, project, rubberband } = require('../shared/spring');
 const { t, applyStaticI18n, setLocale, getLocale, detectLocale } = require('./i18n');
 
 const LIST_REFRESH_MS = 15000;
@@ -1547,14 +1548,38 @@ function loadBallPosition() {
   applyBallPosition(pos && Number.isFinite(pos.x) && Number.isFinite(pos.y) ? pos : defaultPos);
 }
 
-function applyBallPosition({ x, y }) {
+function ballBounds() {
   const ball = el('quickball');
   const size = ball.offsetWidth || 56;
   const margin = 6;
-  const clampedX = Math.max(margin, Math.min(x, window.innerWidth - size - margin));
-  const clampedY = Math.max(margin, Math.min(y, window.innerHeight - size - margin));
-  ball.style.left = `${clampedX}px`;
-  ball.style.top = `${clampedY}px`;
+  return {
+    size,
+    minX: margin,
+    maxX: window.innerWidth - size - margin,
+    minY: margin,
+    maxY: window.innerHeight - size - margin,
+  };
+}
+
+function applyBallPosition({ x, y }) {
+  const ball = el('quickball');
+  const b = ballBounds();
+  ball.style.left = `${Math.max(b.minX, Math.min(x, b.maxX))}px`;
+  ball.style.top = `${Math.max(b.minY, Math.min(y, b.maxY))}px`;
+}
+
+/* While the finger is down the ball tracks 1:1, but past an edge it resists
+   progressively instead of stopping dead — a hard clamp reads as frozen. */
+function applyBallDragPosition({ x, y }) {
+  const ball = el('quickball');
+  const b = ballBounds();
+  const soften = (value, min, max, span) => {
+    if (value < min) return min + rubberband(value - min, span);
+    if (value > max) return max + rubberband(value - max, span);
+    return value;
+  };
+  ball.style.left = `${soften(x, b.minX, b.maxX, window.innerWidth)}px`;
+  ball.style.top = `${soften(y, b.minY, b.maxY, window.innerHeight)}px`;
 }
 
 function saveBallPosition() {
@@ -1574,14 +1599,29 @@ function setupQuickball() {
   let startY = 0;
   let originLeft = 0;
   let originTop = 0;
+  const trackX = createVelocityTracker();
+  const trackY = createVelocityTracker();
+  // X and Y get independent springs: one spring on the 2D distance desyncs as
+  // soon as the two axes carry different velocities.
+  const write = () => { ball.style.left = `${springX.value}px`; ball.style.top = `${springY.value}px`; };
+  const springX = createSpring({ damping: 0.8, response: 0.4, onFrame: write });
+  const springY = createSpring({ damping: 0.8, response: 0.4, onFrame: write, onRest: saveBallPosition });
 
   ball.addEventListener('pointerdown', (event) => {
     dragging = true;
     moved = false;
+    // Grab the ball wherever it is *right now*, mid-flight included, so an
+    // in-progress snap can be caught and redirected instead of finishing first.
+    springX.stop();
+    springY.stop();
     startX = event.clientX;
     startY = event.clientY;
     originLeft = parseFloat(ball.style.left) || 0;
     originTop = parseFloat(ball.style.top) || 0;
+    trackX.reset();
+    trackY.reset();
+    trackX.add(event.clientX, event.timeStamp);
+    trackY.add(event.clientY, event.timeStamp);
     ball.setPointerCapture(event.pointerId);
     event.preventDefault();
   });
@@ -1590,26 +1630,36 @@ function setupQuickball() {
     if (!dragging) return;
     const dx = event.clientX - startX;
     const dy = event.clientY - startY;
+    trackX.add(event.clientX, event.timeStamp);
+    trackY.add(event.clientY, event.timeStamp);
     if (!moved && Math.hypot(dx, dy) < 6) return;
     moved = true;
     if (state.panelOpen) closeQuickPanel();
-    applyBallPosition({ x: originLeft + dx, y: originTop + dy });
+    applyBallDragPosition({ x: originLeft + dx, y: originTop + dy });
   });
 
   const endDrag = (event) => {
     if (!dragging) return;
     dragging = false;
     try { ball.releasePointerCapture(event.pointerId); } catch { /* already released */ }
-    if (moved) {
-      // Snap to the nearer horizontal edge, iPhone-style, and remember it.
-      const size = ball.offsetWidth || 56;
-      const left = parseFloat(ball.style.left) || 0;
-      const snapLeft = left + size / 2 < window.innerWidth / 2 ? 6 : window.innerWidth - size - 6;
-      applyBallPosition({ x: snapLeft, y: parseFloat(ball.style.top) || 0 });
-      saveBallPosition();
-    } else {
+    if (!moved) {
       toggleQuickPanel();
+      return;
     }
+    const b = ballBounds();
+    const left = parseFloat(ball.style.left) || 0;
+    const top = parseFloat(ball.style.top) || 0;
+    const vx = trackX.velocity();
+    const vy = trackY.velocity();
+    // Snap to the edge nearest where the flick was *going*, not where the finger
+    // let go — that's what makes a throw feel like a throw.
+    const projectedCenter = left + b.size / 2 + project(vx);
+    const snapLeft = projectedCenter < window.innerWidth / 2 ? b.minX : b.maxX;
+    const projectedTop = Math.max(b.minY, Math.min(top + project(vy), b.maxY));
+    springX.set(left, vx);
+    springY.set(top, vy);
+    springX.target(snapLeft, vx);
+    springY.target(projectedTop, vy);
   };
   ball.addEventListener('pointerup', endDrag);
   ball.addEventListener('pointercancel', endDrag);

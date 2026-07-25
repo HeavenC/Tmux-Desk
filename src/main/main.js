@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, powerMonitor, powerSaveBlocker, session, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, powerMonitor, powerSaveBlocker, session, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { execFile } = require('node:child_process');
@@ -41,6 +41,10 @@ function sendToRenderer(channel, payload) {
 async function createMainWindow() {
   const preferences = await preferencesStore.load();
   const bounds = preferences.windowBounds || {};
+  const isMac = process.platform === 'darwin';
+  // The native material's light/dark comes from nativeTheme, so tie it to the
+  // app's own theme preference (see also the 'theme' branch of preferences:save).
+  nativeTheme.themeSource = preferences.theme || 'system';
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -51,7 +55,13 @@ async function createMainWindow() {
     title: 'Tmux Desk',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 15, y: 14 },
-    backgroundColor: '#f6f7f9',
+    // macOS: paint the window with a vibrant sidebar material and let the
+    // rail/session-sidebar be translucent over it (styles.css). The window
+    // background must be fully transparent for the material to show through;
+    // every other region (workspace, terminal) paints opaque over it.
+    ...(isMac
+      ? { vibrancy: 'sidebar', visualEffectState: 'followWindow', backgroundColor: '#00000000' }
+      : { backgroundColor: '#f6f7f9' }),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload.js'),
       contextIsolation: true,

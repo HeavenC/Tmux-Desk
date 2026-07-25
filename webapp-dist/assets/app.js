@@ -11854,6 +11854,120 @@ ${s3.join("\n")}
     }
   });
 
+  // src/shared/spring.js
+  var require_spring = __commonJS({
+    "src/shared/spring.js"(exports, module) {
+      function project2(initialVelocity, decelerationRate = 0.998) {
+        if (!Number.isFinite(initialVelocity) || initialVelocity === 0) return 0;
+        return initialVelocity / 1e3 * decelerationRate / (1 - decelerationRate);
+      }
+      function rubberband2(overshoot, dimension, constant = 0.55) {
+        if (!overshoot) return 0;
+        const limit = Math.max(dimension, 1);
+        return overshoot * limit * constant / (limit + constant * Math.abs(overshoot));
+      }
+      function createSpring2({
+        from = 0,
+        velocity = 0,
+        damping = 1,
+        response = 0.35,
+        onFrame,
+        onRest,
+        restDistance = 0.35,
+        restVelocity = 12,
+        now = () => performance.now(),
+        raf = (fn) => requestAnimationFrame(fn),
+        cancelRaf = (handle) => cancelAnimationFrame(handle)
+      } = {}) {
+        let value = from;
+        let speed = velocity;
+        let goal = from;
+        let handle = null;
+        let last = 0;
+        let running = false;
+        function step(clampedDt) {
+          const omega = 2 * Math.PI / Math.max(response, 1e-4);
+          const acceleration = -(omega * omega) * (value - goal) - 2 * damping * omega * speed;
+          speed += acceleration * clampedDt;
+          value += speed * clampedDt;
+        }
+        function frame(timestamp) {
+          if (!running) return;
+          const dt = Math.min((timestamp - last) / 1e3, 1 / 30);
+          last = timestamp;
+          const steps = Math.max(1, Math.ceil(dt / (1 / 120)));
+          for (let i = 0; i < steps; i += 1) step(dt / steps);
+          if (Math.abs(value - goal) < restDistance && Math.abs(speed) < restVelocity) {
+            value = goal;
+            speed = 0;
+            running = false;
+            onFrame?.(value);
+            onRest?.(value);
+            return;
+          }
+          onFrame?.(value);
+          handle = raf(frame);
+        }
+        return {
+          get value() {
+            return value;
+          },
+          get velocity() {
+            return speed;
+          },
+          get running() {
+            return running;
+          },
+          /** Jump without animating (e.g. while the finger is down and tracking 1:1). */
+          set(next, nextVelocity = 0) {
+            this.stop();
+            value = next;
+            goal = next;
+            speed = nextVelocity;
+          },
+          /** Animate to `to`, optionally handing off the gesture's release velocity. */
+          target(to, nextVelocity) {
+            goal = to;
+            if (nextVelocity !== void 0) speed = nextVelocity;
+            if (running) return;
+            running = true;
+            last = now();
+            handle = raf(frame);
+          },
+          stop() {
+            running = false;
+            if (handle !== null) {
+              cancelRaf(handle);
+              handle = null;
+            }
+          }
+        };
+      }
+      function createVelocityTracker2(windowMs = 100) {
+        let samples = [];
+        return {
+          reset() {
+            samples = [];
+          },
+          add(position, timestamp) {
+            samples.push({ position, timestamp });
+            const cutoff = timestamp - windowMs;
+            while (samples.length > 2 && samples[0].timestamp < cutoff) samples.shift();
+          },
+          velocity() {
+            if (samples.length < 2) return 0;
+            const first = samples[0];
+            const last = samples[samples.length - 1];
+            const dt = (last.timestamp - first.timestamp) / 1e3;
+            if (dt <= 0) return 0;
+            return (last.position - first.position) / dt;
+          }
+        };
+      }
+      module.exports = { createSpring: createSpring2, createVelocityTracker: createVelocityTracker2, project: project2, rubberband: rubberband2 };
+    }
+  });
+
   // src/webapp/i18n.js
   var require_i18n = __commonJS({
     "src/webapp/i18n.js"(exports, module) {
@@ -12075,6 +12189,7 @@ ${s3.join("\n")}
     normalizeComboKey,
     normalizeQuickKeyEntry
   } = require_quick_key();
+  var { createSpring, createVelocityTracker, project, rubberband } = require_spring();
   var { t, applyStaticI18n, setLocale, getLocale, detectLocale } = require_i18n();
   var LIST_REFRESH_MS = 15e3;
   var PING_INTERVAL_MS = 25e3;
@@ -13472,14 +13587,34 @@ ${s3.join("\n")}
     const defaultPos = { x: window.innerWidth - size - 12, y: Math.round(window.innerHeight * 0.62) };
     applyBallPosition(pos && Number.isFinite(pos.x) && Number.isFinite(pos.y) ? pos : defaultPos);
   }
-  function applyBallPosition({ x, y }) {
+  function ballBounds() {
     const ball = el("quickball");
     const size = ball.offsetWidth || 56;
     const margin = 6;
-    const clampedX = Math.max(margin, Math.min(x, window.innerWidth - size - margin));
-    const clampedY = Math.max(margin, Math.min(y, window.innerHeight - size - margin));
-    ball.style.left = `${clampedX}px`;
-    ball.style.top = `${clampedY}px`;
+    return {
+      size,
+      minX: margin,
+      maxX: window.innerWidth - size - margin,
+      minY: margin,
+      maxY: window.innerHeight - size - margin
+    };
+  }
+  function applyBallPosition({ x, y }) {
+    const ball = el("quickball");
+    const b = ballBounds();
+    ball.style.left = `${Math.max(b.minX, Math.min(x, b.maxX))}px`;
+    ball.style.top = `${Math.max(b.minY, Math.min(y, b.maxY))}px`;
+  }
+  function applyBallDragPosition({ x, y }) {
+    const ball = el("quickball");
+    const b = ballBounds();
+    const soften = (value, min, max, span) => {
+      if (value < min) return min + rubberband(value - min, span);
+      if (value > max) return max + rubberband(value - max, span);
+      return value;
+    };
+    ball.style.left = `${soften(x, b.minX, b.maxX, window.innerWidth)}px`;
+    ball.style.top = `${soften(y, b.minY, b.maxY, window.innerHeight)}px`;
   }
   function saveBallPosition() {
     const ball = el("quickball");
@@ -13499,13 +13634,27 @@ ${s3.join("\n")}
     let startY = 0;
     let originLeft = 0;
     let originTop = 0;
+    const trackX = createVelocityTracker();
+    const trackY = createVelocityTracker();
+    const write = () => {
+      ball.style.left = `${springX.value}px`;
+      ball.style.top = `${springY.value}px`;
+    };
+    const springX = createSpring({ damping: 0.8, response: 0.4, onFrame: write });
+    const springY = createSpring({ damping: 0.8, response: 0.4, onFrame: write, onRest: saveBallPosition });
     ball.addEventListener("pointerdown", (event) => {
       dragging = true;
       moved = false;
+      springX.stop();
+      springY.stop();
       startX = event.clientX;
       startY = event.clientY;
       originLeft = parseFloat(ball.style.left) || 0;
       originTop = parseFloat(ball.style.top) || 0;
+      trackX.reset();
+      trackY.reset();
+      trackX.add(event.clientX, event.timeStamp);
+      trackY.add(event.clientY, event.timeStamp);
       ball.setPointerCapture(event.pointerId);
       event.preventDefault();
     });
@@ -13513,10 +13662,12 @@ ${s3.join("\n")}
       if (!dragging) return;
       const dx = event.clientX - startX;
       const dy = event.clientY - startY;
+      trackX.add(event.clientX, event.timeStamp);
+      trackY.add(event.clientY, event.timeStamp);
       if (!moved && Math.hypot(dx, dy) < 6) return;
       moved = true;
       if (state.panelOpen) closeQuickPanel();
-      applyBallPosition({ x: originLeft + dx, y: originTop + dy });
+      applyBallDragPosition({ x: originLeft + dx, y: originTop + dy });
     });
     const endDrag = (event) => {
       if (!dragging) return;
@@ -13525,15 +13676,22 @@ ${s3.join("\n")}
         ball.releasePointerCapture(event.pointerId);
       } catch {
       }
-      if (moved) {
-        const size = ball.offsetWidth || 56;
-        const left = parseFloat(ball.style.left) || 0;
-        const snapLeft = left + size / 2 < window.innerWidth / 2 ? 6 : window.innerWidth - size - 6;
-        applyBallPosition({ x: snapLeft, y: parseFloat(ball.style.top) || 0 });
-        saveBallPosition();
-      } else {
+      if (!moved) {
         toggleQuickPanel();
+        return;
       }
+      const b = ballBounds();
+      const left = parseFloat(ball.style.left) || 0;
+      const top = parseFloat(ball.style.top) || 0;
+      const vx = trackX.velocity();
+      const vy = trackY.velocity();
+      const projectedCenter = left + b.size / 2 + project(vx);
+      const snapLeft = projectedCenter < window.innerWidth / 2 ? b.minX : b.maxX;
+      const projectedTop = Math.max(b.minY, Math.min(top + project(vy), b.maxY));
+      springX.set(left, vx);
+      springY.set(top, vy);
+      springX.target(snapLeft, vx);
+      springY.target(projectedTop, vy);
     };
     ball.addEventListener("pointerup", endDrag);
     ball.addEventListener("pointercancel", endDrag);

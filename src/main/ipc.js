@@ -1,4 +1,5 @@
 const path = require('node:path');
+const { nativeTheme } = require('electron');
 const { normalizeTagId, normalizeTagName } = require('../shared/tag-model');
 const { validateTmuxSettings } = require('../shared/tmux-settings');
 const { parseConnectionInput } = require('../shared/remote-connection');
@@ -327,6 +328,11 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       const validated = validatePreferencesPatch(patch);
       const preferences = await preferencesStore.save(validated);
       if ('keepAwake' in validated) keepAwakeController?.setEnabled(preferences.keepAwake);
+      // The native window material (vibrancy) picks its light/dark appearance
+      // from nativeTheme, not from the renderer's data-theme — without this the
+      // translucent rail/sidebar stay dark while the app paints light.
+      // `nativeTheme` is undefined when this module is loaded outside Electron.
+      if ('theme' in validated && nativeTheme) nativeTheme.themeSource = preferences.theme;
       if ('tmuxSettings' in validated) {
         await tmuxService.applySettingsToAllSessions(preferences.tmuxSettings);
       }

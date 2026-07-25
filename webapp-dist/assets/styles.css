@@ -3,104 +3,86 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Semantic layer for the phone webapp, mapped onto the shared Apple tokens in
+   apple-tokens.css. Dark is the default here (no attribute yet when the page
+   first paints), light is the override below — matching how app.js applies it.
+   iOS grouped-list convention: the page is the darker/lower layer, cards and
+   sheets are the raised one, and chrome (nav/toolbars) is translucent so
+   content scrolls under it. */
 :root {
-  --bg: #111417;
-  --surface: #15191d;
-  --border: #23282e;
-  --card: #181c20;
-  --card-active: #1e2328;
-  --chip: #1c2126;
-  --chip-border: #2d333b;
-  --text: #d8dde7;
-  --text-strong: #eef1f5;
-  --text-dim: #9aa4b2;
-  --text-muted: #7d8794;
-  --text-faint: #667080;
-  --filter-text: #a9b2bf;
-  --btn-border: #384250;
-  --btn-bg: #23282e;
-  --btn-active: #2b323a;
-  --btn-primary-bg: #315d8c;
-  --btn-primary-border: #4675a8;
-  --dot-idle: #4b5560;
-  --dot-attached: #57d38c;
-  --accent-bg: #25364a;
-  --accent-border: #3f6fa3;
-  --accent-text: #cfe3fb;
-  --count-bg: #2a3037;
-  --count-text: #cbd3dc;
-  --count-active-bg: #3b5879;
-  --key-active-bg: #3f6fa3;
-  --key-active-border: #58b6ee;
+  --accent: var(--sys-blue);
+  --bg: #000000;
+  --surface: rgba(28, 28, 30, .74);   /* translucent chrome */
+  --border: var(--hairline);
+  --card: #1c1c1e;
+  --card-active: #2c2c2e;
+  --chip: var(--fill-tertiary);
+  --chip-border: transparent;
+  --text: #f2f2f7;
+  --text-strong: #ffffff;
+  --text-dim: rgba(235, 235, 245, .74);
+  --text-muted: rgba(235, 235, 245, .6);
+  --text-faint: rgba(235, 235, 245, .42);
+  --filter-text: rgba(235, 235, 245, .78);
+  --btn-border: transparent;
+  --btn-bg: var(--fill-secondary);
+  --btn-active: var(--fill-primary);
+  --btn-primary-bg: var(--sys-blue);
+  --btn-primary-border: transparent;
+  --dot-idle: rgba(235, 235, 245, .32);
+  --dot-attached: var(--sys-green);
+  --accent-bg: var(--sys-blue);
+  --accent-border: transparent;
+  --accent-text: #ffffff;
+  --count-bg: var(--fill-secondary);
+  --count-text: rgba(235, 235, 245, .74);
+  --count-active-bg: rgba(255, 255, 255, .24);
+  --key-active-bg: var(--sys-blue);
+  --key-active-border: transparent;
   --key-active-text: #ffffff;
-  --picker-bg: #1c2a39;
-  --picker-text: #cfe3fb;
-  --banner-bg: #4a1d24;
-  --banner-text: #ffd3d8;
-  --sheet-backdrop: rgba(0, 0, 0, 0.58);
-  --sheet-handle: #48515d;
-  --sheet-shadow: 0 -12px 40px rgba(0, 0, 0, 0.35);
-  --check-accent: #5c91cc;
-  --toast-bg: #23282e;
-  --toast-text: #eef1f5;
-  --toast-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  --term-bg: #111318;
-  --tag-blue: #69a9ee;
-  --tag-green: #63c58b;
-  --tag-gold: #d7ad58;
-  --tag-purple: #a68ae0;
-  --tag-rose: #e47e9e;
-  --tag-cyan: #58bbc9;
+  --picker-bg: var(--fill-tertiary);
+  --picker-text: var(--sys-blue);
+  --banner-bg: color-mix(in srgb, var(--sys-red) 24%, #1c1c1e);
+  --banner-text: color-mix(in srgb, var(--sys-red) 40%, white);
+  --sheet-backdrop: var(--scrim);
+  --sheet-handle: rgba(235, 235, 245, .3);
+  --sheet-shadow: var(--shadow-sheet);
+  --check-accent: var(--sys-blue);
+  --toast-bg: var(--material-thick);
+  --toast-text: #ffffff;
+  --toast-shadow: var(--shadow-popover);
+  --term-bg: #000000;
+  --tag-blue: var(--sys-blue);
+  --tag-green: var(--sys-green);
+  --tag-gold: var(--sys-orange);
+  --tag-purple: var(--sys-purple);
+  --tag-rose: var(--sys-pink);
+  --tag-cyan: var(--sys-teal);
 }
 
 :root[data-theme="light"] {
-  --bg: #fbfbfc;
-  --surface: #f2f4f7;
-  --border: #e2e6ec;
+  --bg: #f2f2f7;                      /* iOS grouped-list background */
+  --surface: rgba(249, 249, 251, .78);
   --card: #ffffff;
-  --card-active: #eef1f5;
-  --chip: #eef1f5;
-  --chip-border: #d5dce4;
-  --text: #333a45;
-  --text-strong: #20242c;
-  --text-dim: #5c6572;
-  --text-muted: #6f7785;
-  --text-faint: #8a93a1;
-  --filter-text: #545e6b;
-  --btn-border: #c6cfd9;
-  --btn-bg: #eef1f5;
-  --btn-active: #e1e6ed;
-  --btn-primary-bg: #1769e0;
-  --btn-primary-border: #1769e0;
-  --dot-idle: #aab3bf;
-  --dot-attached: #1f9d5b;
-  --accent-bg: #dfeafc;
-  --accent-border: #86b1ee;
-  --accent-text: #174a86;
-  --count-bg: #e1e6ed;
-  --count-text: #4a5361;
-  --count-active-bg: #c4d9f7;
-  --key-active-bg: #1769e0;
-  --key-active-border: #1769e0;
-  --key-active-text: #ffffff;
-  --picker-bg: #e3edfc;
-  --picker-text: #174a86;
-  --banner-bg: #fbe0e4;
-  --banner-text: #9c1f2c;
-  --sheet-backdrop: rgba(0, 0, 0, 0.35);
-  --sheet-handle: #c4ccd6;
-  --sheet-shadow: 0 -12px 40px rgba(20, 30, 45, 0.18);
-  --check-accent: #1769e0;
-  --toast-bg: #333a45;
-  --toast-text: #ffffff;
-  --toast-shadow: 0 4px 16px rgba(20, 30, 45, 0.25);
-  --term-bg: #fbfbfc;
-  --tag-blue: #2f74d8;
-  --tag-green: #1f9d5b;
-  --tag-gold: #a8791c;
-  --tag-purple: #7a55c9;
-  --tag-rose: #c94a78;
-  --tag-cyan: #12889b;
+  --card-active: #ebebf0;
+  --text: #1c1c1e;
+  --text-strong: #000000;
+  --text-dim: rgba(60, 60, 67, .72);
+  --text-muted: rgba(60, 60, 67, .6);
+  --text-faint: rgba(60, 60, 67, .44);
+  --filter-text: rgba(60, 60, 67, .8);
+  --dot-idle: rgba(60, 60, 67, .3);
+  --dot-attached: color-mix(in srgb, var(--sys-green) 88%, black);
+  --count-text: rgba(60, 60, 67, .72);
+  --count-active-bg: rgba(255, 255, 255, .28);
+  --picker-text: var(--sys-blue);
+  --banner-bg: color-mix(in srgb, var(--sys-red) 12%, white);
+  --banner-text: color-mix(in srgb, var(--sys-red) 78%, black);
+  --sheet-handle: rgba(60, 60, 67, .3);
+  --toast-bg: rgba(28, 28, 30, .82);
+  --term-bg: #ffffff;
+  --tag-green: color-mix(in srgb, var(--sys-green) 86%, black);
+  --tag-gold: color-mix(in srgb, var(--sys-orange) 82%, black);
 }
 
 html, body {
@@ -110,7 +92,8 @@ html, body {
   min-height: 100dvh;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-system);
+  letter-spacing: var(--track-body);
   overscroll-behavior: none;
 }
 
@@ -155,15 +138,21 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: max(env(safe-area-inset-top), 12px) 16px 12px;
+  /* Floating translucent chrome, iOS nav-bar style: the list scrolls beneath it
+     rather than being clipped by an opaque strip. */
   background: var(--surface);
+  backdrop-filter: var(--blur-regular);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  z-index: 2;
 }
 
 .topbar-title {
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: var(--leading-title);
+  letter-spacing: var(--track-title);
   color: var(--text-strong);
 }
 
@@ -208,8 +197,17 @@ body {
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
   background: var(--surface);
+  backdrop-filter: var(--blur-thin);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  z-index: 2;
+}
+
+/* `display: flex` above beats the UA `[hidden] { display: none }`, so a hidden
+   filter row (e.g. the host row with only one host) still reserved its full
+   58px and painted an empty band under the title. */
+.workspace-filters[hidden] {
+  display: none;
 }
 
 .workspace-filters::-webkit-scrollbar {
@@ -225,12 +223,19 @@ body {
   gap: 7px;
   flex: 0 0 auto;
   border: 1px solid var(--chip-border);
-  border-radius: 22px;
+  border-radius: var(--r-pill);
   background: var(--chip);
   color: var(--filter-text);
   font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
+  transition: background var(--response-fast) var(--ease-standard),
+              color var(--response-fast) var(--ease-standard),
+              transform var(--response-base) var(--ease-standard);
 }
+
+/* Feedback lands on touch-down, not on release. */
+.workspace-filter:active { transform: scale(.96); transition-duration: var(--response-instant); }
 
 .workspace-filter.active {
   color: var(--accent-text);
@@ -301,9 +306,11 @@ body {
   min-height: 44px;
   border: none;
   background: transparent;
-  color: var(--text-dim);
+  color: var(--accent);
   font-size: 22px;
-  border-radius: 8px;
+  border-radius: var(--r-md);
+  transition: background var(--response-fast) var(--ease-standard),
+              transform var(--response-base) var(--ease-standard);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -316,7 +323,8 @@ body {
 
 .icon-btn:active {
   background: var(--btn-bg);
-  color: var(--text-strong);
+  transform: scale(.92);
+  transition-duration: var(--response-instant);
 }
 
 .list-content {
@@ -337,18 +345,22 @@ body {
 
 .session-card {
   background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
   padding: 12px 14px;
   min-height: 64px;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 4px;
+  transition: background var(--response-fast) var(--ease-standard),
+              transform var(--response-base) var(--ease-standard);
 }
 
 .session-card:active {
   background: var(--card-active);
+  transform: scale(.985);
+  transition-duration: var(--response-instant);
 }
 
 .session-card-head {
@@ -360,6 +372,7 @@ body {
 .session-name {
   font-size: 17px;
   font-weight: 600;
+  letter-spacing: var(--track-title);
   color: var(--text-strong);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -494,14 +507,21 @@ body {
   min-height: 44px;
   padding: 0 18px;
   border: 1px solid var(--btn-border);
-  border-radius: 8px;
+  /* iOS buttons are pill-to-continuous; 12px on a 44px control reads right. */
+  border-radius: var(--r-lg);
   background: var(--btn-bg);
   color: var(--text-strong);
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 590;
+  letter-spacing: var(--track-body);
+  transition: background var(--response-fast) var(--ease-standard),
+              transform var(--response-base) var(--ease-standard);
 }
 
 .btn:active {
   background: var(--btn-active);
+  transform: scale(.97);
+  transition-duration: var(--response-instant);
 }
 
 .btn-sm {
@@ -629,17 +649,24 @@ body {
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  border: 1px solid var(--chip-border);
-  background: var(--surface);
+  border: 1px solid var(--hairline);
+  /* AssistiveTouch is glass over whatever it floats above, and it sits at rest
+     slightly faded so it never competes with the terminal. */
+  background: var(--material-regular);
+  backdrop-filter: var(--blur-regular);
   color: var(--text);
   font-size: 24px;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, .28);
-  opacity: .92;
+  box-shadow: var(--shadow-popover), var(--glass-edge);
+  opacity: .86;
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
+  /* No transition on left/top: the ball's position is spring-driven from JS and
+     a transition here would fight the spring and break 1:1 tracking. */
+  transition: opacity var(--response-fast) var(--ease-standard),
+              transform var(--response-fast) var(--ease-standard);
 }
-.quickball:active { opacity: 1; }
+.quickball:active { opacity: 1; transform: scale(1.06); }
 
 .quickpanel {
   position: fixed;
@@ -650,10 +677,16 @@ body {
   width: min(66vw, 264px);
   max-height: 70dvh;
   padding: 12px;
-  background: var(--surface);
-  border: 1px solid var(--chip-border);
-  border-radius: 16px;
-  box-shadow: 0 10px 34px rgba(0, 0, 0, .34);
+  background: var(--material-thick);
+  backdrop-filter: var(--blur-thick);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-popover), var(--glass-edge);
+  transform-origin: center right;
+  animation: qp-materialize var(--response-fast) var(--ease-decel);
+}
+@keyframes qp-materialize {
+  from { opacity: 0; transform: scale(.94); backdrop-filter: blur(0); }
 }
 .quickpanel[hidden] { display: none; }
 
@@ -669,10 +702,12 @@ body {
   min-height: 44px;
   padding: 0 12px;
   border: 1px solid var(--chip-border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--chip);
   color: var(--text);
   font-size: 15px;
+  transition: background var(--response-fast) var(--ease-standard),
+              transform var(--response-base) var(--ease-standard);
 }
 .qk-btn.qk-ctrl.active { background: var(--accent, #1769e0); color: #fff; border-color: transparent; }
 
@@ -762,7 +797,10 @@ body {
   justify-content: center;
   padding-top: max(24px, env(safe-area-inset-top));
   background: var(--sheet-backdrop);
+  backdrop-filter: blur(6px);
+  animation: sheet-scrim-in var(--response-base) var(--ease-standard);
 }
+@keyframes sheet-scrim-in { from { opacity: 0; backdrop-filter: blur(0); } }
 
 .sheet-backdrop[hidden] {
   display: none;
@@ -776,25 +814,34 @@ body {
   gap: 16px;
   padding: 9px 16px 16px;
   padding-bottom: max(16px, env(safe-area-inset-bottom));
-  border: 1px solid var(--chip-border);
-  border-bottom: 0;
-  border-radius: 18px 18px 0 0;
+  border: 0;
+  /* iOS sheet corners are large and only on the leading edge. */
+  border-radius: var(--r-xl) var(--r-xl) 0 0;
   background: var(--card);
   box-shadow: var(--sheet-shadow);
+  /* Enters and exits along the same path — a sheet that slid up must dismiss
+     downward, never fade out in place. */
+  animation: sheet-up var(--response-slow) var(--ease-decel);
 }
+@keyframes sheet-up { from { transform: translateY(100%); } }
+.sheet-backdrop.closing { animation: sheet-scrim-in var(--response-base) var(--ease-inverse) reverse; }
+.sheet-backdrop.closing .sheet-panel { animation: sheet-up var(--response-base) var(--ease-inverse) reverse; }
 
 .sheet-handle {
-  width: 40px;
-  height: 4px;
+  width: 36px;
+  height: 5px;
   margin: 0 auto;
-  border-radius: 2px;
+  border-radius: var(--r-pill);
   background: var(--sheet-handle);
 }
 
 .sheet-header h2 {
   margin: 0;
   color: var(--text-strong);
-  font-size: 18px;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: var(--leading-title);
+  letter-spacing: var(--track-title);
 }
 
 .sheet-header p {
@@ -820,10 +867,12 @@ body {
   align-items: center;
   gap: 10px;
   border: 1px solid var(--chip-border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--chip);
   color: var(--text);
+  transition: background var(--response-fast) var(--ease-standard);
 }
+.tag-check-row:active { background: var(--fill-secondary); }
 
 .tag-check-row input {
   width: 22px;
@@ -892,6 +941,7 @@ body {
   gap: 12px;
   padding: max(env(safe-area-inset-top), 12px) 16px 12px;
   background: var(--surface);
+  backdrop-filter: var(--blur-regular);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -924,6 +974,7 @@ body {
   gap: 10px;
   padding: 10px 16px max(16px, env(safe-area-inset-bottom));
   background: var(--surface);
+  backdrop-filter: var(--blur-regular);
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -940,14 +991,22 @@ body {
   bottom: max(env(safe-area-inset-bottom), 16px);
   transform: translateX(-50%);
   background: var(--toast-bg);
+  backdrop-filter: var(--blur-thick);
   color: var(--toast-text);
-  padding: 10px 16px;
-  border-radius: 8px;
+  padding: 11px 18px;
+  border-radius: var(--r-pill);
   font-size: 13px;
   max-width: 86%;
   text-align: center;
   z-index: 100;
   box-shadow: var(--toast-shadow);
+  animation: toast-rise var(--response-base) var(--ease-decel);
+}
+
+/* Enters upward from the bottom edge it lives on, so the path matches where it
+   came from. */
+@keyframes toast-rise {
+  from { opacity: 0; transform: translateX(-50%) translateY(14px) scale(.96); }
 }
 
 .toast[hidden] {
@@ -964,4 +1023,28 @@ body {
     padding-top: 4px;
     padding-bottom: 4px;
   }
+}
+
+/* ---- accessibility fallbacks ----
+   Reduced motion keeps the opacity cues and drops every translation/scale;
+   reduced transparency turns the glass chrome solid (the shared tokens already
+   flip the material colors, this kills the element-level blurs). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-iteration-count: 1 !important;
+    transition-property: opacity, background-color, background, color, border-color !important;
+    transition-duration: 140ms !important;
+  }
+  @keyframes sheet-up { from { opacity: 0; } }
+  @keyframes sheet-scrim-in { from { opacity: 0; } }
+  @keyframes qp-materialize { from { opacity: 0; } }
+  @keyframes toast-rise { from { opacity: 0; } }
+  .btn:active, .icon-btn:active, .session-card:active,
+  .workspace-filter:active, .quickball:active { transform: none; }
+  .toast { transform: translateX(-50%); }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .topbar, .workspace-filters, .copy-header, .copy-footer,
+  .quickball, .quickpanel, .toast, .sheet-backdrop { backdrop-filter: none; }
 }

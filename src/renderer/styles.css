@@ -1,83 +1,88 @@
+/* Semantic layer for the desktop shell, mapped onto the shared Apple tokens in
+   apple-tokens.css (loaded first). The structure follows macOS: a *vibrant*
+   chrome region (rail + session sidebar, painted by the window's native
+   `vibrancy: 'sidebar'` material — see main.js) and an *opaque* content region
+   (workspace + terminal). Only chrome is translucent; content never is. */
 :root {
-  --bg: #f5f6f8;
-  --rail: #eef0f3;
-  --sidebar: #f8f9fa;
+  /* Window fallback for platforms without vibrancy; on macOS the window is
+     transparent and this is only what the shell tints on top of the material. */
+  --bg: #f2f2f4;
+  /* Structural regions use a darker/heavier wash than interactive surfaces.
+     These are deliberately substantial, not a faint tint: text has to stay
+     legible over whatever wallpaper the vibrancy is sampling, and a near-clear
+     wash is exactly the "flat gray text on changing background" failure. */
+  --rail-wash: rgba(235, 235, 240, .5);
+  --sidebar-wash: rgba(252, 252, 253, .62);
   --surface: #ffffff;
-  --surface-raised: #ffffff;
-  --surface-hover: #eceff3;
-  --surface-active: #e4ebf6;
+  --surface-raised: #ffffff;         /* opaque: sheets, dialogs */
+  --glass-raised: var(--material-thick);  /* vibrant: menus, popovers, palette */
+  --surface-hover: var(--fill-quaternary);
+  --surface-active: color-mix(in srgb, var(--accent) 14%, transparent);
+  /* Ring color used to punch small badges out of the chrome behind them. */
+  --chrome-ring: rgba(246, 246, 248, .92);
   --terminal-bg: #fbfbfc;
-  --text: #20242c;
-  --text-secondary: #626a78;
-  --text-tertiary: #89919f;
-  --border: #dfe2e7;
-  --border-strong: #cfd4dc;
-  --accent: #1769e0;
-  --accent-hover: #0f5dcd;
-  --accent-soft: #e5efff;
-  --accent-text: #0d57bb;
-  --success: #16814d;
-  --success-soft: #e1f4e9;
-  --warning: #9a6500;
-  --danger: #c4313f;
-  --danger-hover: #aa2633;
-  --danger-soft: #fdebed;
-  --tag-blue: #2f75d6;
-  --tag-green: #25875c;
-  --tag-gold: #a66a00;
-  --tag-purple: #7b5bc7;
-  --tag-rose: #c44f73;
-  --tag-cyan: #16879b;
-  --shadow-sm: 0 1px 2px rgba(18, 24, 35, .05);
-  --shadow-md: 0 12px 34px rgba(28, 35, 48, .13), 0 2px 8px rgba(28, 35, 48, .08);
-  --shadow-lg: 0 22px 60px rgba(22, 29, 41, .2), 0 5px 16px rgba(22, 29, 41, .1);
-  --radius: 8px;
-  --radius-lg: 12px;
+  --text: #1d1d1f;
+  --text-secondary: rgba(60, 60, 67, .72);
+  --text-tertiary: rgba(60, 60, 67, .54);
+  --border: var(--hairline);
+  --border-strong: var(--hairline-strong);
+  --accent: var(--sys-blue);
+  --accent-hover: color-mix(in srgb, var(--sys-blue) 88%, black);
+  --accent-soft: color-mix(in srgb, var(--sys-blue) 12%, transparent);
+  --accent-text: color-mix(in srgb, var(--sys-blue) 92%, black);
+  --success: color-mix(in srgb, var(--sys-green) 88%, black);
+  --success-soft: color-mix(in srgb, var(--sys-green) 16%, transparent);
+  --warning: color-mix(in srgb, var(--sys-orange) 84%, black);
+  --danger: var(--sys-red);
+  --danger-hover: color-mix(in srgb, var(--sys-red) 86%, black);
+  --danger-soft: color-mix(in srgb, var(--sys-red) 12%, transparent);
+  --tag-blue: var(--sys-blue);
+  --tag-green: color-mix(in srgb, var(--sys-green) 86%, black);
+  --tag-gold: color-mix(in srgb, var(--sys-orange) 82%, black);
+  --tag-purple: var(--sys-purple);
+  --tag-rose: var(--sys-pink);
+  --tag-cyan: var(--sys-teal);
+  --shadow-sm: var(--shadow-raised);
+  --shadow-md: var(--shadow-popover);
+  --shadow-lg: var(--shadow-sheet);
+  --radius: var(--r-sm);
+  --radius-lg: var(--r-lg);
 }
 
 [data-theme="dark"] {
-  --bg: #111318;
-  --rail: #171a20;
-  --sidebar: #1a1d24;
-  --surface: #1d2027;
-  --surface-raised: #232731;
-  --surface-hover: #282d36;
-  --surface-active: #29374b;
-  --terminal-bg: #111318;
-  --text: #e6e9ef;
-  --text-secondary: #a3abb9;
-  --text-tertiary: #737c8c;
-  --border: #30343d;
-  --border-strong: #414650;
-  --accent: #6ca6f7;
-  --accent-hover: #84b6fb;
-  --accent-soft: #253d60;
-  --accent-text: #a3c8ff;
-  --success: #68d391;
-  --success-soft: #1f4331;
-  --warning: #e5b85e;
-  --danger: #f06a74;
-  --danger-hover: #ff7b85;
-  --danger-soft: #4b252b;
-  --tag-blue: #74a9f4;
-  --tag-green: #68d391;
-  --tag-gold: #e5b85e;
-  --tag-purple: #b49aee;
-  --tag-rose: #ef8fac;
-  --tag-cyan: #68c8d8;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .2);
-  --shadow-md: 0 12px 34px rgba(0, 0, 0, .35), 0 2px 8px rgba(0, 0, 0, .24);
-  --shadow-lg: 0 22px 60px rgba(0, 0, 0, .46), 0 5px 16px rgba(0, 0, 0, .3);
+  --bg: #1c1c1e;
+  --rail-wash: rgba(0, 0, 0, .38);
+  --sidebar-wash: rgba(32, 32, 34, .58);
+  --surface: #1c1c1e;
+  --surface-raised: #2c2c2e;
+  --chrome-ring: rgba(28, 28, 30, .92);
+  --terminal-bg: #141416;
+  --text: #f5f5f7;
+  --text-secondary: rgba(235, 235, 245, .74);
+  --text-tertiary: rgba(235, 235, 245, .52);
+  --accent-hover: color-mix(in srgb, var(--sys-blue) 84%, white);
+  --accent-text: color-mix(in srgb, var(--sys-blue) 82%, white);
+  --success: var(--sys-green);
+  --success-soft: color-mix(in srgb, var(--sys-green) 22%, transparent);
+  --warning: var(--sys-yellow);
+  --danger-hover: color-mix(in srgb, var(--sys-red) 82%, white);
+  --danger-soft: color-mix(in srgb, var(--sys-red) 22%, transparent);
+  --tag-green: var(--sys-green);
+  --tag-gold: var(--sys-orange);
 }
 
 * { box-sizing: border-box; }
 html, body { width: 100%; height: 100%; overflow: hidden; }
 body {
   margin: 0;
-  background: var(--bg);
+  /* Transparent so the window's native vibrancy shows through the chrome.
+     Platforms without vibrancy fall back to the opaque window backgroundColor
+     set in main.js. */
+  background: transparent;
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-system);
   font-size: 13px;
+  letter-spacing: var(--track-body);
   -webkit-font-smoothing: antialiased;
   user-select: none;
 }
@@ -85,9 +90,10 @@ button, input, select { font: inherit; }
 button { color: inherit; }
 button, select { cursor: default; }
 input { user-select: text; }
+/* macOS focus ring: a soft accent halo, not a hard outline. */
 button:focus-visible, input:focus-visible, select:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 72%, transparent);
-  outline-offset: 2px;
+  outline: 3px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  outline-offset: 1px;
 }
 .hidden { display: none !important; }
 .no-drag, button, input, select { -webkit-app-region: no-drag; }
@@ -106,7 +112,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
      inflated container and keeps the bogus row count — the terminal bottom
      ends up clipped below the window and no amount of scrolling can reach it. */
   grid-template-rows: minmax(0, 1fr);
-  background: var(--bg);
+  background: transparent;
 }
 .app-shell.tag-rail-expanded {
   --activity-rail-width: var(--activity-rail-expanded-width);
@@ -122,7 +128,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .tag-rail-resizer::after {
   content: ""; position: absolute; top: 0; bottom: 0; left: -1px; width: 2px;
   background: transparent;
-  transition: background .15s ease;
+  transition: background var(--response-fast) var(--ease-standard);
 }
 .tag-rail-resizer:hover::after, .tag-rail-resizer.dragging::after { background: var(--accent); }
 .app-shell:not(.tag-rail-expanded) .tag-rail-resizer { pointer-events: none; }
@@ -134,7 +140,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .sidebar-resizer::after {
   content: ""; position: absolute; top: 0; bottom: 0; left: 1px; width: 2px;
   background: transparent;
-  transition: background .15s ease;
+  transition: background var(--response-fast) var(--ease-standard);
 }
 .sidebar-resizer:hover::after, .sidebar-resizer.dragging::after { background: var(--accent); }
 .app-shell.compact-view .sidebar-resizer { display: none; }
@@ -154,15 +160,17 @@ body.tag-rail-resizing * { cursor: col-resize !important; }
   min-width: 0; overflow: hidden;
   display: flex; flex-direction: column; align-items: center; gap: 8px;
   padding: 52px 9px 12px;
-  background: var(--rail);
-  border-right: 1px solid var(--border);
+  /* Vibrant chrome: no background of its own beyond a structural wash over the
+     window material. Heavier than the sidebar's wash so the two regions read as
+     distinct layers without a second border. */
+  background: var(--rail-wash);
 }
 .app-mark {
   display: grid; place-items: center; width: 34px; height: 34px; margin: 0;
   border-radius: 10px;
   background: var(--text); color: var(--surface);
   box-shadow: var(--shadow-sm);
-  font: 700 11px/1 SFMono-Regular, Menlo, monospace;
+  font: 700 11px/1 var(--font-mono);
   letter-spacing: -.8px;
 }
 .app-shell.tag-rail-expanded .activity-rail { align-items: stretch; }
@@ -173,8 +181,12 @@ body.tag-rail-resizing * { cursor: col-resize !important; }
   display: grid; place-items: center;
   border: 0; background: transparent;
   color: var(--text-secondary);
-  border-radius: 8px;
-  transition: color .15s ease, background .15s ease, transform .12s ease;
+  border-radius: var(--r-md);
+  /* Press feedback is instant (§Response); release settles on a critically
+     damped curve so nothing overshoots. */
+  transition: color var(--response-fast) var(--ease-standard),
+              background var(--response-fast) var(--ease-standard),
+              transform var(--response-base) var(--ease-standard);
 }
 .rail-button { width: 42px; height: 38px; }
 .rail-button > svg { flex: none; }
@@ -186,8 +198,11 @@ body.tag-rail-resizing * { cursor: col-resize !important; }
 }
 .app-shell.tag-rail-expanded .rail-label { display: block; }
 .rail-button:hover, .icon-button:hover { background: var(--surface-hover); color: var(--text); }
-.rail-button:active, .icon-button:active { transform: scale(.96); }
-.rail-button.active { background: var(--surface); color: var(--accent); box-shadow: var(--shadow-sm); }
+.rail-button:active, .icon-button:active {
+  transform: scale(.94);
+  transition-duration: var(--response-instant);
+}
+.rail-button.active { background: var(--surface-active); color: var(--accent); }
 .tag-rail {
   width: 100%; min-height: 0;
   display: flex; flex: 1; flex-direction: column; align-items: center; gap: 5px;
@@ -227,7 +242,10 @@ body.tag-rail-resizing * { cursor: col-resize !important; }
 .tag-count {
   position: absolute; right: 1px; bottom: 1px;
   display: grid; place-items: center; min-width: 13px; height: 13px; padding: 0 3px;
-  color: var(--surface); background: var(--text-secondary); border: 2px solid var(--rail); border-radius: 8px;
+  /* Punched out of the vibrant rail with an opaque-ish ring — a translucent
+     border would let the tag glyph bleed through the badge. */
+  color: var(--surface); background: var(--text-secondary);
+  border: 2px solid var(--chrome-ring); border-radius: 8px;
   font-size: 7.5px; line-height: 1;
 }
 .app-shell.tag-rail-expanded .tag-count {
@@ -237,7 +255,7 @@ body.tag-rail-resizing * { cursor: col-resize !important; }
 }
 .rail-add-tag { flex: none; color: var(--text-tertiary); }
 .rail-toggle { flex: none; color: var(--text-tertiary); }
-.rail-toggle svg { transform: rotate(-90deg); transition: transform .15s ease; }
+.rail-toggle svg { transform: rotate(-90deg); transition: transform var(--response-base) var(--ease-standard); }
 .app-shell.tag-rail-expanded .rail-toggle svg { transform: rotate(90deg); }
 .icon-button { width: 30px; height: 30px; flex: none; }
 .icon-button.primary-soft { color: var(--accent-text); background: var(--accent-soft); }
@@ -248,7 +266,14 @@ body.tag-rail-resizing * { cursor: col-resize !important; }
 .session-sidebar {
   min-width: 0;
   display: flex; flex-direction: column;
-  background: var(--sidebar);
+  /* Vibrancy legibility: over a translucent surface, text gets a touch more
+     weight and tracking instead of thinner gray. */
+  -webkit-font-smoothing: antialiased;
+  font-weight: 450;
+  letter-spacing: .002em;
+  background: var(--sidebar-wash);
+  /* The only hard edge in the chrome: where vibrancy meets the opaque content
+     region. Rail↔sidebar is separated by material weight instead. */
   border-right: 1px solid var(--border);
 }
 .source-bar {
@@ -322,8 +347,8 @@ body.tag-rail-resizing * { cursor: col-resize !important; }
   padding: 0 14px 13px 16px;
   -webkit-app-region: drag;
 }
-.sidebar-header h1 { margin: 0; font-size: 17px; line-height: 1.3; font-weight: 650; letter-spacing: -.25px; }
-.sidebar-header p { margin: 2px 0 0; color: var(--text-tertiary); font-size: 11px; }
+.sidebar-header h1 { margin: 0; font-size: 17px; line-height: var(--leading-title); font-weight: 650; letter-spacing: var(--track-title); }
+.sidebar-header p { margin: 2px 0 0; color: var(--text-tertiary); font-size: 11px; letter-spacing: var(--track-caption); }
 .header-actions { display: flex; gap: 4px; padding-bottom: 1px; }
 .search-box {
   position: relative; flex: none;
@@ -332,23 +357,25 @@ body.tag-rail-resizing * { cursor: col-resize !important; }
 }
 .search-box > span { position: absolute; left: 10px; display: grid; color: var(--text-tertiary); pointer-events: none; }
 .search-box input {
-  width: 100%; height: 32px;
+  width: 100%; height: 30px;
   padding: 0 46px 0 33px;
   color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: var(--shadow-sm);
+  /* macOS search fields are a translucent fill on the chrome, not a raised
+     white box — a white box would read as content sitting on the sidebar. */
+  background: var(--fill-tertiary);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  transition: background var(--response-fast) var(--ease-standard),
+              border-color var(--response-fast) var(--ease-standard);
 }
 .search-box input::placeholder { color: var(--text-tertiary); }
-.search-box input:focus { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+.search-box input:focus { background: var(--surface); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 kbd {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 20px; height: 19px; padding: 0 5px;
-  color: var(--text-tertiary); background: var(--surface-hover);
-  border: 1px solid var(--border); border-radius: 5px;
-  box-shadow: 0 1px 0 var(--border-strong);
-  font: 500 10px/1 -apple-system, sans-serif;
+  color: var(--text-tertiary); background: var(--fill-quaternary);
+  border: 1px solid var(--border); border-radius: var(--r-xs);
+  font: 500 10px/1 var(--font-system);
 }
 .search-box kbd { position: absolute; right: 7px; pointer-events: none; }
 .session-scroll { flex: 1; overflow: auto; padding: 4px 8px 16px; }
@@ -368,10 +395,21 @@ kbd {
   position: relative;
   display: grid; grid-template-columns: minmax(0,1fr) 26px; align-items: center;
   min-height: 54px; margin: 2px 0;
-  border-radius: 9px;
+  border-radius: var(--r-md);
+  transition: background var(--response-fast) var(--ease-standard);
 }
 .session-item:hover { background: var(--surface-hover); }
-.session-item.active { background: var(--surface-active); }
+/* macOS sidebar selection: an accent-filled pill. Everything inside inverts to
+   white — the state/tag dots keep their meaning via shape, not hue. */
+.session-item.active { background: var(--accent); }
+.session-item.active .session-name,
+.session-item.active .session-meta,
+.session-item.active .favorite-mark { color: #fff; }
+.session-item.active .session-meta { color: rgba(255, 255, 255, .78); }
+.session-item.active .session-state { background: #fff; box-shadow: 0 0 0 3px rgba(255, 255, 255, .28); }
+.session-item.active .session-more { color: rgba(255, 255, 255, .8); }
+.session-item.active .session-more:hover { background: rgba(255, 255, 255, .18); color: #fff; }
+.session-item.active .session-tag-mark { box-shadow: 0 0 0 1px rgba(255, 255, 255, .55); }
 .session-main {
   min-width: 0; height: 100%;
   display: flex; align-items: center; gap: 9px;
@@ -416,16 +454,17 @@ kbd {
 }
 .session-heading { min-width: 0; }
 .session-title-row { display: flex; align-items: center; gap: 8px; }
-.session-heading h2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; line-height: 1.35; font-weight: 650; letter-spacing: -.2px; }
-.session-heading p { margin: 3px 0 0; max-width: 650px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font: 10.5px/1.4 SFMono-Regular, Menlo, monospace; }
+.session-heading h2 { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; line-height: var(--leading-title); font-weight: 650; letter-spacing: var(--track-title); }
+.session-heading p { margin: 3px 0 0; max-width: 650px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font: 10.5px/1.4 var(--font-mono); }
 .attached-badge, .view-badge { padding: 2px 6px; border-radius: 99px; font-size: 9.5px; font-weight: 650; }
 .attached-badge { color: var(--success); background: var(--success-soft); }
 .view-badge { color: var(--tag-color, var(--accent)); background: color-mix(in srgb, var(--tag-color, var(--accent)) 13%, transparent); }
 .workspace-actions { display: flex; align-items: center; gap: 6px; }
 .pane-picker {
   display: flex; align-items: center; gap: 5px;
-  height: 30px; padding: 0 7px;
-  background: var(--surface); border: 1px solid var(--border); border-radius: 7px;
+  height: 28px; padding: 0 7px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm);
+  box-shadow: var(--shadow-sm), var(--glass-edge);
 }
 .pane-picker > span { display: grid; color: var(--text-secondary); }
 .pane-picker select { max-width: 190px; padding: 0 18px 0 0; color: var(--text-secondary); background: transparent; border: 0; outline: 0; font-size: 11px; }
@@ -444,7 +483,9 @@ kbd {
   height: 34px; min-width: 132px; max-width: 230px;
   padding: 0 12px;
   color: var(--text-secondary); background: transparent;
-  border: 1px solid transparent; border-bottom: 0; border-radius: 7px 7px 0 0;
+  border: 1px solid transparent; border-bottom: 0; border-radius: var(--r-md) var(--r-md) 0 0;
+  transition: color var(--response-fast) var(--ease-standard),
+              background var(--response-fast) var(--ease-standard);
 }
 .session-tab:hover { color: var(--text); background: color-mix(in srgb, var(--surface) 62%, transparent); }
 .session-tab.active { color: var(--text); background: var(--surface); border-color: var(--border); }
@@ -471,7 +512,7 @@ kbd {
   border: none; border-radius: 4px; cursor: pointer; pointer-events: auto;
   color: var(--text, #d8dde7);
   background: color-mix(in srgb, var(--terminal-bg, #111318) 62%, transparent);
-  opacity: 0.34; transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+  opacity: 0.34; transition: opacity var(--response-fast) var(--ease-standard), background var(--response-fast) var(--ease-standard), color var(--response-fast) var(--ease-standard);
 }
 .terminal-surface:hover .pane-close-button,
 .pane-close-button:focus-visible { opacity: 0.7; }
@@ -526,9 +567,12 @@ kbd {
   position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
   display: flex; align-items: center; gap: 12px;
   padding: 7px 9px 7px 13px;
-  color: var(--text-secondary); background: var(--surface-raised);
-  border: 1px solid var(--border); border-radius: 9px; box-shadow: var(--shadow-md);
+  color: var(--text-secondary); background: var(--glass-raised);
+  backdrop-filter: var(--blur-regular);
+  border: 1px solid var(--border); border-radius: var(--r-pill);
+  box-shadow: var(--shadow-md), var(--glass-edge);
   font-size: 11px;
+  animation: toast-in var(--response-base) var(--ease-decel);
 }
 .terminal-reconnect button { border: 0; border-radius: 6px; padding: 5px 9px; color: var(--accent-text); background: var(--accent-soft); }
 .empty-state {
@@ -541,10 +585,10 @@ kbd {
   width: 70px; height: 60px; margin-bottom: 20px;
   color: var(--accent); background: var(--accent-soft);
   border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border)); border-radius: 16px;
-  font: 700 18px/1 SFMono-Regular, Menlo, monospace;
+  font: 700 18px/1 var(--font-mono);
   box-shadow: inset 0 1px 0 color-mix(in srgb, white 55%, transparent);
 }
-.empty-state h2 { margin: 0 0 8px; font-size: 18px; letter-spacing: -.25px; }
+.empty-state h2 { margin: 0 0 8px; font-size: 18px; line-height: var(--leading-title); letter-spacing: var(--track-title); }
 .empty-state p { max-width: 420px; margin: 0; color: var(--text-secondary); line-height: 1.6; }
 .empty-actions { display: flex; gap: 8px; margin-top: 22px; }
 .workspace-status {
@@ -559,14 +603,18 @@ kbd {
 .workspace-status kbd { height: 16px; min-width: 18px; font-size: 9px; }
 
 .button {
-  min-height: 32px; padding: 0 13px;
+  min-height: 30px; padding: 0 13px;
   color: var(--text); background: var(--surface);
-  border: 1px solid var(--border-strong); border-radius: 7px;
-  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+  box-shadow: var(--shadow-sm), var(--glass-edge);
   font-size: 12px; font-weight: 540;
+  transition: background var(--response-fast) var(--ease-standard),
+              transform var(--response-base) var(--ease-standard);
 }
-.button:hover { background: var(--surface-hover); }
-.button.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
+.button:hover { background: color-mix(in srgb, var(--text) 5%, var(--surface)); }
+/* Feedback on press, not on release. */
+.button:active { transform: scale(.985); transition-duration: var(--response-instant); }
+.button.primary { color: #fff; background: var(--accent); border-color: transparent; }
 .button.primary:hover { background: var(--accent-hover); }
 .button.danger { color: #fff; background: var(--danger); border-color: var(--danger); }
 .button.danger:hover { background: var(--danger-hover); }
@@ -575,65 +623,93 @@ kbd {
 .popover, .context-menu {
   position: fixed; z-index: 130;
   min-width: 178px; padding: 5px;
-  background: var(--surface-raised); border: 1px solid var(--border); border-radius: 9px;
-  box-shadow: var(--shadow-md);
+  /* Menus and popovers are vibrant in macOS; sheets (below) are not. */
+  background: var(--glass-raised);
+  backdrop-filter: var(--blur-thick);
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md), var(--glass-edge);
+  transform-origin: top center;
+  animation: popover-materialize var(--response-fast) var(--ease-decel);
+}
+/* Materialize, don't just fade: blur and scale arrive together so the surface
+   reads as glass showing up rather than an opacity ramp. */
+@keyframes popover-materialize {
+  from { opacity: 0; transform: scale(.96); backdrop-filter: blur(0); }
 }
 .menu-item {
   width: 100%; min-height: 31px;
   display: flex; align-items: center; gap: 9px;
-  padding: 0 9px; color: var(--text); background: transparent; border: 0; border-radius: 6px;
+  padding: 0 9px; color: var(--text); background: transparent; border: 0; border-radius: var(--r-xs);
   text-align: left; font-size: 11.5px;
 }
-.menu-item:hover, .menu-item.selected { background: var(--surface-hover); }
 .menu-item.danger { color: var(--danger); }
 .menu-item svg { color: var(--text-secondary); }
 .menu-item.danger svg { color: var(--danger); }
 .menu-item .menu-check { margin-left: auto; color: var(--accent); }
+/* Highlighted menu rows in macOS fill with the accent and invert their content —
+   these must come after the per-state colors above to win the cascade. */
+.menu-item:hover, .menu-item.selected { color: #fff; background: var(--accent); }
+.menu-item.danger:hover, .menu-item.danger.selected { color: #fff; background: var(--danger); }
+.menu-item:hover svg, .menu-item.selected svg,
+.menu-item:hover .menu-check, .menu-item.selected .menu-check { color: #fff; }
 .menu-item.disabled { opacity: .45; cursor: default; }
-.menu-item.disabled:hover { background: transparent; }
+.menu-item.disabled:hover, .menu-item.disabled.selected { color: var(--text); background: transparent; }
+.menu-item.disabled:hover svg { color: var(--text-secondary); }
 .menu-separator { height: 1px; margin: 5px 4px; background: var(--border); }
 
 .toast-stack { position: fixed; z-index: 180; right: 16px; bottom: 42px; display: flex; flex-direction: column; gap: 7px; width: min(350px, calc(100vw - 32px)); pointer-events: none; }
 .toast {
   display: flex; align-items: flex-start; gap: 9px;
   padding: 10px 12px;
-  color: var(--text); background: var(--surface-raised); border: 1px solid var(--border); border-radius: 9px;
-  box-shadow: var(--shadow-md); line-height: 1.45;
-  animation: toast-in .18s ease-out;
+  color: var(--text); background: var(--glass-raised);
+  backdrop-filter: var(--blur-thick);
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md), var(--glass-edge); line-height: var(--leading-body);
+  animation: toast-in var(--response-base) var(--ease-decel);
 }
 .toast.error { border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
 .toast svg { flex: none; margin-top: 1px; color: var(--accent); }
 .toast.error svg { color: var(--danger); }
-@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes toast-in { from { opacity: 0; transform: translateY(10px) scale(.97); } }
 
 .modal-backdrop, .palette-backdrop {
   position: fixed; z-index: 150; inset: 0;
   display: grid; place-items: center;
   padding: 28px;
-  background: rgba(22, 27, 36, .28);
-  backdrop-filter: blur(4px);
+  /* A modal task dims and pushes the background back; a parallel, non-blocking
+     panel would use translucency and offset with NO scrim. */
+  background: var(--scrim);
+  backdrop-filter: blur(6px);
+  animation: scrim-in var(--response-base) var(--ease-standard);
 }
-[data-theme="dark"] .modal-backdrop, [data-theme="dark"] .palette-backdrop { background: rgba(0, 0, 0, .48); }
+@keyframes scrim-in { from { opacity: 0; backdrop-filter: blur(0); } }
 .modal {
   width: min(500px, calc(100vw - 48px));
   padding: 20px;
-  background: var(--surface-raised); border: 1px solid var(--border); border-radius: 13px;
+  background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--r-xl);
   box-shadow: var(--shadow-lg);
+  /* Anchored to the top edge like a macOS sheet, so it reads as coming out of
+     the titlebar rather than growing from the middle of the screen. */
+  transform-origin: top center;
+  animation: sheet-in var(--response-base) var(--ease-decel);
 }
+@keyframes sheet-in { from { opacity: 0; transform: translateY(-12px) scale(.98); } }
 .modal.compact { width: min(420px, calc(100vw - 48px)); }
 .modal > header { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
-.modal h2 { margin: 0; font-size: 17px; letter-spacing: -.2px; }
+.modal h2 { margin: 0; font-size: 17px; line-height: var(--leading-title); letter-spacing: var(--track-title); }
 .modal header p { margin: 4px 0 0; color: var(--text-secondary); font-size: 11.5px; line-height: 1.45; }
 .modal > footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
 .field { display: flex; flex-direction: column; gap: 7px; margin-top: 14px; }
 .field > span { color: var(--text-secondary); font-size: 11px; font-weight: 600; }
 .field em { color: var(--text-tertiary); font-style: normal; font-weight: 400; }
 .field input {
-  width: 100%; height: 35px; padding: 0 10px;
+  width: 100%; height: 32px; padding: 0 10px;
   color: var(--text); background: var(--surface);
-  border: 1px solid var(--border-strong); border-radius: 7px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  transition: border-color var(--response-fast) var(--ease-standard),
+              outline-color var(--response-fast) var(--ease-standard);
 }
-.field input:focus { border-color: var(--accent); outline: 2px solid color-mix(in srgb, var(--accent) 16%, transparent); }
+.field input:focus { border-color: var(--accent); outline: 3px solid color-mix(in srgb, var(--accent) 28%, transparent); outline-offset: 0; }
 .input-action { display: flex; gap: 7px; }
 .input-action input { min-width: 0; flex: 1; }
 .input-action button { flex: none; padding: 0 11px; color: var(--text-secondary); background: var(--surface-hover); border: 1px solid var(--border); border-radius: 7px; }
@@ -680,10 +756,12 @@ kbd {
 .settings-toggle-row + .settings-toggle-row { margin-top: 8px; }
 .settings-toggle-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; color: var(--text-tertiary); font-size: 11px; line-height: 1.45; }
 .settings-toggle-copy strong { color: var(--text); font-size: 12px; }
-.settings-switch { position: relative; width: 36px; height: 20px; flex: none; margin: 0; appearance: none; background: var(--border-strong); border: 0; border-radius: 999px; cursor: pointer; transition: background .15s ease; }
-.settings-switch::after { content: ""; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; background: #fff; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,.22); transition: transform .15s ease; }
+.settings-switch { position: relative; width: 38px; height: 22px; flex: none; margin: 0; appearance: none; background: var(--fill-primary); border: 0; border-radius: var(--r-pill); cursor: pointer; transition: background var(--response-fast) var(--ease-standard); }
+.settings-switch::after { content: ""; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; background: #fff; border-radius: 50%; box-shadow: 0 1px 3px rgba(0,0,0,.22), 0 0 0 .5px rgba(0,0,0,.04); transition: transform var(--response-base) var(--ease-standard); }
 .settings-switch:checked { background: var(--accent); }
 .settings-switch:checked::after { transform: translateX(16px); }
+.settings-switch:active::after { transform: scale(.94); transition-duration: var(--response-instant); }
+.settings-switch:checked:active::after { transform: translateX(16px) scale(.94); }
 .settings-switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .settings-switch:disabled { cursor: wait; opacity: .6; }
 .tmux-settings-groups { display: flex; flex-direction: column; gap: 14px; }
@@ -692,11 +770,11 @@ kbd {
 .settings-value-row { min-height: 58px; display: flex; align-items: center; gap: 18px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; }
 .settings-value-row + .settings-value-row, .settings-toggle-row + .settings-value-row, .settings-value-row + .settings-toggle-row { margin-top: 8px; }
 .settings-select, .settings-number {
-  width: 150px; height: 30px; flex: none; padding: 0 8px;
-  color: var(--text); background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: 7px;
+  width: 150px; height: 28px; flex: none; padding: 0 8px;
+  color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-sm);
 }
 .settings-number { width: 104px; text-align: right; }
-.settings-select:focus, .settings-number:focus, .tmux-advanced textarea:focus { border-color: var(--accent); outline: 2px solid color-mix(in srgb, var(--accent) 16%, transparent); }
+.settings-select:focus, .settings-number:focus, .tmux-advanced textarea:focus { border-color: var(--accent); outline: 3px solid color-mix(in srgb, var(--accent) 28%, transparent); outline-offset: 0; }
 .tmux-advanced { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--border); }
 .tmux-advanced p { margin: 0 0 8px; color: var(--text-tertiary); font-size: 11px; line-height: 1.5; }
 .tmux-advanced textarea {
@@ -715,8 +793,11 @@ kbd {
 .palette-backdrop { place-items: start center; padding-top: min(18vh, 150px); }
 .command-dialog {
   width: min(620px, calc(100vw - 48px)); overflow: hidden;
-  background: var(--surface-raised); border: 1px solid var(--border); border-radius: 13px;
-  box-shadow: var(--shadow-lg);
+  background: var(--glass-raised);
+  backdrop-filter: var(--blur-thick);
+  border: 1px solid var(--border); border-radius: var(--r-xl);
+  box-shadow: var(--shadow-lg), var(--glass-edge);
+  animation: sheet-in var(--response-base) var(--ease-decel);
 }
 .command-input { position: relative; display: flex; align-items: center; height: 50px; border-bottom: 1px solid var(--border); }
 .command-input > span { display: grid; margin-left: 15px; color: var(--text-tertiary); }
@@ -724,7 +805,15 @@ kbd {
 .command-input kbd { margin-right: 12px; }
 .command-results { max-height: 350px; overflow-y: auto; padding: 6px; }
 .command-result { width: 100%; min-height: 48px; display: flex; align-items: center; gap: 11px; padding: 7px 10px; background: transparent; border: 0; border-radius: 8px; text-align: left; }
-.command-result:hover, .command-result.selected { background: var(--surface-hover); }
+.command-result:hover, .command-result.selected { color: #fff; background: var(--accent); }
+.command-result:hover .command-result-title, .command-result.selected .command-result-title { color: #fff; }
+.command-result:hover .command-result-subtitle, .command-result.selected .command-result-subtitle { color: rgba(255, 255, 255, .78); }
+.command-result:hover .command-result-icon, .command-result.selected .command-result-icon {
+  color: #fff; background: rgba(255, 255, 255, .2); border-color: transparent;
+}
+.command-result:hover kbd, .command-result.selected kbd {
+  color: #fff; background: rgba(255, 255, 255, .2); border-color: transparent;
+}
 .command-result-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: none; color: var(--text-secondary); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
 .command-result-copy { min-width: 0; flex: 1; }
 .command-result-title { display: block; color: var(--text); font-size: 12px; font-weight: 560; }
@@ -753,7 +842,7 @@ kbd {
 .import-row-path {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--text-tertiary); font-size: 11px;
-  font-family: SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--font-mono);
 }
 .import-row-badge {
   flex: none; padding: 1px 6px; border-radius: 999px;
@@ -783,7 +872,7 @@ kbd {
   width: 100%; padding: 6px 8px;
   color: var(--text-secondary); background: var(--surface-hover);
   border: 1px solid var(--border); border-radius: 6px;
-  font: 10.5px/1.4 SFMono-Regular, Menlo, monospace; word-break: break-all;
+  font: 10.5px/1.4 var(--font-mono); word-break: break-all;
 }
 .mobile-access-url:hover { color: var(--text); }
 .mobile-access-copy { width: 100%; }
@@ -827,7 +916,7 @@ kbd {
 }
 .fb-row:hover { background: var(--surface-hover); }
 .fb-row.selected { background: var(--surface-active); }
-.fb-chevron { display: grid; place-items: center; width: 14px; flex: none; color: var(--text-tertiary); transition: transform .12s ease; }
+.fb-chevron { display: grid; place-items: center; width: 14px; flex: none; color: var(--text-tertiary); transition: transform var(--response-fast) var(--ease-standard); }
 .fb-chevron.spacer { visibility: hidden; }
 .fb-node.open > .fb-row > .fb-chevron { transform: rotate(0deg); }
 .fb-node:not(.open) > .fb-row > .fb-chevron:not(.spacer) { transform: rotate(-90deg); }
@@ -847,6 +936,29 @@ kbd {
   .session-heading p { max-width: 420px; }
 }
 
+/* Reduced motion is not "no feedback" — it's a non-vestibular equivalent: keep
+   the short opacity/color changes that tell you something happened, drop all
+   travel, scale and overshoot. */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .001ms !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; }
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-iteration-count: 1 !important;
+    transition-property: opacity, background-color, background, color, border-color !important;
+    transition-duration: 140ms !important;
+  }
+  @keyframes popover-materialize { from { opacity: 0; } }
+  @keyframes sheet-in { from { opacity: 0; } }
+  @keyframes toast-in { from { opacity: 0; } }
+  @keyframes scrim-in { from { opacity: 0; } }
+  .rail-button:active, .icon-button:active, .button:active,
+  .settings-switch:active::after, .settings-switch:checked:active::after { transform: none; }
+}
+
+/* Frostier instead of blurrier — the material tokens already flip to solid, this
+   drops the element-level blurs that would otherwise still fire. */
+@media (prefers-reduced-transparency: reduce) {
+  .popover, .context-menu, .toast, .command-dialog { backdrop-filter: none; }
+  .modal-backdrop, .palette-backdrop { backdrop-filter: none; }
+  .activity-rail { background: var(--material-chrome); }
+  .session-sidebar { background: var(--material-thin); }
 }

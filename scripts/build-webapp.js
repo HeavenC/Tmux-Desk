@@ -26,6 +26,10 @@ async function buildWebapp() {
     fs.copyFile(path.join(webappSource, 'index.html'), path.join(outputDirectory, 'index.html')),
     fs.copyFile(path.join(webappSource, 'styles.css'), path.join(assetsDirectory, 'styles.css')),
     fs.copyFile(
+      path.join(projectRoot, 'src', 'shared', 'apple-tokens.css'),
+      path.join(assetsDirectory, 'apple-tokens.css'),
+    ),
+    fs.copyFile(
       path.join(projectRoot, 'node_modules', '@xterm', 'xterm', 'css', 'xterm.css'),
       path.join(assetsDirectory, 'xterm.css'),
     ),

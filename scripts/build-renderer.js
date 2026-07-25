@@ -29,6 +29,10 @@ async function buildRenderer() {
     copy('index.html', 'index.html'),
     copy('styles.css', 'styles.css'),
     fs.copyFile(
+      path.join(projectRoot, 'src', 'shared', 'apple-tokens.css'),
+      path.join(outputDirectory, 'apple-tokens.css'),
+    ),
+    fs.copyFile(
       path.join(projectRoot, 'node_modules', '@xterm', 'xterm', 'css', 'xterm.css'),
       path.join(outputDirectory, 'xterm.css'),
     ),
