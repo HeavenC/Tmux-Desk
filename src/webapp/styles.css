@@ -170,6 +170,19 @@ body {
   z-index: 2;
 }
 
+/* iOS remembers a pinch-zoomed-out page, and this one is worth zooming out: the
+   terminal fits 100+ columns at ~50%. But every CSS px then covers half a point,
+   so the safe-area padding shrinks with it — a correctly-reported 59px inset only
+   clears 29pt of the 59pt status bar, and the 44px buttons become 22pt targets
+   sitting underneath it, which is why the corner buttons stop responding. `zoom`
+   scales the bar — padding, inset and hit targets alike — back to the physical
+   size it was designed at. --chrome-scale is 1 whenever the page isn't zoomed
+   out, so this is a no-op in the normal case. */
+.topbar,
+.term-topbar {
+  zoom: var(--chrome-scale, 1);
+}
+
 .topbar-title {
   margin: 0;
   font-size: 22px;
@@ -745,6 +758,7 @@ body {
 
 .quickpanel-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--border);
@@ -759,6 +773,20 @@ body {
   font-size: 14px;
 }
 .qp-action.active { color: var(--accent, #1769e0); }
+
+/* The file input must stay focusable/clickable for iOS to open the picker, so
+   it can't be `display:none` — park it out of sight instead. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
 
 .icon-btn.active { color: var(--accent, #1769e0); }
 

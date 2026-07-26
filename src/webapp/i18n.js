@@ -51,6 +51,7 @@ const MESSAGES = {
 
     'quick.keyboard': '键盘',
     'quick.copy': '复制',
+    'quick.image': '图片',
     'quick.edit': '编辑',
     'quick.ballAria': '快捷键',
     'quick.editTitle': '编辑快捷栏',
@@ -90,6 +91,10 @@ const MESSAGES = {
     'toast.pickComboKey': '请先指定组合键中的按键',
     'toast.fullscreenDenied': '全屏被浏览器拒绝',
     'toast.fullscreenSafariHint': '在 Safari 中点击分享 → 添加到主屏幕，即可全屏使用',
+    'toast.imageSending': '正在贴图…',
+    'toast.imagePasted': '图片已粘贴，若无反应请手动按 ⌃V',
+    'toast.imageDecodeFailed': '无法读取这张图片',
+    'toast.imageFailed': '贴图失败：',
 
     'error.badResponse': '服务器响应格式错误',
     'error.requestFailed': '请求失败',
@@ -147,6 +152,7 @@ const MESSAGES = {
 
     'quick.keyboard': 'Keyboard',
     'quick.copy': 'Copy',
+    'quick.image': 'Image',
     'quick.edit': 'Edit',
     'quick.ballAria': 'Quick keys',
     'quick.editTitle': 'Edit Quick Bar',
@@ -186,6 +192,10 @@ const MESSAGES = {
     'toast.pickComboKey': 'Pick the key for this combo first',
     'toast.fullscreenDenied': 'Fullscreen was denied by the browser',
     'toast.fullscreenSafariHint': 'In Safari, tap Share → Add to Home Screen to use fullscreen',
+    'toast.imageSending': 'Pasting image…',
+    'toast.imagePasted': 'Image pasted — press ⌃V manually if nothing happened',
+    'toast.imageDecodeFailed': "Couldn't read that image",
+    'toast.imageFailed': 'Image paste failed: ',
 
     'error.badResponse': 'Malformed server response',
     'error.requestFailed': 'Request failed',

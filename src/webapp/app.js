@@ -1766,8 +1766,95 @@ function bindTap(button, handler) {
   button.addEventListener('click', () => handler());
 }
 
+/* ---- Paste a photo into the session -------------------------------------
+   There is no escape sequence that carries image bytes into a pane, so this
+   reproduces exactly what a desktop does: the image goes onto the *session
+   host's* system clipboard (POST /api/paste-image), then \x16 goes down the
+   normal input path, and whatever is in the foreground — Claude Code, say —
+   reads the clipboard the way it would for a local ⌃V. */
+
+// Claude's own long-edge cap; anything larger is bytes on the wire for nothing.
+const PASTE_IMAGE_MAX_EDGE = 1568;
+const PASTE_IMAGE_QUALITY = 0.82;
+
+function loadImageElement(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error(t('toast.imageDecodeFailed'))); };
+    image.src = url;
+  });
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    // readAsDataURL, not btoa over the bytes: btoa needs a binary string and
+    // building one from a multi-MB buffer blows the argument limit.
+    reader.onload = () => resolve(String(reader.result).split(',', 2)[1] || '');
+    reader.onerror = () => reject(new Error(t('toast.imageDecodeFailed')));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/* Screenshots stay PNG (JPEG artifacts wreck small text, which is most of what
+   gets screenshotted); camera photos go out as JPEG. */
+async function encodeImageForPaste(file) {
+  const image = await loadImageElement(file);
+  const longest = Math.max(image.naturalWidth, image.naturalHeight) || 1;
+  const scale = Math.min(1, PASTE_IMAGE_MAX_EDGE / longest);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+  const mime = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+  const blob = await new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (result) => (result ? resolve(result) : reject(new Error(t('toast.imageDecodeFailed')))),
+      mime,
+      PASTE_IMAGE_QUALITY,
+    );
+  });
+  return { mime, data: await blobToBase64(blob) };
+}
+
+async function pasteImageFile(file) {
+  if (!file || !state.currentSession) return;
+  showToast(t('toast.imageSending'));
+  try {
+    const { mime, data } = await encodeImageForPaste(file);
+    await fetchJson(apiUrl('/api/paste-image'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session: state.currentSession.id, mime, data }),
+    });
+    sendWsInput('\x16');
+    showToast(t('toast.imagePasted'));
+  } catch (error) {
+    showToast(t('toast.imageFailed') + (error?.message || ''));
+  }
+}
+
+function setupImagePaste() {
+  const input = el('image-input');
+  const button = el('image-btn');
+  if (!input || !button) return;
+  // A plain click keeps the tap a genuine user gesture, which iOS requires
+  // before it will open the photo picker (same reason keyboard-btn avoids
+  // bindTap).
+  button.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => {
+    const file = input.files && input.files[0];
+    // Clear first: picking the same photo twice otherwise fires no change event.
+    input.value = '';
+    pasteImageFile(file);
+  });
+}
+
 function setupToolbar() {
   bindTap(el('copy-btn'), openCopyOverlay);
+  setupImagePaste();
   // A plain click (not bindTap) keeps the tap a genuine user gesture so the
   // focus() inside toggleKeyboard reliably raises the soft keyboard; bindTap's
   // touchstart preventDefault is what made the first tap silently fail.
@@ -1823,9 +1910,25 @@ function setupTouchScroll() {
   }, { passive: false });
 }
 
+/* How many CSS px the page currently packs into one screen point. 1 normally;
+   2 when the page sits at the ~50% zoom iOS remembers between launches. The top
+   chrome multiplies its own sizes by this so it keeps its designed *physical*
+   size (see the .topbar zoom rule) while the terminal keeps the user's density. */
+function applyChromeScale() {
+  // screen.width/height don't swap on rotation in iOS, so compare the long edges.
+  const screenMax = Math.max(window.screen?.width || 0, window.screen?.height || 0);
+  const viewMax = Math.max(window.innerWidth || 0, window.innerHeight || 0);
+  const ratio = screenMax > 0 && viewMax > 0 ? viewMax / screenMax : 1;
+  // Only ever compensate a zoomed-OUT page, and cap it so a bogus reading can't
+  // grow the bar until it swallows the screen.
+  const scale = ratio > 1.05 ? Math.min(ratio, 3) : 1;
+  document.documentElement.style.setProperty('--chrome-scale', scale.toFixed(3));
+}
+
 function setupViewportHandling() {
   let fitFrame = null;
   const onViewportChange = () => {
+    applyChromeScale();
     const viewport = window.visualViewport;
     const height = Math.round(viewport?.height || window.innerHeight);
     const offsetTop = Math.round(viewport?.offsetTop || 0);

@@ -66,8 +66,11 @@
       <div class="quickpanel-actions">
         <button id="keyboard-btn" class="qp-action" data-i18n="quick.keyboard" type="button">键盘</button>
         <button id="copy-btn" class="qp-action" data-i18n="quick.copy" type="button">复制</button>
+        <button id="image-btn" class="qp-action" data-i18n="quick.image" type="button">图片</button>
         <button id="quickedit-open" class="qp-action" data-i18n="quick.edit" type="button">编辑</button>
       </div>
+      <!-- Opened by #image-btn; iOS offers 照片图库 / 拍照 / 浏览 from here. -->
+      <input id="image-input" class="visually-hidden" type="file" accept="image/*" tabindex="-1" aria-hidden="true">
     </div>
     <button id="quickball" class="quickball" type="button" data-i18n-aria="quick.ballAria" aria-label="快捷键" aria-expanded="false" hidden>&#x2328;</button>
 

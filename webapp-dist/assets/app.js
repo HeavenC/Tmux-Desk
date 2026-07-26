@@ -12012,6 +12012,7 @@ ${s3.join("\n")}
           "term.windowAria": "tmux \u7A97\u53E3",
           "quick.keyboard": "\u952E\u76D8",
           "quick.copy": "\u590D\u5236",
+          "quick.image": "\u56FE\u7247",
           "quick.edit": "\u7F16\u8F91",
           "quick.ballAria": "\u5FEB\u6377\u952E",
           "quick.editTitle": "\u7F16\u8F91\u5FEB\u6377\u680F",
@@ -12048,6 +12049,10 @@ ${s3.join("\n")}
           "toast.pickComboKey": "\u8BF7\u5148\u6307\u5B9A\u7EC4\u5408\u952E\u4E2D\u7684\u6309\u952E",
           "toast.fullscreenDenied": "\u5168\u5C4F\u88AB\u6D4F\u89C8\u5668\u62D2\u7EDD",
           "toast.fullscreenSafariHint": "\u5728 Safari \u4E2D\u70B9\u51FB\u5206\u4EAB \u2192 \u6DFB\u52A0\u5230\u4E3B\u5C4F\u5E55\uFF0C\u5373\u53EF\u5168\u5C4F\u4F7F\u7528",
+          "toast.imageSending": "\u6B63\u5728\u8D34\u56FE\u2026",
+          "toast.imagePasted": "\u56FE\u7247\u5DF2\u7C98\u8D34\uFF0C\u82E5\u65E0\u53CD\u5E94\u8BF7\u624B\u52A8\u6309 \u2303V",
+          "toast.imageDecodeFailed": "\u65E0\u6CD5\u8BFB\u53D6\u8FD9\u5F20\u56FE\u7247",
+          "toast.imageFailed": "\u8D34\u56FE\u5931\u8D25\uFF1A",
           "error.badResponse": "\u670D\u52A1\u5668\u54CD\u5E94\u683C\u5F0F\u9519\u8BEF",
           "error.requestFailed": "\u8BF7\u6C42\u5931\u8D25",
           "error.loadFailed": "\u52A0\u8F7D\u5931\u8D25",
@@ -12095,6 +12100,7 @@ ${s3.join("\n")}
           "term.windowAria": "tmux window",
           "quick.keyboard": "Keyboard",
           "quick.copy": "Copy",
+          "quick.image": "Image",
           "quick.edit": "Edit",
           "quick.ballAria": "Quick keys",
           "quick.editTitle": "Edit Quick Bar",
@@ -12131,6 +12137,10 @@ ${s3.join("\n")}
           "toast.pickComboKey": "Pick the key for this combo first",
           "toast.fullscreenDenied": "Fullscreen was denied by the browser",
           "toast.fullscreenSafariHint": "In Safari, tap Share \u2192 Add to Home Screen to use fullscreen",
+          "toast.imageSending": "Pasting image\u2026",
+          "toast.imagePasted": "Image pasted \u2014 press \u2303V manually if nothing happened",
+          "toast.imageDecodeFailed": "Couldn't read that image",
+          "toast.imageFailed": "Image paste failed: ",
           "error.badResponse": "Malformed server response",
           "error.requestFailed": "Request failed",
           "error.loadFailed": "Failed to load",
@@ -13777,8 +13787,79 @@ ${s3.join("\n")}
     });
     button.addEventListener("click", () => handler());
   }
+  var PASTE_IMAGE_MAX_EDGE = 1568;
+  var PASTE_IMAGE_QUALITY = 0.82;
+  function loadImageElement(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => {
+        URL.revokeObjectURL(url);
+        resolve(image);
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error(t("toast.imageDecodeFailed")));
+      };
+      image.src = url;
+    });
+  }
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
+      reader.onerror = () => reject(new Error(t("toast.imageDecodeFailed")));
+      reader.readAsDataURL(blob);
+    });
+  }
+  async function encodeImageForPaste(file) {
+    const image = await loadImageElement(file);
+    const longest = Math.max(image.naturalWidth, image.naturalHeight) || 1;
+    const scale = Math.min(1, PASTE_IMAGE_MAX_EDGE / longest);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
+    const mime = file.type === "image/png" ? "image/png" : "image/jpeg";
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (result) => result ? resolve(result) : reject(new Error(t("toast.imageDecodeFailed"))),
+        mime,
+        PASTE_IMAGE_QUALITY
+      );
+    });
+    return { mime, data: await blobToBase64(blob) };
+  }
+  async function pasteImageFile(file) {
+    if (!file || !state.currentSession) return;
+    showToast(t("toast.imageSending"));
+    try {
+      const { mime, data } = await encodeImageForPaste(file);
+      await fetchJson(apiUrl("/api/paste-image"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session: state.currentSession.id, mime, data })
+      });
+      sendWsInput("");
+      showToast(t("toast.imagePasted"));
+    } catch (error) {
+      showToast(t("toast.imageFailed") + (error?.message || ""));
+    }
+  }
+  function setupImagePaste() {
+    const input = el("image-input");
+    const button = el("image-btn");
+    if (!input || !button) return;
+    button.addEventListener("click", () => input.click());
+    input.addEventListener("change", () => {
+      const file = input.files && input.files[0];
+      input.value = "";
+      pasteImageFile(file);
+    });
+  }
   function setupToolbar() {
     bindTap(el("copy-btn"), openCopyOverlay);
+    setupImagePaste();
     el("keyboard-btn").addEventListener("click", toggleKeyboard);
     bindTap(el("quickedit-open"), openQuickEdit);
     renderQuickKeys();
@@ -13826,9 +13907,17 @@ ${s3.join("\n")}
       }
     }, { passive: false });
   }
+  function applyChromeScale() {
+    const screenMax = Math.max(window.screen?.width || 0, window.screen?.height || 0);
+    const viewMax = Math.max(window.innerWidth || 0, window.innerHeight || 0);
+    const ratio = screenMax > 0 && viewMax > 0 ? viewMax / screenMax : 1;
+    const scale = ratio > 1.05 ? Math.min(ratio, 3) : 1;
+    document.documentElement.style.setProperty("--chrome-scale", scale.toFixed(3));
+  }
   function setupViewportHandling() {
     let fitFrame = null;
     const onViewportChange = () => {
+      applyChromeScale();
       const viewport = window.visualViewport;
       const height = Math.round(viewport?.height || window.innerHeight);
       const offsetTop = Math.round(viewport?.offsetTop || 0);

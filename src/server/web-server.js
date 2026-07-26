@@ -15,6 +15,11 @@ const {
   defaultPreferencesFilePath,
   normalizePreferences,
 } = require('../main/preferences-store');
+const {
+  putImageOnClipboard,
+  decodeImagePayload,
+  MAX_IMAGE_BYTES,
+} = require('../main/clipboard-image');
 const { TerminalManager } = require('../main/terminal-manager');
 const { TmuxService } = require('../main/tmux-service');
 
@@ -211,12 +216,12 @@ function startWebServer({
     });
   }
 
-  async function readJsonBody(req) {
+  async function readJsonBody(req, limit = 64 * 1024) {
     const chunks = [];
     let size = 0;
     for await (const chunk of req) {
       size += chunk.length;
-      if (size > 64 * 1024) throw new Error('请求体过大');
+      if (size > limit) throw new Error('请求体过大');
       chunks.push(chunk);
     }
     return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
@@ -268,7 +273,7 @@ function startWebServer({
 
   // Issue a REST call to an upstream remote host as its client, using that host's
   // stored token. Times out so one dead remote can't hang an aggregate request.
-  async function upstreamRequest(connection, pathname, { method = 'GET', body, params } = {}) {
+  async function upstreamRequest(connection, pathname, { method = 'GET', body, params, timeout = 4000 } = {}) {
     const url = new URL(`${connection.base}${pathname}`);
     url.searchParams.set('token', connection.token);
     if (params) for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
@@ -278,7 +283,7 @@ function startWebServer({
       options.body = JSON.stringify(body);
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
+    const timer = setTimeout(() => controller.abort(), timeout);
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
       const payload = await response.json().catch(() => null);
@@ -432,6 +437,33 @@ function startWebServer({
         return sendError(res, 400, '无效的窗口序号');
       }
       await service.run(['select-window', '-t', `${grouped}:${windowIndex}`]);
+      return sendJson(res, 200, { ok: true });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/paste-image') {
+      // Base64 inflates by 4/3, plus JSON overhead; the phone downscales first
+      // so a real payload lands well under this.
+      const body = await readJsonBody(req, Math.ceil(MAX_IMAGE_BYTES * 1.4) + 4096);
+      const target = body.session;
+      const parsed = parseTarget(target);
+      if (parsed && parsed.kind === 'remote') {
+        // The clipboard that matters is the one on the machine running the
+        // session, so a relayed target has to be handled by ITS host, not here.
+        if (scope !== null) return sendError(res, 403, '无权访问此会话');
+        const connection = await findReshareConnection(parsed.connId);
+        if (!connection) return sendError(res, 404, '远程会话不可用');
+        await upstreamRequest(connection, '/api/paste-image', {
+          method: 'POST',
+          body: { session: parsed.id, mime: body.mime, data: body.data },
+          timeout: 30000,
+        });
+        return sendJson(res, 200, { ok: true });
+      }
+      if (typeof target !== 'string' || !SESSION_TARGET.test(target)) {
+        return sendError(res, 400, '无效的会话');
+      }
+      if (!await requireScopedTarget(res, scope, target)) return;
+      const { buffer, mime } = decodeImagePayload(body);
+      await putImageOnClipboard(buffer, mime);
       return sendJson(res, 200, { ok: true });
     }
     return sendError(res, 404, '未知接口');
