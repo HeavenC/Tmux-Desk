@@ -16,7 +16,7 @@ const {
   normalizePreferences,
 } = require('../main/preferences-store');
 const {
-  putImageOnClipboard,
+  stageImageForPaste,
   decodeImagePayload,
   MAX_IMAGE_BYTES,
 } = require('../main/clipboard-image');
@@ -451,20 +451,22 @@ function startWebServer({
         if (scope !== null) return sendError(res, 403, '无权访问此会话');
         const connection = await findReshareConnection(parsed.connId);
         if (!connection) return sendError(res, 404, '远程会话不可用');
-        await upstreamRequest(connection, '/api/paste-image', {
+        const staged = await upstreamRequest(connection, '/api/paste-image', {
           method: 'POST',
           body: { session: parsed.id, mime: body.mime, data: body.data },
           timeout: 30000,
         });
-        return sendJson(res, 200, { ok: true });
+        // The path in the reply is on the upstream host — which is exactly the
+        // machine the session runs on, so it's the one worth passing along.
+        return sendJson(res, 200, { ok: true, path: staged.path, clipboard: staged.clipboard === true });
       }
       if (typeof target !== 'string' || !SESSION_TARGET.test(target)) {
         return sendError(res, 400, '无效的会话');
       }
       if (!await requireScopedTarget(res, scope, target)) return;
       const { buffer, mime } = decodeImagePayload(body);
-      await putImageOnClipboard(buffer, mime);
-      return sendJson(res, 200, { ok: true });
+      const staged = await stageImageForPaste(buffer, mime);
+      return sendJson(res, 200, { ok: true, ...staged });
     }
     return sendError(res, 404, '未知接口');
   }

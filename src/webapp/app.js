@@ -1824,13 +1824,22 @@ async function pasteImageFile(file) {
   showToast(t('toast.imageSending'));
   try {
     const { mime, data } = await encodeImageForPaste(file);
-    await fetchJson(apiUrl('/api/paste-image'), {
+    const staged = await fetchJson(apiUrl('/api/paste-image'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session: state.currentSession.id, mime, data }),
     });
-    sendWsInput('\x16');
-    showToast(t('toast.imagePasted'));
+    if (staged.clipboard) {
+      sendWsInput('\x16');
+      showToast(t('toast.imagePasted'));
+    } else if (staged.path) {
+      // No clipboard on that host — type the absolute path instead. Agents read
+      // an image path just as happily, and the file stays put for a day.
+      sendWsInput(`${staged.path} `);
+      showToast(t('toast.imagePathSent'));
+    } else {
+      showToast(t('toast.imageFailed'));
+    }
   } catch (error) {
     showToast(t('toast.imageFailed') + (error?.message || ''));
   }

@@ -93,6 +93,7 @@ const MESSAGES = {
     'toast.fullscreenSafariHint': '在 Safari 中点击分享 → 添加到主屏幕，即可全屏使用',
     'toast.imageSending': '正在贴图…',
     'toast.imagePasted': '图片已粘贴，若无反应请手动按 ⌃V',
+    'toast.imagePathSent': '已发送图片路径',
     'toast.imageDecodeFailed': '无法读取这张图片',
     'toast.imageFailed': '贴图失败：',
 
@@ -194,6 +195,7 @@ const MESSAGES = {
     'toast.fullscreenSafariHint': 'In Safari, tap Share → Add to Home Screen to use fullscreen',
     'toast.imageSending': 'Pasting image…',
     'toast.imagePasted': 'Image pasted — press ⌃V manually if nothing happened',
+    'toast.imagePathSent': 'Sent the image path',
     'toast.imageDecodeFailed': "Couldn't read that image",
     'toast.imageFailed': 'Image paste failed: ',
 

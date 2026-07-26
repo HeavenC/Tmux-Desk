@@ -10,6 +10,11 @@ const path = require('path');
 // client that skipped the resize or someone poking the endpoint.
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 
+// Pasted images are kept on disk, not deleted after the clipboard write: the
+// path is the fallback when the clipboard route fails, and an agent that reads
+// the file later still needs it there.
+const KEEP_MS = 24 * 60 * 60 * 1000;
+
 const EXTENSIONS = {
   'image/png': '.png',
   'image/jpeg': '.jpg',
@@ -28,43 +33,76 @@ function run(file, args) {
   });
 }
 
+/* Deliberately NOT os.tmpdir(): deploy.sh used to overwrite the exported TMPDIR
+   with a staging dir it then deleted, and `open` handed that environment to the
+   app — so os.tmpdir() pointed at a directory that no longer existed and the
+   first mkdtemp died with ENOENT. A path we derive ourselves can't be poisoned
+   by whatever launched us, and it also gives the fallback a stable location. */
+function pasteDir() {
+  if (process.platform === 'darwin') {
+    return path.join(os.homedir(), 'Library', 'Caches', 'tmux-desk', 'pasted-images');
+  }
+  return path.join(os.homedir(), '.cache', 'tmux-desk', 'pasted-images');
+}
+
+async function prunePasted(dir) {
+  const cutoff = Date.now() - KEEP_MS;
+  const names = await fs.readdir(dir).catch(() => []);
+  await Promise.all(names.map(async (name) => {
+    const file = path.join(dir, name);
+    const stat = await fs.stat(file).catch(() => null);
+    if (stat && stat.mtimeMs < cutoff) await fs.rm(file, { force: true }).catch(() => {});
+  }));
+}
+
 /**
- * Put an image on the system clipboard, the way ⌘C on a file in Finder would.
+ * Write an uploaded image next to the session host and try to put it on that
+ * host's system clipboard.
  *
- * There is no escape sequence that carries image bytes into a pane, so a phone
- * pick can't be "typed" into the terminal. What Claude Code (and anything else
- * that handles Ctrl-V) actually does on macOS is read the *system* clipboard
- * when it sees the paste key — so the image goes on this machine's clipboard
- * first, and the caller then sends \x16 through the normal input path.
+ * No escape sequence carries image bytes into a pane, so a phone pick can't be
+ * "typed" into the terminal. What Claude Code does on macOS is read the *system*
+ * clipboard when it sees the paste key, so the image goes on this machine's
+ * clipboard and the caller then sends \x16 down the normal input path. When that
+ * can't work (non-macOS host, no GUI session, osascript refused) the caller gets
+ * the absolute path back instead and types that — an agent reads the file just
+ * as happily.
  *
  * Clipboard image data has to be a known picture class; `«class PNGf»` is the
- * one every consumer understands, so non-PNG uploads go through sips first
- * rather than being handed over as-is.
+ * one every consumer understands, so non-PNG uploads go through sips first.
+ *
+ * @returns {Promise<{path: string, clipboard: boolean}>}
  */
-async function putImageOnClipboard(buffer, mime) {
-  if (process.platform !== 'darwin') {
-    throw new Error('贴图目前只支持 macOS 主机');
-  }
+async function stageImageForPaste(buffer, mime) {
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new Error('图片内容为空');
   if (buffer.length > MAX_IMAGE_BYTES) throw new Error('图片过大');
 
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'tmux-desk-paste-'));
-  const source = path.join(dir, `image${EXTENSIONS[mime] || '.png'}`);
+  const dir = pasteDir();
+  await fs.mkdir(dir, { recursive: true });
+  await prunePasted(dir).catch(() => {});
+
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '');
+  const base = `paste-${stamp}-${crypto.randomBytes(3).toString('hex')}`;
+  const source = path.join(dir, base + (EXTENSIONS[mime] || '.png'));
+  await fs.writeFile(source, buffer);
+
+  if (process.platform !== 'darwin') return { path: source, clipboard: false };
+
   try {
-    await fs.writeFile(source, buffer);
     let png = source;
     if (mime !== 'image/png') {
-      png = path.join(dir, 'image-converted.png');
+      png = path.join(dir, `${base}.png`);
       await run('sips', ['-s', 'format', 'png', source, '--out', png]);
     }
-    // JSON.stringify gives an AppleScript-compatible quoted string (same
-    // escaping rules for " and \), and the path is one we generated.
+    // JSON.stringify produces an AppleScript-compatible quoted string (same
+    // escaping for " and \), and the path is one we generated.
     await run('osascript', [
       '-e',
       `set the clipboard to (read (POSIX file ${JSON.stringify(png)}) as «class PNGf»)`,
     ]);
-  } finally {
-    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    return { path: png, clipboard: true };
+  } catch {
+    // Keep the file and let the caller fall back to sending its path.
+    return { path: source, clipboard: false };
   }
 }
 
@@ -79,4 +117,4 @@ function decodeImagePayload({ data, mime }) {
   return { buffer, mime };
 }
 
-module.exports = { putImageOnClipboard, decodeImagePayload, MAX_IMAGE_BYTES };
+module.exports = { stageImageForPaste, decodeImagePayload, pasteDir, MAX_IMAGE_BYTES };

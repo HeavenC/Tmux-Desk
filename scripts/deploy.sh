@@ -62,33 +62,36 @@ if [ ! -f "$ASAR_PATH" ]; then
   exit 1
 fi
 
-TMPDIR=$(mktemp -d)
+# NOT TMPDIR: that name is already exported on macOS, and `open` hands the app
+# our environment — pointing it at a directory this script deletes at the end
+# left the running app with a dead os.tmpdir() (mkdtemp ENOENT on first use).
+STAGE_DIR=$(mktemp -d)
 ASAR_CLI="$PROJECT_DIR/node_modules/@electron/asar/bin/asar.js"
 
 echo "  Extracting app.asar..."
-node "$ASAR_CLI" extract "$ASAR_PATH" "$TMPDIR"
+node "$ASAR_CLI" extract "$ASAR_PATH" "$STAGE_DIR"
 
 echo "  Syncing missing runtime dependencies..."
-node "$PROJECT_DIR/scripts/sync-runtime-dependencies.js" "$PROJECT_DIR" "$TMPDIR"
+node "$PROJECT_DIR/scripts/sync-runtime-dependencies.js" "$PROJECT_DIR" "$STAGE_DIR"
 
 echo "  Copying renderer-dist..."
-rm -rf "$TMPDIR/renderer-dist"
-cp -R "$PROJECT_DIR/renderer-dist" "$TMPDIR/"
+rm -rf "$STAGE_DIR/renderer-dist"
+cp -R "$PROJECT_DIR/renderer-dist" "$STAGE_DIR/"
 
 echo "  Copying webapp-dist..."
-rm -rf "$TMPDIR/webapp-dist"
-cp -R "$PROJECT_DIR/webapp-dist" "$TMPDIR/"
+rm -rf "$STAGE_DIR/webapp-dist"
+cp -R "$PROJECT_DIR/webapp-dist" "$STAGE_DIR/"
 
 echo "  Copying src/ (main process)..."
-rm -rf "$TMPDIR/src"
-cp -R "$PROJECT_DIR/src" "$TMPDIR/"
+rm -rf "$STAGE_DIR/src"
+cp -R "$PROJECT_DIR/src" "$STAGE_DIR/"
 
 echo "  Copying package.json..."
-cp "$PROJECT_DIR/package.json" "$TMPDIR/"
+cp "$PROJECT_DIR/package.json" "$STAGE_DIR/"
 
 echo "  Repacking app.asar..."
-node "$ASAR_CLI" pack "$TMPDIR" "$ASAR_PATH"
-rm -rf "$TMPDIR"
+node "$ASAR_CLI" pack "$STAGE_DIR" "$ASAR_PATH"
+rm -rf "$STAGE_DIR"
 
 # 修改 asar 后签名已失效，必须重新 ad-hoc 签名，否则 macOS 拒绝启动
 echo "  Re-signing app bundle..."
