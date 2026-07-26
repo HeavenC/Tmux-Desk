@@ -1499,6 +1499,27 @@ function resetQuickKeys() {
 
 // ---- The floating ball (drag to move, tap to open) ----
 
+/* Safe-area insets, measured off the #safe-probe element (see styles.css for why
+   a probe and not a custom property). Launched from the home screen the webview
+   is full-bleed, so anything positioned from JS has to keep clear of the notch
+   and the rounded corners itself — the CSS padding that protects the topbars
+   can't reach here. */
+function safeInsets() {
+  const probe = el('safe-probe');
+  if (!probe) return { top: 0, right: 0, bottom: 0, left: 0 };
+  const style = getComputedStyle(probe);
+  const read = (name) => {
+    const value = parseFloat(style[name]);
+    return Number.isFinite(value) ? value : 0;
+  };
+  return {
+    top: read('paddingTop'),
+    right: read('paddingRight'),
+    bottom: read('paddingBottom'),
+    left: read('paddingLeft'),
+  };
+}
+
 function openQuickPanel() {
   state.panelOpen = true;
   refreshQuickKeysFromServer();
@@ -1527,13 +1548,14 @@ function positionQuickPanel() {
   if (!panel || !ball || panel.hidden) return;
   const ballRect = ball.getBoundingClientRect();
   const margin = 8;
+  const safe = safeInsets();
   const pw = panel.offsetWidth;
   const ph = panel.offsetHeight;
   const openLeft = ballRect.left + ballRect.width / 2 > window.innerWidth / 2;
   let left = openLeft ? ballRect.left - pw - margin : ballRect.right + margin;
-  left = Math.max(margin, Math.min(left, window.innerWidth - pw - margin));
+  left = Math.max(safe.left + margin, Math.min(left, window.innerWidth - safe.right - pw - margin));
   let top = ballRect.top + ballRect.height / 2 - ph / 2;
-  top = Math.max(margin, Math.min(top, window.innerHeight - ph - margin));
+  top = Math.max(safe.top + margin, Math.min(top, window.innerHeight - safe.bottom - ph - margin));
   panel.style.left = `${left}px`;
   panel.style.top = `${top}px`;
 }
@@ -1544,7 +1566,11 @@ function loadBallPosition() {
   let pos = null;
   try { pos = JSON.parse(localStorage.getItem(BALL_KEY)); } catch { pos = null; }
   const size = 56;
-  const defaultPos = { x: window.innerWidth - size - 12, y: Math.round(window.innerHeight * 0.62) };
+  const safe = safeInsets();
+  const defaultPos = {
+    x: window.innerWidth - safe.right - size - 12,
+    y: Math.round(window.innerHeight * 0.62),
+  };
   applyBallPosition(pos && Number.isFinite(pos.x) && Number.isFinite(pos.y) ? pos : defaultPos);
 }
 
@@ -1552,12 +1578,13 @@ function ballBounds() {
   const ball = el('quickball');
   const size = ball.offsetWidth || 56;
   const margin = 6;
+  const safe = safeInsets();
   return {
     size,
-    minX: margin,
-    maxX: window.innerWidth - size - margin,
-    minY: margin,
-    maxY: window.innerHeight - size - margin,
+    minX: safe.left + margin,
+    maxX: window.innerWidth - safe.right - size - margin,
+    minY: safe.top + margin,
+    maxY: window.innerHeight - safe.bottom - size - margin,
   };
 }
 

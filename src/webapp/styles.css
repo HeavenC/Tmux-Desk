@@ -3,6 +3,23 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Safe-area probe: env() only resolves inside a real property, so a custom
+   property holding it reads back from JS as the literal `env(...)` token
+   stream. Parking the four insets on a zero-sized element's padding is what
+   makes them measurable — the JS-positioned quick-key ball needs the numbers
+   to stay clear of the notch the way the CSS chrome does. */
+#safe-probe {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  visibility: hidden;
+  pointer-events: none;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+           env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+
 /* Semantic layer for the phone webapp, mapped onto the shared Apple tokens in
    apple-tokens.css. Dark is the default here (no attribute yet when the page
    first paints), light is the override below — matching how app.js applies it.
@@ -137,7 +154,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: max(env(safe-area-inset-top), 12px) 16px 12px;
+  /* Horizontal safe-area insets matter as much as the top one: added to the home
+     screen this is a full-bleed webview, so in landscape the notch (59px) and the
+     home-indicator side (21px) sit right on top of the corner buttons. The 16px
+     floor also keeps them clear of iOS's edge-swipe strip in portrait. */
+  padding: max(env(safe-area-inset-top), 12px)
+           max(env(safe-area-inset-right), 16px) 12px
+           max(env(safe-area-inset-left), 16px);
   /* Floating translucent chrome, iOS nav-bar style: the list scrolls beneath it
      rather than being clipped by an opaque strip. */
   background: var(--surface);
@@ -191,7 +214,7 @@ body {
   display: flex;
   gap: 8px;
   min-height: 58px;
-  padding: 7px 12px;
+  padding: 7px max(env(safe-area-inset-right), 12px) 7px max(env(safe-area-inset-left), 12px);
   overflow-x: auto;
   overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
@@ -331,7 +354,9 @@ body {
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 12px 12px calc(env(safe-area-inset-bottom) + 12px);
+  padding: 12px max(env(safe-area-inset-right), 12px)
+           calc(env(safe-area-inset-bottom) + 12px)
+           max(env(safe-area-inset-left), 12px);
 }
 
 .session-list {
@@ -572,7 +597,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 14px;
+  padding: 8px max(env(safe-area-inset-right), 14px) 8px max(env(safe-area-inset-left), 14px);
   background: var(--banner-bg);
   color: var(--banner-text);
   font-size: 13px;
@@ -587,7 +612,12 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: max(env(safe-area-inset-top), 6px) 8px 6px;
+  /* Same reasoning as .topbar, same 16px leading inset: the back button used to
+     start at x=8, i.e. under the notch in landscape and deep inside iOS's
+     edge-swipe strip in portrait. */
+  padding: max(env(safe-area-inset-top), 6px)
+           max(env(safe-area-inset-right), 16px) 6px
+           max(env(safe-area-inset-left), 16px);
   min-height: 52px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -631,7 +661,9 @@ body {
 .terminal-container {
   flex: 1;
   overflow: hidden;
-  padding: 4px 4px 0;
+  /* Keep the grid out from under the notch / rounded corners in landscape,
+     otherwise the leftmost columns are unreadable on a home-screen launch. */
+  padding: 4px max(env(safe-area-inset-right), 4px) 0 max(env(safe-area-inset-left), 4px);
   min-height: 0;
   touch-action: none;
 }
@@ -812,7 +844,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 9px 16px 16px;
+  padding: 9px max(env(safe-area-inset-right), 16px) 16px max(env(safe-area-inset-left), 16px);
   padding-bottom: max(16px, env(safe-area-inset-bottom));
   border: 0;
   /* iOS sheet corners are large and only on the leading edge. */
@@ -939,7 +971,9 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: max(env(safe-area-inset-top), 12px) 16px 12px;
+  padding: max(env(safe-area-inset-top), 12px)
+           max(env(safe-area-inset-right), 16px) 12px
+           max(env(safe-area-inset-left), 16px);
   background: var(--surface);
   backdrop-filter: var(--blur-regular);
   border-bottom: 1px solid var(--border);
@@ -955,7 +989,7 @@ body {
 .copy-text {
   flex: 1;
   margin: 0;
-  padding: 14px 16px;
+  padding: 14px max(env(safe-area-inset-right), 16px) 14px max(env(safe-area-inset-left), 16px);
   overflow: auto;
   -webkit-overflow-scrolling: touch;
   white-space: pre-wrap;
@@ -972,7 +1006,9 @@ body {
 .copy-footer {
   display: flex;
   gap: 10px;
-  padding: 10px 16px max(16px, env(safe-area-inset-bottom));
+  padding: 10px max(env(safe-area-inset-right), 16px)
+           max(16px, env(safe-area-inset-bottom))
+           max(env(safe-area-inset-left), 16px);
   background: var(--surface);
   backdrop-filter: var(--blur-regular);
   border-top: 1px solid var(--border);
