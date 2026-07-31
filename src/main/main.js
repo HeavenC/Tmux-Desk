@@ -8,6 +8,7 @@ const { KeepAwakeController } = require('./keep-awake-controller');
 const { menuText, normalizeMenuLocale } = require('./menu-i18n');
 const { listDirectory, toBrowsablePath } = require('./file-service');
 const { PreferencesStore } = require('./preferences-store');
+const { SessionSnapshotService } = require('./session-snapshot');
 const { TerminalManager } = require('./terminal-manager');
 const { TmuxService } = require('./tmux-service');
 const { createWebControl } = require('./web-control');
@@ -33,6 +34,7 @@ let preferencesStore = null;
 let terminalManager = null;
 let webControl = null;
 let keepAwakeController = null;
+let snapshotService = null;
 
 function sendToRenderer(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
@@ -163,11 +165,10 @@ async function bootstrap() {
   const prefsOverride = typeof process.env.TMUX_DESK_PREFERENCES_FILE === 'string'
     ? process.env.TMUX_DESK_PREFERENCES_FILE.trim()
     : '';
-  preferencesStore = new PreferencesStore({
-    filePath: prefsOverride
-      ? path.resolve(prefsOverride)
-      : path.join(app.getPath('userData'), 'preferences.json'),
-  });
+  const preferencesFilePath = prefsOverride
+    ? path.resolve(prefsOverride)
+    : path.join(app.getPath('userData'), 'preferences.json');
+  preferencesStore = new PreferencesStore({ filePath: preferencesFilePath });
   keepAwakeController = new KeepAwakeController({ powerSaveBlocker, powerMonitor });
   keepAwakeController.initialize((await preferencesStore.load()).keepAwake);
   // TMUX_DESK_SOCKET runs every tmux command against a dedicated socket
@@ -191,6 +192,17 @@ async function bootstrap() {
     socketName,
     sendEvent: sendToRenderer,
   });
+  // Own the session snapshot rather than trusting the user to have a tmux
+  // restore plugin: after a reboot the tmux server is gone, and without this
+  // every session goes with it (the tags survive only because they live in
+  // preferences.json). Lives next to preferences.json so a demo instance
+  // pointed at its own preferences gets its own snapshot too.
+  snapshotService = new SessionSnapshotService({
+    tmuxService,
+    preferencesStore,
+    filePath: path.join(path.dirname(preferencesFilePath), 'session-snapshot.json'),
+    onChange: (health) => sendToRenderer('snapshot:changed', health),
+  });
   webControl = createWebControl({ preferencesStore });
   // Auto-open the mobile/cross-device web share at launch when the user opted in.
   // Fire-and-forget: a failure (e.g. the port is held by an external daemon) must
@@ -206,6 +218,7 @@ async function bootstrap() {
     preferencesStore,
     keepAwakeController,
     webControl,
+    snapshotService,
     chooseDirectory: async () => {
       const result = await dialog.showOpenDialog(mainWindow, {
         title: '选择 tmux 会话工作目录',
@@ -276,6 +289,14 @@ async function bootstrap() {
   installContentSecurityPolicy();
   installApplicationMenu();
   await createMainWindow();
+  // After the window exists, so the health result has somewhere to land. The
+  // recovery pass waits out any foreign restore plugin before deciding what is
+  // missing, hence fire-and-forget rather than blocking the first paint.
+  snapshotService.start().catch(() => {});
+  // A snapshot taken while going to sleep / shutting down is the one that
+  // matters: it is the last state before the tmux server dies with the machine.
+  powerMonitor.on('suspend', () => snapshotService?.save('suspend').catch(() => {}));
+  powerMonitor.on('shutdown', () => snapshotService?.save('shutdown').catch(() => {}));
 }
 
 app.whenReady().then(bootstrap).catch((error) => {
@@ -290,6 +311,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 app.on('before-quit', () => {
+  // Best-effort final snapshot; quitting the app does not kill the tmux server,
+  // but it is the last moment we are guaranteed to be running.
+  snapshotService?.save('quit').catch(() => {});
+  snapshotService?.dispose();
   terminalManager?.dispose();
   keepAwakeController?.dispose();
   webControl?.dispose().catch(() => {});

@@ -5,6 +5,7 @@ const { randomUUID } = require('node:crypto');
 const lockfile = require('proper-lockfile');
 const { DEFAULT_TMUX_SETTINGS, normalizeTmuxSettings } = require('../shared/tmux-settings');
 const { normalizeQuickKeyEntry } = require('../shared/quick-key');
+const { DEFAULT_SESSION_RESTORE, normalizeSessionRestore } = require('./session-snapshot');
 const {
   TAG_COLORS,
   normalizeSessionKey,
@@ -36,6 +37,9 @@ const DEFAULT_PREFERENCES = Object.freeze({
   // The app-managed tmux profile is deliberately complete and deterministic:
   // a user does not need a ~/.tmux.conf to get the same iTerm-like behavior.
   tmuxSettings: DEFAULT_TMUX_SETTINGS,
+  // Own the session snapshot/restore instead of depending on the user having
+  // tmux-resurrect/continuum (see session-snapshot.js).
+  sessionRestore: DEFAULT_SESSION_RESTORE,
 });
 const SIDEBAR_WIDTH_RANGE = Object.freeze({ min: 200, max: 420 });
 const TAG_RAIL_WIDTH_RANGE = Object.freeze({ min: 180, max: 420 });
@@ -139,6 +143,7 @@ function normalizePreferences(value = {}) {
     webQuickKeys: normalizeWebQuickKeys(value.webQuickKeys),
     remoteConnections: normalizeRemoteConnections(value.remoteConnections),
     tmuxSettings: normalizeTmuxSettings(value.tmuxSettings, value.tmuxDefaults),
+    sessionRestore: normalizeSessionRestore(value.sessionRestore),
   };
 }
 

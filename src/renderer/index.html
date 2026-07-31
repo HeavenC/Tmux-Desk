@@ -173,6 +173,13 @@
                         <p id="activeSessionPath" data-i18n="session.selectLocal">选择一个本机会话开始工作</p>
                     </div>
                     <div class="workspace-actions">
+                        <button
+                            class="icon-button snapshot-health hidden no-drag"
+                            id="snapshotHealthButton"
+                            aria-label="会话快照状态"
+                            title="会话快照状态"
+                            data-i18n-aria="snapshot.buttonAria"
+                        ></button>
                         <label class="pane-picker no-drag hidden" id="panePickerWrap">
                             <span id="panePickerIcon"></span>
                             <select
@@ -609,6 +616,42 @@
                     </section>
                     <section>
                         <div class="settings-section-heading">
+                            <h3 data-i18n="snapshot.settingsTitle">会话快照与恢复</h3>
+                            <button type="button" class="button" id="snapshotOpenButton" data-i18n="snapshot.openPanel">查看状态</button>
+                        </div>
+                        <p class="settings-section-note" data-i18n="snapshot.settingsNote">Tmux Desk 自己保存会话、窗口、分屏和每个面板的工作目录。电脑重启后 tmux 服务会连同会话一起消失（Tag 存在偏好文件里所以还在），这份快照负责把它们原样带回来，不需要安装 tmux-resurrect。</p>
+                        <label class="settings-toggle-row" for="snapshotEnabledToggle">
+                            <span class="settings-toggle-copy">
+                                <strong data-i18n="snapshot.optEnabled">定期备份会话</strong>
+                                <span data-i18n="snapshot.optEnabledDescription">每隔几分钟、以及会话增删改、休眠和退出前各存一次。</span>
+                            </span>
+                            <input type="checkbox" id="snapshotEnabledToggle" class="settings-switch" role="switch" data-i18n-aria="snapshot.optEnabled" />
+                        </label>
+                        <label class="settings-toggle-row" for="snapshotAutoRestoreToggle">
+                            <span class="settings-toggle-copy">
+                                <strong data-i18n="snapshot.optAutoRestore">启动时自动恢复</strong>
+                                <span data-i18n="snapshot.optAutoRestoreDescription">仅在 tmux 服务重启过（例如开机后）且会话确实不存在时补建，不会覆盖你手动关掉的会话。</span>
+                            </span>
+                            <input type="checkbox" id="snapshotAutoRestoreToggle" class="settings-switch" role="switch" data-i18n-aria="snapshot.optAutoRestore" />
+                        </label>
+                        <label class="settings-toggle-row" for="snapshotRepairToggle">
+                            <span class="settings-toggle-copy">
+                                <strong data-i18n="snapshot.optRepair">自动修正工作目录</strong>
+                                <span data-i18n="snapshot.optRepairDescription">恢复后有面板停在主目录时，往空闲的 shell 里补一条 cd 回到原目录；正在运行程序的面板不会被打扰。</span>
+                            </span>
+                            <input type="checkbox" id="snapshotRepairToggle" class="settings-switch" role="switch" data-i18n-aria="snapshot.optRepair" />
+                        </label>
+                        <label class="settings-toggle-row" for="snapshotIntervalInput">
+                            <span class="settings-toggle-copy">
+                                <strong data-i18n="snapshot.optInterval">备份间隔（分钟）</strong>
+                                <span data-i18n="snapshot.optIntervalDescription">1–60 分钟。</span>
+                            </span>
+                            <input type="number" id="snapshotIntervalInput" class="settings-number" min="1" max="60" step="1" data-i18n-aria="snapshot.optInterval" />
+                        </label>
+                        <p class="settings-section-note" id="snapshotSettingsStatus"></p>
+                    </section>
+                    <section>
+                        <div class="settings-section-heading">
                             <h3 data-i18n="settings.tmux">终端体验</h3>
                             <button type="button" class="button" id="tmuxResetButton" data-i18n="settings.tmuxReset">恢复 iTerm 风格默认值</button>
                         </div>
@@ -678,6 +721,36 @@
                     </section>
                 </div>
                 <footer>
+                    <button class="button primary modal-cancel" data-i18n="action.done">完成</button>
+                </footer>
+            </div>
+        </div>
+
+        <div class="modal-backdrop hidden no-drag" id="snapshotModal">
+            <div class="modal snapshot-modal">
+                <header>
+                    <div>
+                        <h2 data-i18n="snapshot.title">会话快照</h2>
+                        <p data-i18n="snapshot.subtitle">重启后靠这份快照把会话和它们的工作目录带回来。</p>
+                    </div>
+                    <button
+                        type="button"
+                        class="icon-button modal-close"
+                        aria-label="关闭"
+                        data-i18n-aria="action.close"
+                    ></button>
+                </header>
+                <div class="snapshot-scroll">
+                    <div class="snapshot-summary" id="snapshotSummary"></div>
+                    <div class="snapshot-issues" id="snapshotIssues"></div>
+                    <div class="snapshot-paths" id="snapshotPaths"></div>
+                </div>
+                <footer class="snapshot-footer">
+                    <div class="snapshot-footer-actions">
+                        <button type="button" class="button" id="snapshotSaveButton" data-i18n="snapshot.saveNow">立即备份</button>
+                        <button type="button" class="button" id="snapshotRestoreButton" data-i18n="snapshot.restoreNow">从快照恢复</button>
+                        <button type="button" class="button" id="snapshotRevealButton" data-i18n="snapshot.revealLog">打开日志目录</button>
+                    </div>
                     <button class="button primary modal-cancel" data-i18n="action.done">完成</button>
                 </footer>
             </div>

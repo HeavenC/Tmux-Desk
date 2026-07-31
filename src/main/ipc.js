@@ -2,6 +2,7 @@ const path = require('node:path');
 const { nativeTheme } = require('electron');
 const { normalizeTagId, normalizeTagName } = require('../shared/tag-model');
 const { validateTmuxSettings } = require('../shared/tmux-settings');
+const { normalizeSessionRestore } = require('./session-snapshot');
 const { parseConnectionInput } = require('../shared/remote-connection');
 const { discoverCodebases } = require('./codebase-import');
 
@@ -53,6 +54,11 @@ const IPC_CHANNELS = Object.freeze([
   'web:status',
   'web:start',
   'web:stop',
+  'snapshot:status',
+  'snapshot:save',
+  'snapshot:restore',
+  'snapshot:repair-cwd',
+  'snapshot:reveal',
 ]);
 const WEB_SESSION_PREFIX = '_web_';
 
@@ -162,7 +168,7 @@ function validateTabOrders(value) {
 
 function validatePreferencesPatch(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('偏好设置无效');
-  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders', 'keepAwake', 'autoShare', 'tmuxSettings']);
+  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders', 'keepAwake', 'autoShare', 'tmuxSettings', 'sessionRestore']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new Error('偏好字段无效');
   }
@@ -201,6 +207,12 @@ function validatePreferencesPatch(value) {
     result.autoShare = value.autoShare;
   }
   if ('tmuxSettings' in value) result.tmuxSettings = validateTmuxSettings(value.tmuxSettings);
+  if ('sessionRestore' in value) {
+    if (!value.sessionRestore || typeof value.sessionRestore !== 'object' || Array.isArray(value.sessionRestore)) {
+      throw new Error('会话快照设置无效');
+    }
+    result.sessionRestore = normalizeSessionRestore(value.sessionRestore);
+  }
   if ('tabOrders' in value) result.tabOrders = validateTabOrders(value.tabOrders);
   return result;
 }
@@ -223,11 +235,18 @@ function buildTagExport(preferences) {
   };
 }
 
-function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, chooseDirectory, fileBridge, tagFileIO, webControl, setAppLocale, keepAwakeController }) {
+function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, chooseDirectory, fileBridge, tagFileIO, webControl, setAppLocale, keepAwakeController, snapshotService }) {
   const requireWebControl = () => {
     if (!webControl) throw new Error('Web 服务不可用');
     return webControl;
   };
+  const requireSnapshot = () => {
+    if (!snapshotService) throw new Error('会话快照服务不可用');
+    return snapshotService;
+  };
+  // Every structural change to the session tree is worth a fresh snapshot, but
+  // debounced: a burst of splits must not turn into a burst of tmux queries.
+  const touchSnapshot = (reason) => { snapshotService?.scheduleSave(reason); };
   const handlers = {
     'system:get-status': () => tmuxService.getStatus(),
     'system:choose-directory': () => chooseDirectory(),
@@ -236,7 +255,11 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
     'sessions:list': async () => (await tmuxService.listSessions())
       .filter((session) => !session.name.startsWith(WEB_SESSION_PREFIX)),
     'sessions:detail': (_event, target) => tmuxService.getSessionDetail(validateTarget(target)),
-    'sessions:create': (_event, input) => tmuxService.createSession(validateSessionInput(input)),
+    'sessions:create': async (_event, input) => {
+      const created = await tmuxService.createSession(validateSessionInput(input));
+      touchSnapshot('session-create');
+      return created;
+    },
     'sessions:duplicate': async (_event, input) => {
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('复制参数无效');
       const source = validateTarget(input.source);
@@ -244,6 +267,7 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       const name = validateSessionName(input.name);
       const created = await tmuxService.duplicateSession(source, name);
       await preferencesStore.copySessionTags(sourceName, created.name);
+      touchSnapshot('session-duplicate');
       return created;
     },
     'sessions:rename': async (_event, input) => {
@@ -253,6 +277,7 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       const name = validateSessionName(input.name);
       await tmuxService.renameSession(target, name);
       await preferencesStore.renameSessionReferences(oldName, name);
+      touchSnapshot('session-rename');
       return { name };
     },
     'sessions:kill': async (_event, input) => {
@@ -261,6 +286,7 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       const sessionName = validateSessionName(input.sessionName);
       await tmuxService.killSession(target);
       await preferencesStore.removeSessionTags(sessionName);
+      touchSnapshot('session-kill');
       return true;
     },
     'sessions:toggle-favorite': (_event, name) => preferencesStore.toggleFavorite(validateSessionName(name)),
@@ -312,12 +338,18 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
     },
     'windows:select': (_event, target) => tmuxService.selectWindow(validateTarget(target, 'window')),
     'panes:select': (_event, target) => tmuxService.selectPane(validateTarget(target, 'pane')),
-    'panes:kill': (_event, target) => tmuxService.killPane(validateTarget(target, 'pane')),
-    'panes:split': (_event, input) => {
+    'panes:kill': async (_event, target) => {
+      const result = await tmuxService.killPane(validateTarget(target, 'pane'));
+      touchSnapshot('pane-kill');
+      return result;
+    },
+    'panes:split': async (_event, input) => {
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('分割参数无效');
       const target = validateTarget(input.target, 'session');
       const orientation = input.orientation === 'horizontal' ? 'horizontal' : 'vertical';
-      return tmuxService.splitPane(target, orientation);
+      const result = await tmuxService.splitPane(target, orientation);
+      touchSnapshot('pane-split');
+      return result;
     },
     'app:set-locale': (_event, locale) => {
       if (typeof setAppLocale === 'function') setAppLocale(locale === 'en' ? 'en' : 'zh');
@@ -336,6 +368,9 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       if ('tmuxSettings' in validated) {
         await tmuxService.applySettingsToAllSessions(preferences.tmuxSettings);
       }
+      // Re-arm the snapshot timer on the new interval and take one right away,
+      // so toggling the feature on has a visible effect instead of waiting.
+      if ('sessionRestore' in validated) snapshotService?.restart();
       return preferences;
     },
     'files:list': (_event, dirPath) => fileBridge.list(validateFilePath(dirPath)),
@@ -361,6 +396,26 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
     'web:status': (_event, sessionName) => requireWebControl().status(validateOptionalSessionName(sessionName)),
     'web:start': (_event, sessionName) => requireWebControl().start(validateOptionalSessionName(sessionName)),
     'web:stop': () => requireWebControl().stop(),
+    'snapshot:status': () => requireSnapshot().health(),
+    'snapshot:save': async () => {
+      await requireSnapshot().save('manual');
+      return snapshotService.health();
+    },
+    'snapshot:restore': async () => {
+      const report = await requireSnapshot().restoreNow();
+      return { report, status: snapshotService.health() };
+    },
+    'snapshot:repair-cwd': async () => {
+      const result = await requireSnapshot().repairCwd();
+      return { ...result, status: snapshotService.health() };
+    },
+    // Point the user at the snapshot + log files they may need to hand back.
+    // Writing a line first guarantees the file exists, otherwise Finder ignores
+    // the reveal on a machine that has never logged anything.
+    'snapshot:reveal': async () => {
+      await requireSnapshot().log('info', '用户打开了日志所在目录');
+      return fileBridge.reveal(snapshotService.logPath);
+    },
   };
   for (const channel of IPC_CHANNELS) ipcMain.handle(channel, handlers[channel]);
   return handlers;

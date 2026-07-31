@@ -25,6 +25,7 @@ const state = {
     theme: 'light', favorites: [], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null, sidebarWidth: null,
     tagRailExpanded: false, tagRailWidth: null, keepAwake: false, autoShare: false, remoteConnections: [],
     tmuxSettings: { ...DEFAULT_TMUX_SETTINGS },
+    sessionRestore: { enabled: true, autoRestore: true, repairCwd: true, intervalMinutes: 3 },
   },
   sessions: [],
   selectedSessionId: null,
@@ -37,6 +38,8 @@ const state = {
   source: { kind: 'local', id: 'local' },
   remoteConnections: [],
   sourceStatus: 'online',
+  // Session snapshot health, pushed from the main process (see session-snapshot.js).
+  snapshot: null,
 };
 
 const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
@@ -71,6 +74,10 @@ function cacheElements() {
     'filesToggleButton', 'fileBrowser', 'fbTree', 'fbPath', 'fbRevealButton', 'fbRefreshButton', 'fbCollapseButton',
     'sidebarResizer', 'tagRailResizer', 'tagRailToggleButton', 'settingsScroll', 'keepAwakeToggle', 'autoShareToggle',
     'tmuxSettingsGroups', 'tmuxResetButton', 'tmuxAdvancedConfig', 'tmuxAdvancedError', 'tmuxAdvancedApplyButton',
+    'snapshotHealthButton', 'snapshotModal', 'snapshotSummary', 'snapshotIssues', 'snapshotPaths',
+    'snapshotSaveButton', 'snapshotRestoreButton', 'snapshotRevealButton', 'snapshotOpenButton',
+    'snapshotEnabledToggle', 'snapshotAutoRestoreToggle', 'snapshotRepairToggle', 'snapshotIntervalInput',
+    'snapshotSettingsStatus',
   ]) refs[id] = document.getElementById(id);
 }
 
@@ -88,6 +95,7 @@ function installIcons() {
   refs.commandSearchIcon.innerHTML = icon('search', 18);
   refs.filesToggleButton.innerHTML = icon('sidebar', 17);
   refs.mobileAccessButton.innerHTML = railButtonContent('phone', t('rail.share'), 18);
+  refs.snapshotHealthButton.innerHTML = icon('alert', 17);
   refs.fbRevealButton.innerHTML = icon('folder', 15);
   refs.fbRefreshButton.innerHTML = icon('refresh', 15);
   refs.fbCollapseButton.innerHTML = icon('close', 15);
@@ -528,8 +536,261 @@ async function resetTmuxSettings() {
 // Re-applies every translated string after a manual language switch, without
 // requiring an app restart: static markup via applyStaticI18n, plus every
 // render path that bakes t() output into dynamically-created DOM.
+// ---------------------------------------------------------------------------
+// Session snapshot health. The main process owns the snapshot (session-snapshot.js)
+// and pushes a health object here; this section renders the "!" button in the
+// workspace header, the detail panel behind it, and the settings switches.
+// ---------------------------------------------------------------------------
+
+function formatSnapshotTime(value) {
+  if (!value) return t('snapshot.never');
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+}
+
+// The button is an alarm, not a status light: it only appears when something
+// actually needs the user. Purely informational states live in the panel.
+function renderSnapshotHealth() {
+  const button = refs.snapshotHealthButton;
+  if (!button) return;
+  const health = state.snapshot;
+  const level = health?.level || 'ok';
+  const count = health?.issues?.length || 0;
+  const alarming = level === 'error' || level === 'warn';
+  button.classList.toggle('hidden', !alarming);
+  button.dataset.level = level;
+  const summary = level === 'error'
+    ? t('snapshot.statusError', { count })
+    : (level === 'warn' ? t('snapshot.statusWarn', { count }) : t('snapshot.statusOk'));
+  button.title = summary;
+  button.setAttribute('aria-label', `${t('snapshot.buttonAria')} · ${summary}`);
+}
+
+function snapshotSummaryRow(label, value) {
+  const row = document.createElement('div');
+  const term = document.createElement('dt');
+  term.textContent = label;
+  const detail = document.createElement('dd');
+  detail.textContent = value;
+  row.append(term, detail);
+  return row;
+}
+
+const SNAPSHOT_ACTIONS = {
+  save: () => runSnapshotSave(),
+  restore: () => runSnapshotRestore(),
+  repair: () => runSnapshotRepair(),
+  reveal: () => runSnapshotReveal(),
+  enable: () => saveSnapshotSettings({ enabled: true }),
+};
+
+function renderSnapshotPanel() {
+  const health = state.snapshot;
+  if (!refs.snapshotSummary) return;
+  const summary = document.createElement('dl');
+  if (health) {
+    summary.append(
+      snapshotSummaryRow(t('snapshot.lastSave'), formatSnapshotTime(health.lastSaveAt)),
+      snapshotSummaryRow(t('snapshot.sessionsInSnapshot'), String(health.snapshotSessionCount ?? 0)),
+      snapshotSummaryRow(t('snapshot.sessionsLive'), health.liveSessionCount == null ? '—' : String(health.liveSessionCount)),
+      snapshotSummaryRow(
+        t('snapshot.lastStartupRestore'),
+        health.restore && health.restore.restored.length
+          ? t('snapshot.restoredCount', { count: health.restore.restored.length })
+          : t('snapshot.restoredNone'),
+      ),
+    );
+  }
+  refs.snapshotSummary.replaceChildren(summary);
+
+  const issues = document.createElement('div');
+  if (!health || !health.issues.length) {
+    const ok = document.createElement('p');
+    ok.className = 'snapshot-ok';
+    ok.textContent = t('snapshot.noIssues');
+    issues.append(ok);
+  }
+  for (const issue of health?.issues || []) {
+    const card = document.createElement('div');
+    card.className = `snapshot-issue level-${issue.level}`;
+    const title = document.createElement('h4');
+    title.textContent = t(`snapshot.issue.${issueKey(issue.id)}`, { count: issue.count ?? 0 });
+    const hint = document.createElement('p');
+    hint.className = 'snapshot-issue-hint';
+    hint.textContent = t(`snapshot.issue.${issueKey(issue.id)}Hint`);
+    card.append(title, hint);
+    if (issue.detail) {
+      const detail = document.createElement('pre');
+      detail.className = 'snapshot-issue-detail';
+      detail.textContent = issue.detail;
+      card.append(detail);
+    }
+    const actions = (issue.actions || []).filter((action) => SNAPSHOT_ACTIONS[action]);
+    if (actions.length) {
+      const row = document.createElement('div');
+      row.className = 'snapshot-issue-actions';
+      for (const action of actions) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'button';
+        button.textContent = t(`snapshot.action.${action}`);
+        button.addEventListener('click', () => SNAPSHOT_ACTIONS[action]());
+        row.append(button);
+      }
+      card.append(row);
+    }
+    issues.append(card);
+  }
+  refs.snapshotIssues.replaceChildren(issues);
+
+  refs.snapshotPaths.replaceChildren(
+    snapshotPathRow(t('snapshot.pathSnapshot'), health?.snapshotPath),
+    snapshotPathRow(t('snapshot.pathLog'), health?.logPath),
+  );
+}
+
+// health.issues carries ids like 'restore-failed'; the message keys are camel.
+function issueKey(id) {
+  return String(id).replace(/-([a-z])/g, (_match, letter) => letter.toUpperCase());
+}
+
+function snapshotPathRow(label, value) {
+  const row = document.createElement('div');
+  row.className = 'snapshot-path';
+  const name = document.createElement('span');
+  name.className = 'snapshot-path-label';
+  name.textContent = label;
+  const path = document.createElement('code');
+  path.textContent = value || '—';
+  const copy = document.createElement('button');
+  copy.type = 'button';
+  copy.className = 'button';
+  copy.textContent = t('snapshot.copyPath');
+  copy.disabled = !value;
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast(t('snapshot.pathCopied'));
+    } catch (error) {
+      toast(friendlyError(error), 'error');
+    }
+  });
+  row.append(name, path, copy);
+  return row;
+}
+
+function applySnapshotHealth(health) {
+  state.snapshot = health || null;
+  renderSnapshotHealth();
+  if (refs.snapshotModal && !refs.snapshotModal.classList.contains('hidden')) renderSnapshotPanel();
+  renderSnapshotSettings();
+}
+
+async function refreshSnapshotHealth() {
+  if (!api?.snapshotStatus) return;
+  try {
+    applySnapshotHealth(await api.snapshotStatus());
+  } catch {
+    // A missing snapshot service is not worth a toast; the panel stays empty.
+  }
+}
+
+function openSnapshotPanel() {
+  renderSnapshotPanel();
+  openModal(refs.snapshotModal, refs.snapshotSaveButton);
+  refreshSnapshotHealth();
+}
+
+function withSnapshotButtonsDisabled(run) {
+  const buttons = [refs.snapshotSaveButton, refs.snapshotRestoreButton, refs.snapshotRevealButton]
+    .filter(Boolean);
+  for (const button of buttons) button.disabled = true;
+  return run().finally(() => {
+    for (const button of buttons) { if (button.isConnected) button.disabled = false; }
+  });
+}
+
+function runSnapshotSave() {
+  return withSnapshotButtonsDisabled(async () => {
+    try {
+      const health = await api.snapshotSave();
+      applySnapshotHealth(health);
+      toast(t('toast.snapshotSaved', { count: health.snapshotSessionCount ?? 0 }));
+    } catch (error) {
+      toast(friendlyError(error), 'error');
+    }
+  });
+}
+
+function runSnapshotRestore() {
+  return withSnapshotButtonsDisabled(async () => {
+    try {
+      const { report, status } = await api.snapshotRestore();
+      applySnapshotHealth(status);
+      if (report.restored.length) toast(t('toast.snapshotRestored', { count: report.restored.length }));
+      else toast(t('toast.snapshotNothingToRestore'));
+      await refreshSessions({ notify: false });
+    } catch (error) {
+      toast(friendlyError(error), 'error');
+    }
+  });
+}
+
+function runSnapshotRepair() {
+  return withSnapshotButtonsDisabled(async () => {
+    try {
+      const result = await api.snapshotRepairCwd();
+      applySnapshotHealth(result.status);
+      toast(t('toast.snapshotRepaired', { count: result.repaired }));
+    } catch (error) {
+      toast(friendlyError(error), 'error');
+    }
+  });
+}
+
+async function runSnapshotReveal() {
+  try {
+    await api.snapshotReveal();
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+  }
+}
+
+function renderSnapshotSettings() {
+  if (!refs.snapshotEnabledToggle) return;
+  const settings = state.preferences.sessionRestore || {};
+  refs.snapshotEnabledToggle.checked = settings.enabled !== false;
+  refs.snapshotAutoRestoreToggle.checked = settings.autoRestore !== false;
+  refs.snapshotRepairToggle.checked = settings.repairCwd !== false;
+  refs.snapshotIntervalInput.value = String(settings.intervalMinutes || 3);
+  const health = state.snapshot;
+  refs.snapshotSettingsStatus.textContent = health
+    ? `${t('snapshot.lastSave')}：${formatSnapshotTime(health.lastSaveAt)} · ${t('snapshot.sessionsInSnapshot')} ${health.snapshotSessionCount ?? 0}`
+    : '';
+}
+
+async function saveSnapshotSettings(patch) {
+  const previous = state.preferences.sessionRestore;
+  const controls = [
+    refs.snapshotEnabledToggle, refs.snapshotAutoRestoreToggle,
+    refs.snapshotRepairToggle, refs.snapshotIntervalInput,
+  ].filter(Boolean);
+  for (const control of controls) control.disabled = true;
+  try {
+    state.preferences = await api.savePreferences({ sessionRestore: { ...previous, ...patch } });
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+  } finally {
+    for (const control of controls) { if (control.isConnected) control.disabled = false; }
+  }
+  renderSnapshotSettings();
+  refreshSnapshotHealth();
+}
+
 function relocalize() {
   installIcons();
+  renderSnapshotHealth();
+  renderSnapshotSettings();
   applyStaticI18n();
   applyCurrentTheme();
   renderTmuxSettings();
@@ -1749,6 +2010,8 @@ function openSettings() {
   renderTagSettings();
   refs.keepAwakeToggle.checked = state.preferences.keepAwake === true;
   refs.autoShareToggle.checked = state.preferences.autoShare === true;
+  renderSnapshotSettings();
+  refreshSnapshotHealth();
   renderTmuxSettings();
   openModal(refs.settingsModal, refs.settingsModal.querySelector('.theme-card'));
 }
@@ -2470,6 +2733,19 @@ function bindEvents() {
   refs.sessionSearch.addEventListener('input', () => { state.query = refs.sessionSearch.value; renderSessionList(); });
   document.querySelectorAll('[data-view]').forEach((button) => button.addEventListener('click', () => setView({ kind: button.dataset.view })));
   refs.settingsButton.addEventListener('click', openSettings);
+  refs.snapshotHealthButton.addEventListener('click', openSnapshotPanel);
+  refs.snapshotOpenButton.addEventListener('click', openSnapshotPanel);
+  refs.snapshotSaveButton.addEventListener('click', runSnapshotSave);
+  refs.snapshotRestoreButton.addEventListener('click', runSnapshotRestore);
+  refs.snapshotRevealButton.addEventListener('click', runSnapshotReveal);
+  refs.snapshotEnabledToggle.addEventListener('change', (event) => saveSnapshotSettings({ enabled: event.target.checked }));
+  refs.snapshotAutoRestoreToggle.addEventListener('change', (event) => saveSnapshotSettings({ autoRestore: event.target.checked }));
+  refs.snapshotRepairToggle.addEventListener('change', (event) => saveSnapshotSettings({ repairCwd: event.target.checked }));
+  refs.snapshotIntervalInput.addEventListener('change', (event) => {
+    const minutes = Math.min(60, Math.max(1, Math.round(Number(event.target.value) || 3)));
+    event.target.value = String(minutes);
+    saveSnapshotSettings({ intervalMinutes: minutes });
+  });
   refs.sourceButton.addEventListener('click', toggleSourcePopover);
   refs.remoteForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -2788,6 +3064,10 @@ async function initialize() {
   bindEvents();
   loadRemoteConnections();
   renderSourceBar();
+  // Startup recovery in the main process finishes after the first paint, so the
+  // health arrives via this push rather than the initial fetch below.
+  if (api.onSnapshotChanged) api.onSnapshotChanged((health) => applySnapshotHealth(health));
+  refreshSnapshotHealth();
   try {
     state.preferences = await api.getPreferences();
     await migrateLegacyRemoteConnections();

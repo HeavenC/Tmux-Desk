@@ -93,7 +93,27 @@ App 只负责**转发按键**、**把 pane attach 进来**、并叠加自己的�
 
 ## 电脑重启后恢复会话
 
-tmux server 是内存进程，关机/重启后所有会话必然消失——这不是 App 的行为，任何终端里的 tmux 都一样。推荐用社区插件 [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) + [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum) 自动快照、开机自动恢复：
+tmux server 是内存进程，关机/重启后所有会话必然消失——这不是 App 的行为，任何终端里的 tmux 都一样。**Tmux Desk 自带会话快照，开箱即用，不需要装任何插件。**
+
+App 会定期（默认每 3 分钟，以及会话增删改、休眠和退出前）把所有会话、窗口、分屏布局和**每个面板的工作目录**存到本机：
+
+```
+~/Library/Application Support/Tmux Desk/session-snapshot.json
+```
+
+重启后打开 App，它会先等一会儿（万一你装了别的恢复插件，让它先跑），再检查 tmux server 是否重启过：**只有 server 换了进程、且会话确实不存在时**才按快照补建——你自己关掉的会话不会被重新拉起来。
+
+想确认状态或出了问题时：会话页右上角出现**感叹号**就说明有需要处理的事，点开是「会话快照」面板；一切正常时可以从**设置 → 会话快照与恢复 → 查看状态**进去。面板里有：
+
+- 最近备份时间、快照里有几个会话、本次启动恢复了几个；
+- 每条问题的原因和修复建议，以及对应的一键操作（立即备份 / 从快照恢复 / 修正工作目录）；
+- **快照文件与日志文件的绝对路径**（可一键复制）。反馈问题时请把日志文件 `session-snapshot.log` 一并发来。
+
+三个开关都在设置里：定期备份、启动时自动恢复、自动修正工作目录（恢复后有面板停在 `~` 时，往**空闲的 shell** 里补一条 `cd` 回原目录；正在跑程序的面板不会被打扰）。
+
+### 想连屏幕内容和进程一起恢复（可选）
+
+App 的快照只还原**结构和目录**，不还原 pane 里的进程和屏幕内容。需要这些的话，可以额外装社区插件 [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) + [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum)，两者与 App 的快照可以共存（App 检测到插件已经恢复过会话就不会重复补建）：
 
 ```bash
 git clone https://github.com/tmux-plugins/tmux-resurrect ~/.tmux/plugins/tmux-resurrect
@@ -110,7 +130,7 @@ run-shell ~/.tmux/plugins/tmux-resurrect/resurrect.tmux
 run-shell ~/.tmux/plugins/tmux-continuum/continuum.tmux
 ```
 
-配好后 continuum 每 15 分钟把全部会话（窗口 / 分屏布局、每个 pane 的工作目录、可选屏幕内容）快照到 `~/.local/share/tmux/resurrect/`。重启后**打开 Tmux Desk 会话即自动回来**：App 启动时会主动唤起 tmux server（`start-server`），continuum 的自动恢复随之执行，不需要先手动新建会话。
+配好后 continuum 每 15 分钟快照到 `~/.local/share/tmux/resurrect/`。App 启动时会主动唤起 tmux server（`start-server`），continuum 的自动恢复随之执行，不需要先手动新建会话。
 
 注意事项：
 
@@ -329,6 +349,15 @@ CSC_IDENTITY_AUTO_DISCOVERY=false npm run package:mac:x64       # Intel
 %APPDATA%\tmux-desk\preferences.json                          # Windows
 ```
 
+会话快照（会话/窗口/分屏布局与每个面板的工作目录）和它的日志与偏好同目录，同样只在本机：
+
+```text
+session-snapshot.json    # 当前快照；另有 session-snapshot.prev.json 作为上一份
+session-snapshot.log     # 每次备份/恢复/修复的记录，反馈问题时提供这个
+```
+
+快照只记录路径与布局，**不记录终端输出内容**。
+
 应用的渲染进程没有 Node.js 权限，只能通过白名单 IPC 调用 tmux 与终端操作；控制命令使用 `execFile` 参数数组，不拼接 shell 命令。
 
 ## 常见问题
@@ -355,7 +384,11 @@ npm run postinstall
 
 ### 电脑重启后会话都没了？
 
-tmux 本身不落盘，见 **「电脑重启后恢复会话」** 一节：装 tmux-resurrect + tmux-continuum 后，重启再打开 App 会话会自动恢复。
+tmux 本身不落盘，但 App 自带快照，重启后打开会自动补建，见 **「电脑重启后恢复会话」** 一节。如果没恢复，点右上角的感叹号（或设置 → 会话快照与恢复 → 查看状态）看原因，并把面板里那个 `session-snapshot.log` 发来。
+
+### 恢复回来的会话目录变成了主目录（~）？
+
+这是别的恢复插件重建 pane 时丢掉了工作目录。App 会自己检测出来并往**空闲的 shell** 里补一条 `cd` 修回去（设置里的「自动修正工作目录」，默认开）；正在跑程序的面板不会被打扰，需要在「会话快照」面板里看清单后自己切。
 
 ## 许可证
 

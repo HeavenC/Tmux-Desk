@@ -4,6 +4,7 @@ const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const test = require('node:test');
 const { DEFAULT_TMUX_SETTINGS } = require('../src/shared/tmux-settings');
+const { DEFAULT_SESSION_RESTORE } = require('../src/main/session-snapshot');
 
 const {
   PreferencesStore,
@@ -41,6 +42,7 @@ test('malformed and invalid preferences fall back to normalized defaults', async
       theme: 'light', favorites: ['api'], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null,
       sidebarWidth: null, tagRailExpanded: false, tagRailWidth: null, keepAwake: false, autoShare: false, webQuickKeys: [], remoteConnections: [],
       tmuxSettings: { ...DEFAULT_TMUX_SETTINGS },
+      sessionRestore: { ...DEFAULT_SESSION_RESTORE },
     });
   });
 });

@@ -93,7 +93,27 @@ The App only **forwards keys**, **attaches panes**, and layers its own desktop i
 
 ## Restoring sessions after a reboot
 
-The tmux server is an in-memory process — a shutdown/reboot always wipes every session. That's not App behavior; tmux works the same in any terminal. The recommended fix is the community plugin pair [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) + [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum) for automatic snapshots and restore-on-boot:
+The tmux server is an in-memory process — a shutdown/reboot always wipes every session. That's not App behavior; tmux works the same in any terminal. **Tmux Desk snapshots your sessions itself, out of the box, with no plugins to install.**
+
+Periodically (every 3 minutes by default, plus on every session change and before sleep or quit) the App stores every session, window, split layout and **each pane's working directory** to:
+
+```
+~/Library/Application Support/Tmux Desk/session-snapshot.json
+```
+
+After a reboot, opening the App waits a moment (in case you have another restore plugin, so it goes first), then checks whether the tmux server restarted: it only recreates sessions when the server is a **new process and the session really is gone** — sessions you closed yourself are never brought back.
+
+To check on it, or when something goes wrong: an **exclamation mark** appears at the top right of the session view whenever something needs you; click it for the "Session snapshot" panel. When all is well you can reach the same panel via **Settings → Session snapshot & restore → View status**. It shows:
+
+- last snapshot time, how many sessions are in it, how many were restored at launch;
+- every problem with its cause, a suggested fix, and the matching one-click action (snapshot now / restore from snapshot / fix working directories);
+- the **absolute paths of the snapshot and log files** (copyable). When reporting a problem, please attach `session-snapshot.log`.
+
+Three switches live in Settings: periodic snapshots, restore on launch, and fix working directories (when a restored pane sits in `~`, type a `cd` back into the **idle shell**; panes running a program are never touched).
+
+### Optionally: restore pane contents and processes too
+
+The App's snapshot restores **structure and directories**, not the processes or screen contents inside panes. If you want those, add the community plugin pair [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) + [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum). They coexist with the App's snapshot (which stands down once it sees the plugin already restored your sessions):
 
 ```bash
 git clone https://github.com/tmux-plugins/tmux-resurrect ~/.tmux/plugins/tmux-resurrect
@@ -110,7 +130,7 @@ run-shell ~/.tmux/plugins/tmux-resurrect/resurrect.tmux
 run-shell ~/.tmux/plugins/tmux-continuum/continuum.tmux
 ```
 
-Once configured, continuum snapshots all sessions (window/split layout, each pane's working directory, optionally pane contents) to `~/.local/share/tmux/resurrect/` every 15 minutes. After a reboot, **just open Tmux Desk and your sessions come back**: the App wakes the tmux server on launch (`start-server`), which triggers continuum's auto-restore — no need to create a session first.
+Once configured, continuum snapshots to `~/.local/share/tmux/resurrect/` every 15 minutes. The App wakes the tmux server on launch (`start-server`), which triggers continuum's auto-restore — no need to create a session first.
 
 Caveats:
 
@@ -355,7 +375,11 @@ See the **"tmux behavior vs App behavior"** section above — almost all differe
 
 ### All my sessions are gone after a reboot?
 
-tmux keeps nothing on disk by itself — see **"Restoring sessions after a reboot"** above: with tmux-resurrect + tmux-continuum installed, reopening the App after a reboot restores your sessions automatically.
+tmux keeps nothing on disk by itself, but the App snapshots for you and recreates them on the next launch — see **"Restoring sessions after a reboot"** above. If they didn't come back, click the exclamation mark at the top right (or Settings → Session snapshot & restore → View status) for the reason, and send us the `session-snapshot.log` the panel points at.
+
+### My restored sessions came back in my home directory (~)?
+
+That's another restore plugin dropping the working directory when it recreates panes. The App detects it and types a `cd` back into the **idle shell** ("Fix working directories" in Settings, on by default); panes running a program are left alone — check the list in the "Session snapshot" panel and switch those yourself.
 
 ## License
 
