@@ -228,6 +228,10 @@ test('panes resurrected into $HOME are detected and repaired with a cd, running 
       'api\t2\t2\t%12\t/Users/demo\t-zsh',
       'web\t1\t1\t%13\t/work/web\tzsh',
     ].join('\n') + '\n';
+    // The repair reads the panes back, so the fake has to answer where they landed.
+    drifted.reply['display-message'] = (args) => (
+      args.includes('#{pane_current_path}') ? '/work/api\n' : '4321\n'
+    );
     service.tmux = drifted;
 
     const drift = await service.findCwdDrift(await service.readSnapshot());
@@ -239,6 +243,106 @@ test('panes resurrected into $HOME are detected and repaired with a cd, running 
     const typed = drifted.calls.filter((args) => args[0] === 'send-keys' && args.includes('-l'));
     assert.deepEqual(typed.map((args) => args[4]), ["cd -- '/work/api'", "cd -- '/work/api'"]);
     assert.deepEqual(typed.map((args) => args[2]), ['%10', '%12']);
+    // Leftover text at the prompt would otherwise be prefixed onto the command
+    // (`cd cd -- '/x'` → "too many arguments"), so the line is cleared first.
+    const cleared = drifted.calls.filter((args) => args[0] === 'send-keys' && args[3] === 'C-u');
+    assert.deepEqual(cleared.map((args) => args[2]), ['%10', '%12']);
+  });
+});
+
+// The shape actually seen in the field: a restore that could not apply the
+// directory leaves the pane in the tmux server's own cwd, `/` — not $HOME.
+test('panes left in / are detected as lost directories too', async () => {
+  const tmux = captureTmux();
+  await withService({ tmux, settings: { repairCwd: false } }, async ({ service }) => {
+    await service.save('before');
+    const rooted = captureTmux();
+    rooted.reply['list-panes'] = [
+      'api\t1\t1\t%10\t/\tzsh',
+      'web\t1\t1\t%13\t/\tzsh',
+    ].join('\n') + '\n';
+    service.tmux = rooted;
+    const drift = await service.findCwdDrift(await service.readSnapshot());
+    assert.deepEqual(
+      drift.map((item) => [item.sessionName, item.actual, item.expected, item.repairable]),
+      [['api', '/', '/work/api', true], ['web', '/', '/work/web', true]],
+    );
+  });
+});
+
+// Without this the snapshot poisons itself: a bad restore drops a pane into `/`,
+// the next periodic snapshot records `/`, and the real directory is gone within
+// minutes — which is exactly what happened on the first reported reboot.
+test('a pane sitting in / never overwrites the last known-good directory', async () => {
+  const tmux = captureTmux();
+  await withService({ tmux }, async ({ service, filePath }) => {
+    await service.save('before-reboot');
+    const rooted = captureTmux();
+    rooted.reply['list-panes'] = [
+      '$0\t@0\t1\t1\t/\tzsh',
+      '$0\t@1\t1\t1\t/\tnpm',
+      '$0\t@1\t2\t0\t/\tzsh',
+      '$1\t@2\t1\t1\t/work/web\tzsh',
+    ].join('\n') + '\n';
+    service.tmux = rooted;
+
+    await service.save('after-bad-restore');
+    const stored = JSON.parse(await readFile(filePath, 'utf8'));
+    const api = stored.sessions.find((session) => session.name === 'api');
+    // The snapshot tells the truth about where the panes are…
+    assert.equal(api.windows[0].panes[0].path, '/');
+    // …while still remembering where they belong.
+    assert.equal(api.windows[0].panes[0].lastGoodPath, '/work/api');
+    assert.equal(api.windows[1].panes[0].lastGoodPath, '/work/api/build');
+    // A pane that never drifted carries no stale copy.
+    const web = stored.sessions.find((session) => session.name === 'web');
+    assert.equal(web.windows[0].panes[0].lastGoodPath, undefined);
+
+    // And a later restore from this snapshot opens in the real directory.
+    const restored = new FakeTmux({
+      reply: { 'display-message': '9999\n', 'new-session': '$7\t@70\t1\n', 'new-window': '@71\n', 'list-panes': '' },
+      dirs: ['/work/api', '/work/web', '/work/api/build'],
+    });
+    service.tmux = restored;
+    await service.runStartupRecovery();
+    const created = restored.calls.filter((args) => args[0] === 'new-session');
+    assert.deepEqual(created[0].slice(-4), ['-s', 'api', '-c', '/work/api']);
+  });
+});
+
+test('a directory that exists but cannot be entered is reported as denied, not missing', async () => {
+  const tmux = captureTmux();
+  await withService({ tmux, settings: { repairCwd: false } }, async ({ service }) => {
+    await service.save('before');
+    const blocked = captureTmux();
+    blocked.dirs = new Set(); // tmux cannot stat it either
+    blocked.reply['list-panes'] = 'api\t1\t1\t%10\t/\tzsh\n';
+    service.dirDenied = (dir) => dir === '/work/api';
+    service.tmux = blocked;
+    const drift = await service.findCwdDrift(await service.readSnapshot());
+    assert.equal(drift[0].blockedBy, 'denied');
+    assert.equal(drift[0].repairable, false);
+    service.state.cwdIssues = drift;
+    const issue = service.health().issues.find((item) => item.id === 'cwd-denied');
+    assert.ok(issue, 'a permission problem is the one the user can actually fix');
+    assert.equal(issue.level, 'error');
+  });
+});
+
+test('a cd that does not take effect is reported instead of counted as fixed', async () => {
+  const tmux = captureTmux();
+  await withService({ tmux, settings: { repairCwd: false } }, async ({ service }) => {
+    await service.save('before');
+    const busy = captureTmux();
+    busy.reply['list-panes'] = 'api\t1\t1\t%10\t/\tzsh\n';
+    // The shell was busy: it never left `/`.
+    busy.reply['display-message'] = (args) => (args.includes('#{pane_current_path}') ? '/\n' : '4321\n');
+    service.tmux = busy;
+    const result = await service.repairCwd(await service.findCwdDrift(await service.readSnapshot()));
+    assert.equal(result.repaired, 0);
+    assert.equal(result.failed[0].message, 'cd-failed');
+    const issue = service.health().issues.find((item) => item.id === 'repair-stuck');
+    assert.ok(issue);
   });
 });
 

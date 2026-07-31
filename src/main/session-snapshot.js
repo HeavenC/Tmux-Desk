@@ -1,4 +1,5 @@
 const fs = require('node:fs/promises');
+const nodeFs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
@@ -25,7 +26,18 @@ const MAX_LOG_BYTES = 512 * 1024;
 const MAX_SNAPSHOT_SESSIONS = 200;
 const SAVE_DEBOUNCE_MS = 2500;
 const SETTLE_POLL_MS = 400;
-const SETTLE_TIMEOUT_MS = 6000;
+const SETTLE_TIMEOUT_MS = 10_000;
+// A tmux server that is mid-restore right after a reboot can fail reads for a
+// while ("no current target" while it has no session yet). Startup recovery
+// retries instead of giving up for the whole app lifetime — giving up meant
+// neither the restore nor the working-directory repair ever ran.
+const RECOVERY_RETRIES = 4;
+const RECOVERY_RETRY_MS = 5000;
+// `/` is what a pane gets when nobody ever gave it a directory: it is the tmux
+// server's own cwd, so a restore that could not apply a directory lands there.
+// Nobody works in `/`, so it is never a real user choice — which is what makes
+// it safe to treat as "directory lost" and to refuse to record over a good one.
+const LOST_DIR = '/';
 
 const DEFAULT_SESSION_RESTORE = Object.freeze({
   enabled: true,
@@ -149,6 +161,10 @@ function normalizeSnapshot(value) {
           index: toInt(pane && pane.index),
           active: pane?.active === true,
           path: typeof pane?.path === 'string' && pane.path ? pane.path : null,
+          // Survives restores that dropped the directory; see carryLastGoodPaths.
+          ...(typeof pane?.lastGoodPath === 'string' && pane.lastGoodPath
+            ? { lastGoodPath: pane.lastGoodPath }
+            : {}),
           command: typeof pane?.command === 'string' && pane.command ? pane.command : null,
         })),
       })),
@@ -163,6 +179,51 @@ function normalizeSnapshot(value) {
   };
 }
 
+// Pair snapshot children with live/previous ones. Indices are the truth when
+// they all line up; otherwise fall back to position, but only when the counts
+// match exactly — base-index / pane-base-index can differ between a snapshot
+// and a restore, and mixing the two strategies maps several snapshot panes onto
+// the same live pane.
+function pairByIndexThenPosition(left, right) {
+  const items = right || [];
+  const byIndex = (item) => items.find((other) => other.index === item.index) || null;
+  // Every index accounted for: indices are the mapping.
+  if (left.every((item) => byIndex(item))) return left.map((item) => [item, byIndex(item)]);
+  // Nothing lines up but the counts do: the whole thing was renumbered.
+  if (left.length === items.length) return left.map((item, position) => [item, items[position]]);
+  // Otherwise something was added or closed since the snapshot — match whatever
+  // the indices still resolve, and leave the rest unpaired rather than guessing.
+  return left.map((item) => [item, byIndex(item)]);
+}
+
+// The directory the snapshot should aim a repair at: the last one we ever saw
+// this pane actually in, which survives any number of restores that dropped it.
+function targetDir(pane) {
+  return pane.lastGoodPath || pane.path || null;
+}
+
+// Carry a pane's last known-good directory forward. Without this the snapshot
+// poisons itself: a restore drops a pane into `/`, the next periodic snapshot
+// records `/`, and the real directory is gone within minutes — exactly what
+// happened on the first reported reboot.
+function carryLastGoodPaths(snapshot, previous) {
+  if (!previous) return snapshot;
+  const previousByName = new Map(previous.sessions.map((session) => [session.name, session]));
+  for (const session of snapshot.sessions) {
+    const before = previousByName.get(session.name);
+    if (!before) continue;
+    for (const [window, priorWindow] of pairByIndexThenPosition(session.windows, before.windows)) {
+      if (!priorWindow) continue;
+      for (const [pane, priorPane] of pairByIndexThenPosition(window.panes, priorWindow.panes)) {
+        if (!priorPane || pane.path !== LOST_DIR) continue;
+        const good = targetDir(priorPane);
+        if (good && good !== LOST_DIR) pane.lastGoodPath = good;
+      }
+    }
+  }
+  return snapshot;
+}
+
 // The directory a window has to be *created* in is pane 1's, not the active
 // pane's: new-window/new-session opens exactly one pane and the rest are split
 // off it with their own -c. Using the active pane here silently gave every
@@ -170,7 +231,7 @@ function normalizeSnapshot(value) {
 function windowOpenDir(window) {
   if (!window || !Array.isArray(window.panes) || !window.panes.length) return null;
   const ordered = [...window.panes].sort((left, right) => left.index - right.index);
-  return ordered[0].path || null;
+  return targetDir(ordered[0]);
 }
 
 class SessionSnapshotService {
@@ -202,6 +263,7 @@ class SessionSnapshotService {
     this.intervalTimer = null;
     this.saveQueue = Promise.resolve();
     this.logQueue = Promise.resolve();
+    this.recoveryAttempt = 0;
     this.state = {
       startedAt: null,
       settings: { ...DEFAULT_SESSION_RESTORE },
@@ -214,6 +276,8 @@ class SessionSnapshotService {
       restore: null,
       cwdIssues: [],
       lastRepairAt: null,
+      lastRepairFailures: [],
+      lastReadError: null,
       tmuxError: null,
     };
   }
@@ -258,13 +322,18 @@ class SessionSnapshotService {
     }
   }
 
+  // [] = the server is up and has no sessions; null = could not be read at all.
+  // The difference matters at startup: a server that is mid-restore right after
+  // a reboot answers "no current target" for a while, and treating that as
+  // "no sessions" (or as fatal) is how a whole recovery gets skipped.
   async liveSessionNames() {
     try {
       const sessions = await this.tmux.listSessions();
       return sessions.filter((session) => isRealSession(session.name)).map((session) => session.name);
     } catch (error) {
       if (errorCode(error) === 'NO_SERVER') return [];
-      throw error;
+      this.state.lastReadError = errorMessage(error);
+      return null;
     }
   }
 
@@ -357,7 +426,7 @@ class SessionSnapshotService {
     }
     let snapshot;
     try {
-      snapshot = await this.capture();
+      snapshot = carryLastGoodPaths(await this.capture(), await this.readSnapshot());
     } catch (error) {
       this.state.lastSaveError = { message: errorMessage(error), code: errorCode(error) };
       this.state.tmuxError = this.state.lastSaveError;
@@ -408,19 +477,22 @@ class SessionSnapshotService {
     const deadline = Date.now() + this.settleTimeoutMs;
     const pause = () => new Promise((resolve) => setTimeout(resolve, this.settlePollMs));
     let previous = await this.liveSessionNames();
-    if (!previous.length) {
-      // Nothing yet — give a foreign restore plugin its chance to appear.
+    if (!previous || !previous.length) {
+      // Nothing yet, or not readable yet — give the tmux server (and any
+      // foreign restore plugin) its chance to come up.
       while (Date.now() < deadline) {
         await pause();
         const current = await this.liveSessionNames();
-        if (current.length) { previous = current; break; }
+        if (current && current.length) { previous = current; break; }
+        if (current && !previous) previous = current;
       }
-      if (!previous.length) return previous;
+      if (!previous || !previous.length) return previous;
     }
     // Sessions exist: wait for the count to hold still for one poll.
     while (Date.now() < deadline) {
       await pause();
       const current = await this.liveSessionNames();
+      if (!current) continue;
       if (current.length === previous.length) return current;
       previous = current;
     }
@@ -556,73 +628,119 @@ class SessionSnapshotService {
       const windows = live.get(sessionName);
       const index = toInt(windowIndex);
       if (!windows.has(index)) windows.set(index, []);
-      windows.get(index).push({ paneIndex: toInt(paneIndex), paneId, path: panePath, command });
+      windows.get(index).push({ index: toInt(paneIndex), paneId, path: panePath, command });
     }
 
     for (const session of snapshot.sessions) {
       const windows = live.get(session.name);
       if (!windows) continue;
-      const liveIndexes = [...windows.keys()].sort((left, right) => left - right);
-      // Pick one matching strategy for the whole session. Indices are the truth
-      // when they all line up; otherwise fall back to position, but only when
-      // the counts match exactly — base-index / pane-base-index can differ
-      // between the snapshot and the restore (a foreign plugin, or a changed
-      // profile), and mixing the two strategies would map several snapshot
-      // panes onto the same live pane.
-      const byWindowIndex = session.windows.every((window) => windows.has(window.index));
-      if (!byWindowIndex && session.windows.length !== liveIndexes.length) continue;
-      session.windows.forEach((window, position) => {
-        const liveIndex = byWindowIndex ? window.index : liveIndexes[position];
-        const livePanes = windows.get(liveIndex);
-        if (!livePanes) return;
-        const ordered = [...livePanes].sort((left, right) => left.paneIndex - right.paneIndex);
-        const byPaneIndex = window.panes.every((pane) => ordered.some((item) => item.paneIndex === pane.index));
-        if (!byPaneIndex && window.panes.length !== ordered.length) return;
-        window.panes.forEach((pane, paneSlot) => {
-          const livePane = byPaneIndex
-            ? ordered.find((item) => item.paneIndex === pane.index)
-            : ordered[paneSlot];
-          if (!livePane || !pane.path || pane.path === livePane.path) return;
-          // Only the "fell back to $HOME" shape is a bug we can attribute to the
-          // restore; a pane the user simply cd'd elsewhere must be left alone.
-          if (livePane.path !== this.home || pane.path === this.home) return;
+      const liveWindows = [...windows.entries()]
+        .sort(([left], [right]) => left - right)
+        .map(([index, panes]) => ({ index, panes }));
+      for (const [window, liveWindow] of pairByIndexThenPosition(session.windows, liveWindows)) {
+        if (!liveWindow) continue;
+        const ordered = [...liveWindow.panes].sort((left, right) => left.index - right.index);
+        for (const [pane, livePane] of pairByIndexThenPosition(window.panes, ordered)) {
+          const expected = targetDir(pane);
+          if (!livePane || !expected || expected === livePane.path) continue;
+          // Two shapes count as "the restore lost this directory":
+          //   `/`     — the tmux server's own cwd, what a pane gets when no
+          //             directory could be applied (the shape actually seen in
+          //             the field), and never somewhere a user works;
+          //   $HOME   — the other common fallback.
+          // Anything else is a directory the user chose, and is left alone.
+          if (livePane.path !== this.home && livePane.path !== LOST_DIR) continue;
+          if (expected === livePane.path) continue;
+          const isShell = SHELL_COMMANDS.has(String(livePane.command || '').replace(/^-/, ''));
           drift.push({
             sessionName: session.name,
             paneId: livePane.paneId,
-            windowIndex: liveIndex,
-            paneIndex: livePane.paneIndex,
-            expected: pane.path,
+            windowIndex: liveWindow.index,
+            paneIndex: livePane.index,
+            expected,
             actual: livePane.path,
             command: livePane.command || null,
-            repairable: SHELL_COMMANDS.has(String(livePane.command || '').replace(/^-/, ''))
-              && this.tmux.dirExists(pane.path),
+            // Why a pane cannot be fixed is worth as much as the fix: a busy
+            // pane, a deleted directory and an unreadable one need different
+            // things from the user, so the panel names which one it is.
+            blockedBy: !this.tmux.dirExists(expected)
+              ? (this.dirDenied(expected) ? 'denied' : 'missing')
+              : (isShell ? null : 'busy'),
+            repairable: isShell && this.tmux.dirExists(expected),
           });
-        });
-      });
+        }
+      }
     }
     return drift;
   }
 
+  // Tell "the directory is gone" apart from "it exists but this process may not
+  // enter it" (a protected or not-yet-unlocked location). They read the same to
+  // a `cd`, but only one of them is something the user can grant.
+  dirDenied(dir) {
+    try {
+      nodeFs.accessSync(dir, nodeFs.constants.X_OK);
+      return false;
+    } catch (error) {
+      return errorCode(error) === 'EACCES' || errorCode(error) === 'EPERM';
+    }
+  }
+
   async repairCwd(drift) {
-    const targets = (drift || this.state.cwdIssues).filter((item) => item.repairable);
+    const all = drift || this.state.cwdIssues;
+    const targets = all.filter((item) => item.repairable);
     const repaired = [];
-    const failed = [];
+    const failed = all.filter((item) => !item.repairable)
+      .map((item) => ({ ...item, message: item.blockedBy || 'blocked' }));
     for (const item of targets) {
       try {
+        // C-u first: anything already sitting at the prompt would otherwise be
+        // prefixed onto our command (`cd cd -- '/x'` → "too many arguments",
+        // seen in the field). These panes are freshly restored shells, so the
+        // only thing C-u can discard is stale unexecuted text.
+        await this.tmux.run(['send-keys', '-t', item.paneId, 'C-u']);
         await this.tmux.run(['send-keys', '-t', item.paneId, '-l', `cd -- ${shellQuote(item.expected)}`]);
         await this.tmux.run(['send-keys', '-t', item.paneId, 'Enter']);
         repaired.push(item);
-        this.log('info', `已修复工作目录：${item.sessionName} ${item.windowIndex}.${item.paneIndex}`, item.expected);
       } catch (error) {
         failed.push({ ...item, message: errorMessage(error) });
         this.log('error', `修复工作目录失败：${item.sessionName}`, errorMessage(error));
       }
     }
+    // Typing a `cd` is a request, not a result — the shell may have been busy,
+    // or the directory may have become unreadable since the check. Read the
+    // panes back so a failure is reported instead of silently assumed fixed.
+    const landed = repaired.length ? await this.verifyRepaired(repaired) : { ok: [], stuck: [] };
+    for (const item of landed.stuck) {
+      failed.push({ ...item, message: 'cd-failed' });
+      this.log('error', `修复未生效：${item.sessionName} ${item.windowIndex}.${item.paneIndex}`, item.expected);
+    }
+    for (const item of landed.ok) {
+      this.log('info', `已修复工作目录：${item.sessionName} ${item.windowIndex}.${item.paneIndex}`, item.expected);
+    }
     this.state.lastRepairAt = this.now().toISOString();
-    const repairedIds = new Set(repaired.map((item) => item.paneId));
-    this.state.cwdIssues = this.state.cwdIssues.filter((item) => !repairedIds.has(item.paneId));
+    this.state.lastRepairFailures = failed;
+    const fixedIds = new Set(landed.ok.map((item) => item.paneId));
+    this.state.cwdIssues = this.state.cwdIssues.filter((item) => !fixedIds.has(item.paneId));
     this.emitChange();
-    return { repaired: repaired.length, failed };
+    return { repaired: landed.ok.length, failed };
+  }
+
+  async verifyRepaired(items, delayMs = 600) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const ok = [];
+    const stuck = [];
+    for (const item of items) {
+      let current = null;
+      try {
+        current = String((await this.tmux.run([
+          'display-message', '-p', '-t', item.paneId, '#{pane_current_path}',
+        ])).stdout || '').trim();
+      } catch { /* pane went away; treat as unverified */ }
+      if (current === item.expected) ok.push(item);
+      else stuck.push({ ...item, actual: current || item.actual });
+    }
+    return { ok, stuck };
   }
 
   // ---------------------------------------------------------------- startup
@@ -642,15 +760,28 @@ class SessionSnapshotService {
     this.state.snapshotAt = snapshot ? snapshot.savedAt : null;
     this.state.snapshotSessionCount = snapshot ? snapshot.sessions.length : 0;
 
-    let live;
+    let live = null;
     try {
       live = await this.waitForServerToSettle();
     } catch (error) {
-      this.state.tmuxError = { message: errorMessage(error), code: errorCode(error) };
-      this.log('error', '启动检查失败：无法读取 tmux 会话', errorMessage(error));
+      this.state.lastReadError = errorMessage(error);
+    }
+    if (!live) {
+      // Reading tmux failed for the whole settle window. Retrying matters more
+      // than reporting: giving up here means neither the restore nor the
+      // working-directory repair ever runs for this launch.
+      this.state.tmuxError = { message: this.state.lastReadError || 'tmux 无响应', code: null };
+      this.log('error', `启动检查暂时读不到 tmux 会话，${RECOVERY_RETRY_MS / 1000}s 后重试`, this.state.lastReadError);
       this.emitChange();
+      if (this.recoveryAttempt < RECOVERY_RETRIES) {
+        this.recoveryAttempt += 1;
+        await new Promise((resolve) => setTimeout(resolve, RECOVERY_RETRY_MS));
+        return this.runStartupRecovery();
+      }
+      this.log('error', '启动检查放弃重试', `已重试 ${RECOVERY_RETRIES} 次`);
       return null;
     }
+    this.state.tmuxError = null;
     this.state.liveSessionCount = live.length;
     if (!snapshot || !snapshot.sessions.length) {
       // First launch (or a wiped snapshot): there is nothing to restore, but
@@ -831,8 +962,35 @@ class SessionSnapshotService {
         level: 'warn',
         titleKey: 'snapshot.issue.cwdDrift',
         count: state.cwdIssues.length,
-        detail: state.cwdIssues.map((item) => `${item.sessionName} · ${item.windowIndex}.${item.paneIndex} → ${item.expected}`).join('\n'),
+        detail: state.cwdIssues
+          .map((item) => `${item.sessionName} · ${item.windowIndex}.${item.paneIndex} → ${item.expected}${item.blockedBy ? ` （${item.blockedBy}）` : ''}`)
+          .join('\n'),
         actions: repairable.length ? ['repair'] : [],
+      });
+    }
+    // A directory that exists but cannot be entered is the one failure the user
+    // can actually resolve (grant the app access to that location), so it gets
+    // its own entry rather than hiding inside the drift list.
+    const denied = state.cwdIssues.filter((item) => item.blockedBy === 'denied');
+    if (denied.length) {
+      issues.push({
+        id: 'cwd-denied',
+        level: 'error',
+        titleKey: 'snapshot.issue.cwdDenied',
+        count: denied.length,
+        detail: [...new Set(denied.map((item) => item.expected))].join('\n'),
+        actions: ['repair'],
+      });
+    }
+    const stuck = state.lastRepairFailures.filter((item) => item.message === 'cd-failed');
+    if (stuck.length) {
+      issues.push({
+        id: 'repair-stuck',
+        level: 'warn',
+        titleKey: 'snapshot.issue.repairStuck',
+        count: stuck.length,
+        detail: stuck.map((item) => `${item.sessionName} · ${item.expected}`).join('\n'),
+        actions: ['repair'],
       });
     }
     if (!state.snapshotSessionCount && state.settings.enabled && !state.lastSaveError) {

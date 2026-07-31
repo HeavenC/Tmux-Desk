@@ -377,9 +377,13 @@ See the **"tmux behavior vs App behavior"** section above — almost all differe
 
 tmux keeps nothing on disk by itself, but the App snapshots for you and recreates them on the next launch — see **"Restoring sessions after a reboot"** above. If they didn't come back, click the exclamation mark at the top right (or Settings → Session snapshot & restore → View status) for the reason, and send us the `session-snapshot.log` the panel points at.
 
-### My restored sessions came back in my home directory (~)?
+### My restored sessions came back in `/` or my home directory (~)?
 
-That's another restore plugin dropping the working directory when it recreates panes. The App detects it and types a `cd` back into the **idle shell** ("Fix working directories" in Settings, on by default); panes running a program are left alone — check the list in the "Session snapshot" panel and switch those yourself.
+The restore failed to hand the pane a working directory: `/` is the tmux server's own directory, where a pane lands when it never got one, and `~` is the other common fallback. The App detects both, types a `cd` back into the **idle shell** ("Fix working directories" in Settings, on by default), and reads the pane back to confirm it actually moved. Panes running a program are left alone — check the list in the "Session snapshot" panel and switch those yourself.
+
+The snapshot keeps a "last known-good directory" per pane, so one bad restore **cannot** erase the real one — it stays fixable later.
+
+**This is usually not a disk-permission problem.** If a directory exists but the App genuinely cannot enter it (a protected location, a locked volume), the panel raises a separate "directories exist but cannot be accessed" item with instructions for granting access. If you don't see that item, the directory is readable and Full Disk Access won't help.
 
 ## License
 
