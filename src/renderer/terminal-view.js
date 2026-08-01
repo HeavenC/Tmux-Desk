@@ -89,6 +89,45 @@ class TerminalView {
         this.webglAddon?.dispose();
         this.webglAddon = null;
       });
+      // Garbled-glyph guard. The glyph atlas is split across up to
+      // MAX_TEXTURE_IMAGE_UNITS (16 here) pages, and GlyphRenderer decides
+      // whether to re-upload page i by comparing pages[i].version against the
+      // version it last uploaded to texture unit i — a *positional* check. A
+      // page's version is bumped once per glyph added, so every saturated
+      // 512x512 page sits at a near-identical version (~1540 for CJK). When the
+      // atlas merges 4 pages and splices them out, the page that shifts into
+      // index i very often lands on the exact version the unit already recorded,
+      // the upload is skipped, and every glyph claiming texturePage i samples
+      // the *previous* page's pixels: right cell widths, wrong glyphs, stray
+      // colours from unrelated text. It never self-heals.
+      // Merges are the only moment page indices get reshuffled, and _mergePages
+      // is the only thing that fires onRemoveTextureAtlasCanvas, so that event
+      // is an exact "indices just moved" signal — drop the whole atlas there.
+      // NOT via clearTextureAtlas(): it delegates to TextureAtlas.clearTexture(),
+      // which early-returns when page 0's currentRow is still 0,0 — and a merged
+      // page has a reset currentRow, so it is a silent no-op in precisely the
+      // state we need it. Verified in-app: 65 clearTextureAtlas() calls left all
+      // 15 pages and 4643 stale frames untouched.
+      // Round-tripping fontFamily makes configEquals() fail instead, so the
+      // renderer acquires a brand new TextureAtlas (15 pages -> 1) and setAtlas()
+      // invalidates every texture unit. Ending on the original value keeps cell
+      // metrics identical (measured: 15x36 before and after, cols/rows unchanged),
+      // so nothing reflows and tmux sees no resize. Same idiom the font-load
+      // handler below uses to drop xterm's WidthCache.
+      // Deferred: the event fires mid-allocation inside getRasterizedGlyph, and
+      // swapping the atlas underneath that caller would strand the in-flight
+      // glyph. Costs one already-drawn frame, healed on the next.
+      let atlasRebuildQueued = false;
+      this.webglAddon.onRemoveTextureAtlasCanvas(() => {
+        if (atlasRebuildQueued) return;
+        atlasRebuildQueued = true;
+        queueMicrotask(() => {
+          atlasRebuildQueued = false;
+          const family = this.terminal.options.fontFamily;
+          this.terminal.options.fontFamily = 'monospace';
+          this.terminal.options.fontFamily = family;
+        });
+      });
       this.terminal.loadAddon(this.webglAddon);
     } catch {
       this.webglAddon = null; // DOM renderer fallback
