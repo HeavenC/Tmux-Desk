@@ -511,8 +511,30 @@ test('resizePane clamps absolute cell sizes and cancelCopyMode swallows "not in 
   await assert.rejects(() => service.resizePane('%3', {}), /缺少 pane 尺寸/);
   await assert.rejects(() => service.resizePane('$3', { x: 10 }), /无效的 tmux 面板目标/);
 
-  // Leaving copy-mode when the pane was never in one is the success case.
+  // Leaving copy-mode when the pane was never in one is the success case. The
+  // target is a session for the attached view and a pane for a search hit
+  // elsewhere, so both forms are accepted — but nothing else.
   assert.equal(await service.cancelCopyMode('$4'), true);
   assert.deepEqual(calls.at(-1), ['send-keys', '-t', '$4', '-X', 'cancel']);
-  await assert.rejects(() => service.cancelCopyMode('%4'), /无效的 tmux 会话目标/);
+  assert.equal(await service.cancelCopyMode('%4'), true);
+  assert.deepEqual(calls.at(-1), ['send-keys', '-t', '%4', '-X', 'cancel']);
+  await assert.rejects(() => service.cancelCopyMode('@4'), /无效的 tmux 目标/);
+});
+
+test('clearPane repaints first, then drops the scrollback that repaint created', async () => {
+  const calls = [];
+  const service = new TmuxService({
+    tmuxPath: '/tmp/tmux',
+    fsImpl: executableFs(['/tmp/tmux']),
+    execFileImpl: async (file, args) => { calls.push(args); return { stdout: '', stderr: '' }; },
+  });
+
+  assert.equal(await service.clearPane('$4', { redrawDelayMs: 0 }), true);
+  assert.deepEqual(calls, [
+    // Leaving copy-mode first, or C-l would be read as a copy-mode command.
+    ['send-keys', '-t', '$4', '-X', 'cancel'],
+    ['send-keys', '-t', '$4', 'C-l'],
+    ['clear-history', '-t', '$4'],
+  ]);
+  await assert.rejects(() => service.clearPane('%4'), /无效的 tmux 会话目标/);
 });

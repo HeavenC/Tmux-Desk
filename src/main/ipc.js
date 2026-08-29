@@ -52,6 +52,10 @@ const IPC_CHANNELS = Object.freeze([
   'terminal:resize',
   'terminal:scroll',
   'terminal:cancel-copy-mode',
+  'terminal:clear',
+  'terminal:find',
+  'search:sessions',
+  'search:reveal',
   'terminal:detach',
   'web:status',
   'web:start',
@@ -140,7 +144,18 @@ function validateTerminalPayload(kind, value) {
     if (!Number.isInteger(value.lines)) throw new Error('滚动量无效');
     return { sessionId: validateTarget(value.sessionId), lines: Math.max(-500, Math.min(500, value.lines)) };
   }
-  if (kind === 'cancel-copy-mode') return { sessionId: validateTarget(value.sessionId) };
+  if (kind === 'cancel-copy-mode' || kind === 'clear') return { sessionId: validateTarget(value.sessionId) };
+  if (kind === 'find') {
+    const query = typeof value.query === 'string' ? value.query : '';
+    if (!query.trim() || query.length > 512) throw new Error('查找内容无效');
+    return {
+      sessionId: validateTarget(value.sessionId),
+      action: value.action === 'step' ? 'step' : 'search',
+      direction: value.direction === 'forward' ? 'forward' : 'backward',
+      flip: value.flip === true,
+      query,
+    };
+  }
   const terminalId = validateTerminalId(value.terminalId);
   if (kind === 'write') {
     if (typeof value.data !== 'string' || value.data.length > 1024 * 1024) throw new Error('终端输入无效');
@@ -148,6 +163,38 @@ function validateTerminalPayload(kind, value) {
   }
   if (kind === 'resize') return { terminalId, ...validateTerminalSize(value.cols, value.rows) };
   throw new Error('终端操作无效');
+}
+
+function validateSearchQuery(value) {
+  const query = typeof value === 'string' ? value.trim() : '';
+  if (!query || query.length > 512) throw new Error('搜索内容无效');
+  return query;
+}
+
+function validateSearchOptions(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('搜索参数无效');
+  const bounded = (input, fallback, min, max) => (Number.isInteger(input)
+    ? Math.min(max, Math.max(min, input)) : fallback);
+  return {
+    query: validateSearchQuery(value.query),
+    caseSensitive: value.caseSensitive === true,
+    historyLines: bounded(value.historyLines, 20000, 100, 200000),
+    maxPerPane: bounded(value.maxPerPane, 20, 1, 200),
+    maxTotal: bounded(value.maxTotal, 200, 1, 1000),
+  };
+}
+
+function validateRevealInput(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('搜索结果无效');
+  if (!Number.isInteger(value.gotoLine) || value.gotoLine < 0) throw new Error('搜索结果无效');
+  return {
+    windowId: validateTarget(value.windowId, 'window'),
+    paneId: validateTarget(value.paneId, 'pane'),
+    gotoLine: value.gotoLine,
+    historySize: Number.isInteger(value.historySize) ? value.historySize : null,
+    query: validateSearchQuery(value.query),
+    preview: typeof value.preview === 'string' ? value.preview.slice(0, 512) : '',
+  };
 }
 
 function validateWindowBounds(value) {
@@ -415,6 +462,19 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       const { sessionId, lines } = validateTerminalPayload('scroll', payload);
       return tmuxService.scrollSession(sessionId, lines);
     },
+    'search:sessions': (_event, payload) => {
+      const { query, ...options } = validateSearchOptions(payload);
+      return tmuxService.searchSessions(query, options);
+    },
+    'search:reveal': (_event, payload) => tmuxService.revealMatch(validateRevealInput(payload)),
+    'terminal:find': (_event, payload) => {
+      const { sessionId, ...options } = validateTerminalPayload('find', payload);
+      return tmuxService.findInSession(sessionId, options);
+    },
+    'terminal:clear': (_event, payload) => {
+      const { sessionId } = validateTerminalPayload('clear', payload);
+      return tmuxService.clearPane(sessionId);
+    },
     'terminal:cancel-copy-mode': (_event, payload) => {
       const { sessionId } = validateTerminalPayload('cancel-copy-mode', payload);
       return tmuxService.cancelCopyMode(sessionId);
@@ -458,4 +518,6 @@ module.exports = {
   validateTagMutation,
   validateTarget,
   validateTerminalPayload,
+  validateRevealInput,
+  validateSearchOptions,
 };

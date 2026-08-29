@@ -153,12 +153,22 @@ class TerminalView {
     // LF byte. Without preventDefault(), Chromium emits an extra CR after our LF,
     // which makes some TUIs submit the message immediately after adding a line.
     this.terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type === 'keydown' && event.key === 'Enter'
-        && event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
-        && !event.isComposing && event.keyCode !== 229) {
+      if (event.type !== 'keydown' || event.isComposing || event.keyCode === 229) return true;
+      if (event.key === 'Enter' && event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
         event.stopPropagation();
         this.sendInput('\n');
+        return false;
+      }
+      // iTerm's "Natural Text Editing": Option+arrow moves by word. xterm.js
+      // sends the modified-arrow sequence \e[1;3D / \e[1;3C, which zsh and bash
+      // do not bind by default — word motion was simply dead here. readline and
+      // zle both listen for Meta-b / Meta-f, so send those instead.
+      if (event.altKey && !event.ctrlKey && !event.metaKey
+        && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.sendInput(event.key === 'ArrowLeft' ? '\x1bb' : '\x1bf');
         return false;
       }
       return true;
@@ -177,7 +187,7 @@ class TerminalView {
     // finds nothing to copy. Intercept it and fill clipboardData ourselves.
     this.onCopyEvent = (event) => {
       if (!this.terminal.hasSelection()) return;
-      const text = this.terminal.getSelection();
+      const text = trimTrailingSpaces(this.terminal.getSelection());
       if (!text) return;
       event.clipboardData?.setData('text/plain', text);
       event.preventDefault();
@@ -561,7 +571,7 @@ class TerminalView {
 
   copySelectionToClipboard() {
     if (!this.terminal.hasSelection()) return;
-    const text = this.terminal.getSelection();
+    const text = trimTrailingSpaces(this.terminal.getSelection());
     if (!text) return;
     // navigator.clipboard.writeText rejects (or throws in some engines) when
     // the window/document isn't focused — fail silently rather than surface
@@ -572,6 +582,24 @@ class TerminalView {
   }
 
   focus() { this.terminal.focus(); }
+
+  getSelection() {
+    return this.terminal.hasSelection() ? trimTrailingSpaces(this.terminal.getSelection()) : '';
+  }
+
+  // Route pastes through xterm so bracketed-paste mode is honoured (a shell with
+  // it on must see the wrapper, or a multi-line paste executes line by line).
+  paste(text) {
+    if (typeof text !== 'string' || !text) return;
+    this.terminal.paste(text);
+  }
+
+  // Terminal find drives tmux copy-mode from outside this class (app.js), so it
+  // has to tell us about it: the next keystroke must cancel the mode before it
+  // reaches the pane, exactly like a wheel scroll does.
+  setCopyModeActive(active) {
+    this.copyModeActive = active === true;
+  }
 
   // Swap the backing api (local IPC ↔ a RemoteApi) so one TerminalView can attach
   // to either the local machine or a taken-over remote host. The caller detaches
@@ -632,6 +660,14 @@ class TerminalView {
   }
 }
 
+// tmux pads every line out to the pane width, so a block selection carries a
+// tail of spaces on each row into the clipboard — paste it into an editor or a
+// commit message and the trailing whitespace comes along. iTerm trims it; so do
+// we. Only the right edge is touched: leading indentation is content.
+function trimTrailingSpaces(text) {
+  return String(text).split('\n').map((line) => line.replace(/[ \t]+$/, '')).join('\n');
+}
+
 function terminalLineText(line, cols) {
   let text = '';
   const columns = [];
@@ -653,4 +689,4 @@ function terminalLineText(line, cols) {
   return { text: trimmed, columns };
 }
 
-module.exports = { TerminalView, terminalLineText };
+module.exports = { TerminalView, terminalLineText, trimTrailingSpaces };

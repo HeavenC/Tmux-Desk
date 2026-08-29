@@ -5,8 +5,12 @@ const { promisify } = require('node:util');
 const { withUtf8Locale } = require('./locale-env');
 const { isWindows, wslConfig, buildTmuxInvocation, toWslPath, toWindowsPath, withTmuxDirOnPath } = require('./platform');
 const { buildTmuxSettingCommands } = require('../shared/tmux-settings');
+const { collectMatches, gotoLineFor, normalizeQuery, scanPaneCapture } = require('../shared/session-search');
 
 const execFileAsync = promisify(execFile);
+// Separates capture-pane's payload from the geometry line appended to the same
+// tmux invocation; \x01 cannot appear in tmux's plain-text capture output.
+const CAPTURE_META = '\u0001tmux-desk-capture-meta\u0001';
 const SESSION_TARGET = /^\$\d+$/;
 const WINDOW_TARGET = /^@\d+$/;
 const PANE_TARGET = /^%\d+$/;
@@ -105,7 +109,11 @@ class TmuxService {
     this.pathLib = this.isWindows ? path.win32 : path.posix;
     this.tmuxPath = tmuxPath || null;
     this.env = withUtf8Locale(env || process.env);
-    this.execFileImpl = execFileImpl || ((file, args) => execFileAsync(file, args, { env: this.env }));
+    // maxBuffer: capture-pane can return a pane's whole scrollback (20k lines is
+    // ~1.6 MB of text), and Node's 1 MiB default would turn cross-session search
+    // into an ENOBUFS error on any busy pane.
+    this.execFileImpl = execFileImpl
+      || ((file, args) => execFileAsync(file, args, { env: this.env, maxBuffer: 64 * 1024 * 1024 }));
     this.socketName = socketName || null;
     this.fs = fsImpl || fs;
   }
@@ -342,16 +350,208 @@ class TmuxService {
     await this.run(args);
   }
 
+  // Every pane on the server, with the identifiers the UI needs to show a match
+  // ("会话 › 窗口 › pane") and the targets needed to jump to it.
+  async listAllPanes() {
+    const format = [
+      '#{session_id}', '#{session_name}', '#{window_id}', '#{window_index}', '#{window_name}',
+      '#{pane_id}', '#{pane_index}', '#{pane_active}', '#{pane_current_command}',
+      '#{history_size}', '#{pane_height}',
+    ].join('\t');
+    const { stdout } = await this.run(['list-panes', '-a', '-F', format]);
+    return parseRecords(stdout).map(([sessionId, sessionName, windowId, windowIndex, windowName,
+      paneId, paneIndex, paneActive, command, historySize, paneHeight]) => ({
+      sessionId, sessionName, windowId, windowIndex: toNumber(windowIndex), windowName,
+      paneId, paneIndex: toNumber(paneIndex), paneActive: toBoolean(paneActive), command,
+      historySize: toNumber(historySize), paneHeight: toNumber(paneHeight),
+    }));
+  }
+
+  // A pane's scrollback as plain text, oldest line first, together with the row
+  // geometry captured in the SAME tmux invocation. That atomicity matters: tmux
+  // runs a command list without processing pane output in between, so a busy
+  // pane cannot grow between the capture and the history_size that indexes it —
+  // read separately, every match in a running build lands on the wrong row.
+  async capturePane(paneTarget, historyLines = 20000) {
+    validateTarget(paneTarget, PANE_TARGET, '面板');
+    const requestedLines = Math.min(200000, Math.max(100, historyLines));
+    const { stdout } = await this.run([
+      'capture-pane', '-p', '-S', `-${requestedLines}`, '-t', paneTarget,
+      ';', 'display-message', '-p', '-t', paneTarget, `${CAPTURE_META}#{history_size}\t#{pane_height}`,
+    ]);
+    const text = String(stdout || '');
+    const marker = text.lastIndexOf(CAPTURE_META);
+    if (marker < 0) return { text, historySize: 0, paneHeight: 0, requestedLines };
+    const [historySize, paneHeight] = text.slice(marker + CAPTURE_META.length).trim().split('\t');
+    return {
+      text: text.slice(0, marker).replace(/\n$/, ''),
+      historySize: toNumber(historySize) || 0,
+      paneHeight: toNumber(paneHeight) || 0,
+      requestedLines,
+    };
+  }
+
+  // Search every pane of every session at once — the thing a single terminal
+  // emulator cannot do, and the reason Cmd+F here is not iTerm's per-pane find.
+  // Panes are captured sequentially: measured at ~14 ms for three panes holding
+  // 2k-20k lines each, so the round trips are not worth parallelising.
+  async searchSessions(query, {
+    historyLines = 20000, maxPerPane = 20, maxTotal = 200, caseSensitive = false,
+  } = {}) {
+    const needle = normalizeQuery(query);
+    if (!needle) return { results: [], truncated: false, panes: 0 };
+    const panes = await this.listAllPanes();
+    const scanned = [];
+    for (const pane of panes) {
+      let capture;
+      try {
+        capture = await this.capturePane(pane.paneId, historyLines);
+      } catch {
+        continue; // a pane can die mid-search; the rest of the result is still good
+      }
+      // historySize travels with every match: the pane keeps producing output
+      // after the capture, and each new row pushes the match one row further up
+      // (revealMatch re-reads history_size and adds the difference).
+      const matches = scanPaneCapture(capture.text, needle, { caseSensitive, maxPerPane })
+        .map(({ index, ...match }) => ({
+          ...match,
+          gotoLine: gotoLineFor(capture, index),
+          historySize: capture.historySize,
+        }));
+      if (matches.length) scanned.push({ pane, matches });
+    }
+    return { ...collectMatches(scanned, { maxTotal }), panes: panes.length };
+  }
+
+  // Jump to one search hit: focus its window and pane, then park copy-mode on
+  // the matched row.
+  //
+  // Getting there exactly takes three tries stacked on each other, because the
+  // pane keeps living after the search:
+  //   1. goto-line with the captured row offset, corrected by however much the
+  //      scrollback grew since. That correction is blind once a pane hits its
+  //      history-limit — history_size stops growing while rows keep scrolling
+  //      off — so it only gets us close.
+  //   2. snap: search backward for the matched line's exact text. Drift always
+  //      pushes a row further up, so the landing point is at or below it.
+  //   3. search forward for the query itself, which stays on that line (a
+  //      forward search starts at the cursor) and leaves the query as tmux's
+  //      search string, so tmux highlights the matches in the viewport.
+  // If the row still does not hold the query, fall back to the newest match in
+  // the pane rather than leaving the user at an arbitrary line.
+  async revealMatch({ windowId, paneId, gotoLine, historySize = null, query, preview = '' } = {}) {
+    validateTarget(windowId, WINDOW_TARGET, '窗口');
+    validateTarget(paneId, PANE_TARGET, '面板');
+    const needle = normalizeQuery(query);
+    const expected = typeof preview === 'string' ? preview.trim() : '';
+    let line = Number.isInteger(gotoLine) ? Math.max(0, gotoLine) : 0;
+    if (Number.isInteger(historySize)) {
+      const { stdout } = await this.run(['display-message', '-p', '-t', paneId, '#{history_size}']);
+      const live = toNumber(String(stdout || '').trim()) || 0;
+      line += Math.max(0, live - historySize);
+      // goto-line cannot climb higher than the scrollback itself.
+      line = Math.min(line, live);
+    }
+    await this.run(['select-window', '-t', windowId, ';', 'select-pane', '-t', paneId]);
+    const args = ['copy-mode', '-e', '-t', paneId,
+      ';', 'send-keys', '-t', paneId, '-X', 'goto-line', String(line)];
+    if (expected) args.push(';', 'send-keys', '-t', paneId, '-X', 'search-backward-text', '--', expected);
+    if (needle) args.push(';', 'send-keys', '-t', paneId, '-X', 'search-forward-text', '--', needle);
+    await this.run(args);
+    let cursorLine = await this.copyCursorLine(paneId);
+    const exact = !needle || cursorLine.toLowerCase().includes(needle.toLowerCase());
+    if (!exact) {
+      await this.cancelCopyMode(paneId);
+      await this.run(['copy-mode', '-e', '-t', paneId,
+        ';', 'send-keys', '-t', paneId, '-X', 'search-backward-text', '--', needle]);
+      cursorLine = await this.copyCursorLine(paneId);
+    }
+    return { cursorLine, exact };
+  }
+
+  async copyCursorLine(paneTarget) {
+    const { stdout } = await this.run(['display-message', '-p', '-t', paneTarget, '#{copy_cursor_line}']);
+    return String(stdout || '').replace(/\n$/, '');
+  }
+
+  // Cmd+K, iTerm's "clear buffer": wipe the visible screen AND the scrollback.
+  // Order matters. C-l first lets the foreground program repaint itself — zsh
+  // keeps a half-typed command line, a TUI redraws — and that repaint pushes the
+  // old screen into the scrollback; clearing the history first would leave those
+  // rows behind (measured: history 185 -> 19 that way, and 0 in this order).
+  // The pause is for the program to actually repaint before the history goes.
+  async clearPane(sessionTarget, { redrawDelayMs = 120 } = {}) {
+    validateTarget(sessionTarget, SESSION_TARGET, '会话');
+    await this.cancelCopyMode(sessionTarget);
+    await this.run(['send-keys', '-t', sessionTarget, 'C-l']);
+    if (redrawDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, redrawDelayMs));
+    await this.run(['clear-history', '-t', sessionTarget]);
+    return true;
+  }
+
+  // Terminal find (Cmd+F). tmux owns the pane history, so "find in terminal"
+  // means driving copy-mode's own search — which also highlights every visible
+  // match (copy-mode-match-style) for free. The -text variants search for a
+  // literal string: people type paths and error messages into a find bar, not
+  // regular expressions. Returns the match bookkeeping plus inCopyMode, because
+  // a search leaves the pane in copy-mode and the client must cancel that before
+  // the next keystroke reaches the application.
+  //   action 'search' — a new query, restarted from the live bottom
+  //   action 'step'   — the next match in `direction` ('backward' = older)
+  //   flip            — this step reverses the previous direction (see below)
+  async findInSession(sessionTarget, { query, action = 'search', direction = 'backward', flip = false } = {}) {
+    validateTarget(sessionTarget, SESSION_TARGET, '会话');
+    if (typeof query !== 'string' || !query || query.length > 512) {
+      throw new TmuxError('COMMAND_FAILED', '查找内容无效');
+    }
+    const report = ['display-message', '-p', '-t', sessionTarget,
+      '#{search_present}\t#{search_count}\t#{search_count_partial}\t#{pane_in_mode}'];
+    const search = (name) => ['send-keys', '-t', sessionTarget, '-X', name, '--', query];
+    let args;
+    if (action === 'search') {
+      // Restart from the live bottom, or a changed query would keep drifting
+      // further up from wherever the previous match left the cursor.
+      await this.cancelCopyMode(sessionTarget);
+      args = ['copy-mode', '-e', '-t', sessionTarget, ';', ...search('search-backward-text'), ';', ...report];
+    } else {
+      // A backward search leaves the cursor on the START of its match, a forward
+      // one on the END. So the first step after changing direction only walks
+      // across the match already under the cursor — it looks like a dead button.
+      // Measured on tmux 3.7b: flipping costs exactly one such step, so spend it.
+      const name = direction === 'forward' ? 'search-forward-text' : 'search-backward-text';
+      args = flip
+        ? [...search(name), ';', ...search(name), ';', ...report]
+        : [...search(name), ';', ...report];
+    }
+    try {
+      const [present, count, partial, inMode] = String((await this.run(args)).stdout || '')
+        .trim().split('\n').pop().split('\t');
+      return {
+        inCopyMode: inMode === '1',
+        present: present === '1',
+        count: Number(count) || 0,
+        partial: partial === '1',
+      };
+    } catch {
+      // Stepping while the pane is no longer in copy-mode (it scrolled back to
+      // the live screen) is the ordinary "nothing to step through" case.
+      return { inCopyMode: false, present: false, count: 0, partial: false };
+    }
+  }
+
   // Leave copy-mode without sending anything to the pane's application. The
   // client calls this before the first keystroke that follows a wheel scroll:
   // scrolling a normal-screen pane necessarily enters copy-mode, where every
   // key is a copy-mode command instead of input ("typing does nothing until you
   // press Escape"). Erroring because the pane is not in a mode is the success
   // case, so it is swallowed.
-  async cancelCopyMode(sessionTarget) {
-    validateTarget(sessionTarget, SESSION_TARGET, '会话');
+  async cancelCopyMode(target) {
+    // Session for the attached view, pane for a search hit somewhere else.
+    if (!SESSION_TARGET.test(String(target)) && !PANE_TARGET.test(String(target))) {
+      throw new TmuxError('COMMAND_FAILED', '无效的 tmux 目标');
+    }
     try {
-      await this.run(['send-keys', '-t', sessionTarget, '-X', 'cancel']);
+      await this.run(['send-keys', '-t', target, '-X', 'cancel']);
     } catch {}
     return true;
   }

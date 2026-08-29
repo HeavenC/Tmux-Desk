@@ -256,7 +256,7 @@
                     <span id="workspaceStatus" data-i18n="workspace.localOnly"
                         >纯本地 · 终端内容不会离开这台 Mac</span
                     >
-                    <button id="commandHint"><kbd>⌘K</kbd> <span data-i18n="palette.hintLabel">命令面板</span></button>
+                    <button id="commandHint"><kbd>⌘⇧P</kbd> <span data-i18n="palette.hintLabel">命令面板</span></button>
                 </footer>
             </main>
 
@@ -829,6 +829,28 @@
             </div>
         </div>
 
+        <div class="palette-backdrop hidden no-drag" id="globalSearch">
+            <div class="command-dialog search-dialog">
+                <div class="command-input">
+                    <span id="globalSearchIcon"></span
+                    ><input
+                        id="globalSearchInput"
+                        placeholder="搜索所有会话的终端输出…"
+                        autocomplete="off"
+                        spellcheck="false"
+                        data-i18n-ph="search.inputPh"
+                        data-i18n-aria="search.inputPh"
+                        aria-label="搜索所有会话的终端输出"
+                    /><kbd>Esc</kbd>
+                </div>
+                <div class="command-results search-results" id="globalSearchResults" role="listbox"></div>
+                <footer>
+                    <span id="globalSearchStatus" class="search-status"></span
+                    ><span><kbd>↑</kbd><kbd>↓</kbd> <span data-i18n="palette.select">选择</span></span
+                    ><span><kbd>↵</kbd> <span data-i18n="search.jump">跳转</span></span>
+                </footer>
+            </div>
+        </div>
         <div class="palette-backdrop hidden no-drag" id="commandPalette">
             <div class="command-dialog">
                 <div class="command-input">

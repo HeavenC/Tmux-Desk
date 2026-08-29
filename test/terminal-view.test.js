@@ -40,7 +40,7 @@ class FakeWebglAddon {
   dispose() {}
 }
 
-function loadTerminalView() {
+function loadTerminalModule() {
   const xtermPath = require.resolve('@xterm/xterm');
   const fitAddonPath = require.resolve('@xterm/addon-fit');
   const clipboardAddonPath = require.resolve('@xterm/addon-clipboard');
@@ -69,7 +69,11 @@ function loadTerminalView() {
     if (cachedModule) require.cache[modulePath] = cachedModule;
     else delete require.cache[modulePath];
   }
-  return loaded.TerminalView;
+  return loaded;
+}
+
+function loadTerminalView() {
+  return loadTerminalModule().TerminalView;
 }
 
 function createView(apiOverrides = {}) {
@@ -327,6 +331,42 @@ test('a remote takeover answers scrolls with a bare boolean and never gates inpu
     assert.equal(view.copyModeActive, false);
     view.sendInput('x');
     assert.deepEqual(writes, [{ terminalId: 7, data: 'x' }]);
+  } finally {
+    dispose();
+  }
+});
+
+test('copied text loses the padding tmux adds to every line', () => {
+  const { trimTrailingSpaces } = loadTerminalModule();
+  // tmux pads each row out to the pane width; iTerm trims that on copy.
+  assert.equal(trimTrailingSpaces('npm run build   \n  indented   \nlast'), 'npm run build\n  indented\nlast');
+  assert.equal(trimTrailingSpaces('   '), '');
+
+  const { view, dispose } = createView();
+  try {
+    view.terminal.selection = 'error: cannot find module   ';
+    assert.equal(view.getSelection(), 'error: cannot find module');
+    view.terminal.selection = '';
+    assert.equal(view.getSelection(), '');
+  } finally {
+    dispose();
+  }
+});
+
+test('Option+arrow sends the word-motion escapes readline actually binds', () => {
+  const { view, writes, dispose } = createView();
+  try {
+    view.terminalId = 7;
+    for (const [key, expected] of [['ArrowLeft', '\x1bb'], ['ArrowRight', '\x1bf']]) {
+      const event = enterEvent({ key, altKey: true, keyCode: key === 'ArrowLeft' ? 37 : 39 });
+      assert.equal(view.terminal.dispatchKeyEvent(event), false);
+      assert.equal(event.defaultPrevented, true);
+      assert.deepEqual(writes.at(-1), { terminalId: 7, data: expected });
+    }
+    // Ctrl/Cmd combinations stay with xterm's own handling.
+    const withCtrl = enterEvent({ key: 'ArrowLeft', altKey: true, ctrlKey: true, keyCode: 37 });
+    assert.equal(view.terminal.dispatchKeyEvent(withCtrl), true);
+    assert.equal(writes.length, 2);
   } finally {
     dispose();
   }

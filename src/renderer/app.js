@@ -30,6 +30,12 @@ const state = {
   sessions: [],
   selectedSessionId: null,
   detail: { windows: [], panes: [] },
+  // Cross-session search (Cmd+F): results from every pane on the tmux server,
+  // not just the attached one. token drops answers from stale queries.
+  search: { open: false, results: [], index: 0, token: 0, truncated: false, panes: 0 },
+  // What Cmd+G steps through in the attached pane, and which way it went last
+  // (a reversal costs tmux one extra step — see TmuxService.findInSession).
+  paneSearch: null,
   query: '',
   view: { kind: 'all' },
   refreshing: false,
@@ -59,6 +65,7 @@ function cacheElements() {
     'tmuxStatusDot', 'tmuxStatusText', 'themeButton', 'settingsButton', 'activeSessionName',
     'activeSessionPath', 'attachedBadge', 'workspaceViewBadge', 'panePickerWrap', 'panePicker', 'panePickerIcon',
     'sessionMenuButton', 'sessionTabs', 'terminalSurface', 'terminalMount', 'paneCloseLayer', 'terminalReconnect',
+    'globalSearch', 'globalSearchIcon', 'globalSearchInput', 'globalSearchResults', 'globalSearchStatus',
     'reconnectButton', 'emptyState', 'emptyTitle', 'emptyMessage', 'emptyActions', 'emptyNewButton',
     'emptyInstallButton', 'emptyRefreshButton', 'emptyAllButton', 'workspaceStatus', 'commandHint', 'themePopover', 'contextMenu', 'toastStack',
     'sessionModal', 'sessionForm', 'sessionNameInput', 'sessionCwdInput', 'startupCommandInput',
@@ -1462,6 +1469,272 @@ function onTerminalResize() {
 }
 
 // ---------------------------------------------------------------------------
+// Global search (Cmd+F). A terminal emulator can only search what it is showing;
+// tmux holds every pane's scrollback, so this asks tmux to grep ALL of them and
+// then jumps straight to the hit — session, window, pane and row. That is why
+// Cmd+F here is not iTerm's per-pane find bar.
+let searchDebounceTimer = null;
+
+function openGlobalSearch() {
+  if (isRemoteActive()) { toast(t('search.localOnly')); return; }
+  const selection = terminalView?.getSelection?.().trim() || '';
+  if (selection && !selection.includes('\n') && selection.length <= 120) {
+    refs.globalSearchInput.value = selection;
+  }
+  state.search.open = true;
+  refs.globalSearch.classList.remove('hidden');
+  refs.globalSearchInput.focus();
+  refs.globalSearchInput.select();
+  if (refs.globalSearchInput.value.trim()) runGlobalSearch();
+  else renderSearchResults();
+}
+
+function closeGlobalSearch() {
+  clearTimeout(searchDebounceTimer);
+  state.search.open = false;
+  state.search.token += 1; // in-flight answers are no longer wanted
+  refs.globalSearch.classList.add('hidden');
+  terminalView?.focus();
+}
+
+async function runGlobalSearch() {
+  const query = refs.globalSearchInput.value.trim();
+  const token = ++state.search.token;
+  if (!query) {
+    state.search.results = [];
+    renderSearchResults();
+    return;
+  }
+  refs.globalSearchStatus.textContent = t('search.searching');
+  try {
+    const found = await localApi.searchSessions({ query });
+    if (token !== state.search.token) return; // a newer query already went out
+    state.search.results = found.results || [];
+    state.search.truncated = found.truncated === true;
+    state.search.panes = found.panes || 0;
+    state.search.index = 0;
+    renderSearchResults();
+  } catch (error) {
+    if (token !== state.search.token) return;
+    state.search.results = [];
+    renderSearchResults();
+    toast(friendlyError(error), 'error');
+  }
+}
+
+// The matched line with the query highlighted — built as nodes, so terminal
+// output never goes through innerHTML.
+function searchLineFragment(result) {
+  const line = document.createElement('span');
+  line.className = 'search-result-line';
+  const column = Number.isInteger(result.column) ? result.column : 0;
+  const length = Number.isInteger(result.length) ? result.length : 0;
+  const before = result.preview.slice(0, column);
+  const hit = result.preview.slice(column, column + length);
+  const after = result.preview.slice(column + length);
+  if (before) line.append(document.createTextNode(before));
+  if (hit) {
+    const mark = document.createElement('mark');
+    mark.textContent = hit;
+    line.append(mark);
+  }
+  if (after) line.append(document.createTextNode(after));
+  return line;
+}
+
+function renderSearchResults() {
+  const { results, index } = state.search;
+  refs.globalSearchResults.replaceChildren();
+  const query = refs.globalSearchInput.value.trim();
+  if (!results.length) {
+    const empty = document.createElement('div');
+    empty.className = 'search-empty';
+    empty.textContent = query ? t('search.noMatch') : t('search.hint');
+    refs.globalSearchResults.append(empty);
+    refs.globalSearchStatus.textContent = '';
+    return;
+  }
+  results.forEach((result, position) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `search-result ${position === index ? 'selected' : ''}`;
+    button.setAttribute('role', 'option');
+    const where = document.createElement('span');
+    where.className = 'search-result-where';
+    const session = document.createElement('b');
+    session.textContent = result.sessionName;
+    const rest = document.createElement('span');
+    const windowLabel = result.windowName ? `${result.windowIndex}:${result.windowName}` : String(result.windowIndex);
+    rest.textContent = `› ${windowLabel}${result.paneIndex ? ` · pane ${result.paneIndex}` : ''}`;
+    where.append(session, rest);
+    button.append(where, searchLineFragment(result));
+    button.addEventListener('mousedown', (event) => event.preventDefault());
+    button.addEventListener('click', () => { state.search.index = position; revealSelectedSearchResult(); });
+    refs.globalSearchResults.append(button);
+  });
+  refs.globalSearchResults.children[index]?.scrollIntoView({ block: 'nearest' });
+  refs.globalSearchStatus.textContent = t(state.search.truncated ? 'search.countCapped' : 'search.count', {
+    count: results.length,
+    panes: state.search.panes,
+  });
+}
+
+function moveSearchSelection(delta) {
+  const { results } = state.search;
+  if (!results.length) return;
+  state.search.index = Math.min(results.length - 1, Math.max(0, state.search.index + delta));
+  renderSearchResults();
+}
+
+// Attach the hit's session, then let tmux focus its window/pane and park
+// copy-mode on the row. The view is told it is in copy-mode so the next
+// keystroke cancels it instead of being eaten as a copy-mode command.
+async function revealSelectedSearchResult() {
+  const result = state.search.results[state.search.index];
+  if (!result) return;
+  const query = refs.globalSearchInput.value.trim();
+  closeGlobalSearch();
+  try {
+    const session = state.sessions.find((item) => item.id === result.sessionId);
+    if (session && session.id !== state.selectedSessionId) await selectSession(session);
+    const landed = await localApi.revealSearchMatch({
+      windowId: result.windowId,
+      paneId: result.paneId,
+      gotoLine: result.gotoLine,
+      historySize: result.historySize,
+      preview: result.preview,
+      query,
+    });
+    state.paneSearch = { query, direction: 'backward' };
+    terminalView?.setCopyModeActive?.(true);
+    await refreshDetail();
+    if (landed && landed.exact === false) toast(t('search.approximate'));
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+  }
+}
+
+// Cmd+G / Cmd+Shift+G walk the matches inside the pane that is on screen,
+// reusing whatever was last searched for (from the global panel or a previous
+// step). tmux keeps its own search string per pane, so this stays in sync.
+async function stepPaneSearch(direction) {
+  const session = selectedSession();
+  const previous = state.paneSearch;
+  if (!session || !previous?.query) { toast(t('search.nothingToStep')); return; }
+  try {
+    const result = await localApi.findInTerminal({
+      sessionId: session.id,
+      query: previous.query,
+      action: 'step',
+      direction,
+      flip: previous.direction !== direction,
+    });
+    state.paneSearch = { query: previous.query, direction };
+    terminalView?.setCopyModeActive?.(result?.inCopyMode === true);
+    if (result && result.present === false) toast(t('search.noMatch'));
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+  }
+}
+
+function setupGlobalSearch() {
+  refs.globalSearchIcon.innerHTML = icon('search', 16);
+  refs.globalSearchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(runGlobalSearch, 200);
+  });
+  refs.globalSearchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') { event.preventDefault(); closeGlobalSearch(); return; }
+    if (event.key === 'ArrowDown') { event.preventDefault(); moveSearchSelection(1); return; }
+    if (event.key === 'ArrowUp') { event.preventDefault(); moveSearchSelection(-1); return; }
+    if (event.key === 'Enter') { event.preventDefault(); revealSelectedSearchResult(); }
+  });
+  refs.globalSearch.addEventListener('mousedown', (event) => {
+    if (event.target === refs.globalSearch) closeGlobalSearch();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Clear buffer (Cmd+K) and the terminal's own context menu.
+async function clearTerminalBuffer() {
+  const session = selectedSession();
+  if (!session || isRemoteActive()) { toast(t('search.localOnly')); return; }
+  try {
+    await localApi.clearTerminal({ sessionId: session.id });
+    terminalView?.setCopyModeActive?.(false);
+    terminalView?.focus();
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+  }
+}
+
+async function pasteIntoTerminal() {
+  try {
+    const text = await navigator.clipboard.readText();
+    if (!text) return;
+    terminalView?.paste(text);
+    terminalView?.focus();
+  } catch {
+    toast(t('toast.pasteFailed'), 'error');
+  }
+}
+
+function openTerminalContextMenu(event) {
+  const session = selectedSession();
+  if (!session) return;
+  event.preventDefault();
+  closeFloatingMenus();
+  const selection = terminalView?.getSelection?.() || '';
+  const remote = isRemoteActive();
+  const items = [];
+  if (selection) {
+    items.push(menuButton({
+      iconName: 'copy',
+      title: t('terminal.copySelection'),
+      action: () => { closeFloatingMenus(); navigator.clipboard.writeText(selection).catch(() => {}); },
+    }));
+  }
+  items.push(menuButton({
+    iconName: 'terminal',
+    title: t('terminal.paste'),
+    action: () => { closeFloatingMenus(); pasteIntoTerminal(); },
+  }));
+  if (!remote) {
+    items.push(menuButton({
+      iconName: 'search',
+      title: selection ? t('terminal.searchSelection') : t('palette.globalSearch'),
+      action: () => { closeFloatingMenus(); openGlobalSearch(); },
+    }));
+    items.push(separator());
+    items.push(menuButton({
+      iconName: 'panes',
+      title: t('palette.splitVertical'),
+      action: () => { closeFloatingMenus(); splitActivePane('vertical'); },
+    }));
+    items.push(menuButton({
+      iconName: 'panes',
+      title: t('palette.splitHorizontal'),
+      action: () => { closeFloatingMenus(); splitActivePane('horizontal'); },
+    }));
+    if (activeWindowPanes().length >= 2) {
+      items.push(menuButton({
+        iconName: 'close',
+        title: t('palette.closePane'),
+        action: () => { closeFloatingMenus(); closeActivePane(); },
+      }));
+    }
+    items.push(separator());
+    items.push(menuButton({
+      iconName: 'trash',
+      title: t('terminal.clearBuffer'),
+      action: () => { closeFloatingMenus(); clearTerminalBuffer(); },
+    }));
+  }
+  refs.contextMenu.replaceChildren(...items);
+  placePopoverAt(refs.contextMenu, event.clientX, event.clientY);
+}
+
+// ---------------------------------------------------------------------------
 // Pane mouse (localMouse). With the localMouse profile on, the session this app
 // attaches to runs with tmux's `mouse off`, so xterm.js keeps the mouse: word
 // selection on double click, line on triple, drag-select, select-to-copy — the
@@ -1567,6 +1840,7 @@ function setupPaneMouse() {
     mount.style.cursor = border ? (border.axis === 'x' ? 'col-resize' : 'row-resize') : '';
   }, true);
   mount.addEventListener('mouseleave', () => { mount.style.cursor = ''; });
+  mount.addEventListener('contextmenu', (event) => openTerminalContextMenu(event));
   // A border drag must win before xterm.js starts a selection.
   mount.addEventListener('mousedown', (event) => {
     if (event.button !== 0 || !paneMouseEnabled()) return;
@@ -2493,6 +2767,8 @@ function commands() {
       icon: 'copy',
       action: () => openImportModal(tool.id),
     })),
+    ...(session && !isRemoteActive() ? [{ id: 'clearBuffer', title: t('terminal.clearBuffer'), subtitle: t('palette.clearBufferSubtitle'), shortcut: '⌘K', keywords: ['clear', 'cls', '清屏', '清空'], icon: 'trash', action: clearTerminalBuffer }] : []),
+    { id: 'globalSearch', title: t('palette.globalSearch'), subtitle: t('palette.globalSearchSubtitle'), shortcut: '⌘F', keywords: ['search', 'find', 'grep', '搜索', '查找'], icon: 'search', action: openGlobalSearch },
     { id: 'mobileAccess', title: t('action.mobileAccess'), subtitle: t('palette.mobileAccessSubtitle'), keywords: ['mobile', 'web', 'qrcode', '二维码'], icon: 'phone', action: openMobileAccessModal },
     ...(session ? [
       { id: 'shareSession', title: t('palette.shareSessionTitle', { name: session.name }), subtitle: t('palette.shareSessionSubtitle'), keywords: ['share', 'link', '分享', '链接'], icon: 'external', action: () => openMobileAccessModal(session) },
@@ -2835,6 +3111,7 @@ async function toggleRemoteReshare(connection) {
 
 function bindEvents() {
   setupPaneMouse();
+  setupGlobalSearch();
   refs.refreshButton.addEventListener('click', () => refreshSessions({ notify: true }));
   refs.emptyRefreshButton.addEventListener('click', () => refreshSessions({ initial: !state.systemStatus.installed, notify: true }));
   refs.newSessionButton.addEventListener('click', openNewSessionModal);
@@ -3095,9 +3372,32 @@ function handleKeyboard(event) {
     return;
   }
   const meta = event.metaKey || event.ctrlKey;
-  if (meta && !event.altKey && event.key.toLowerCase() === 'k') { event.preventDefault(); openCommandPalette(); }
+  // The search panel owns the keyboard while it is open — its input handles
+  // arrows, Enter and Escape — so nothing behind it (Cmd+K especially) fires.
+  if (state.search.open) {
+    if (meta && !event.altKey && event.key.toLowerCase() === 'f') event.preventDefault();
+    return;
+  }
+  if (meta && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k') {
+    // iTerm muscle memory: Cmd+K clears the buffer. The command palette moved to
+    // Cmd+Shift+P (and keeps Cmd+Shift+K).
+    event.preventDefault();
+    clearTerminalBuffer();
+  } else if (meta && event.shiftKey && ['k', 'p'].includes(event.key.toLowerCase())) {
+    event.preventDefault();
+    openCommandPalette();
+  }
   else if (meta && !event.altKey && event.key.toLowerCase() === 'n') { event.preventDefault(); openNewSessionModal(); }
-  else if (meta && !event.altKey && event.key.toLowerCase() === 'f') { event.preventDefault(); focusSessionSearch(); }
+  else if (meta && !event.altKey && event.key.toLowerCase() === 'f') {
+    // Cmd+F searches every session's scrollback (see openGlobalSearch); the
+    // session-list filter keeps Cmd+Shift+F and its always-visible field.
+    event.preventDefault();
+    if (event.shiftKey || isRemoteActive()) focusSessionSearch();
+    else openGlobalSearch();
+  } else if (meta && !event.altKey && event.key.toLowerCase() === 'g' && !isRemoteActive()) {
+    event.preventDefault();
+    stepPaneSearch(event.shiftKey ? 'forward' : 'backward');
+  }
   else if (meta && !event.altKey && event.key.toLowerCase() === 'r') { event.preventDefault(); refreshSessions({ notify: true }); }
   else if (meta && !event.altKey && event.key.toLowerCase() === 'b') { event.preventDefault(); toggleFileBrowser(); }
   else if (meta && event.shiftKey && event.key.toLowerCase() === 't') { event.preventDefault(); cycleTheme(); }
