@@ -221,13 +221,19 @@ test('session, window, and pane controls use validated exact argument arrays', a
 const SCROLL_PROBE = ['display-message', '-p', '-t', '$4',
   '#{pane_in_mode} #{alternate_on} #{mouse_any_flag} #{pane_width} #{pane_height}'];
 
-function scrollService(paneState, calls) {
+// Copy-mode scrolls append this report to the same tmux invocation, so the
+// caller learns whether the pane ended up in copy-mode (and must be cancelled
+// before the next keystroke) without a second round trip.
+const SCROLL_REPORT = ['display-message', '-p', '-t', '$4', '#{pane_in_mode}'];
+
+function scrollService(paneState, calls, reportedMode = '1') {
   return new TmuxService({
     tmuxPath: '/tmp/tmux',
     fsImpl: executableFs(['/tmp/tmux']),
     socketName: 'isolated',
     execFileImpl: async (file, args) => {
       calls.push(args);
+      if (args.includes('#{pane_in_mode}')) return { stdout: `${reportedMode}\n`, stderr: '' };
       if (args.includes('display-message')) return { stdout: `${paneState}\n`, stderr: '' };
       return { stdout: '', stderr: '' };
     },
@@ -238,16 +244,19 @@ test('scrollSession drives copy-mode up and scroll-down toward the live screen',
   const calls = [];
   const service = scrollService('0 0 0 120 40', calls); // normal screen
 
-  await service.scrollSession('$4', -40); // scroll up into history
-  await service.scrollSession('$4', 999);  // scroll down, clamped to 500
-  await service.scrollSession('$4', 0);    // no-op, no tmux call
+  const up = await service.scrollSession('$4', -40); // scroll up into history
+  const down = await service.scrollSession('$4', 999);  // scroll down, clamped to 500
+  assert.deepEqual(await service.scrollSession('$4', 0), { inCopyMode: false }); // no tmux call
   assert.deepEqual(calls, [
     ['-L', 'isolated', ...SCROLL_PROBE],
     ['-L', 'isolated', 'copy-mode', '-e', '-t', '$4',
-      ';', 'send-keys', '-t', '$4', '-X', '-N', '40', 'scroll-up'],
+      ';', 'send-keys', '-t', '$4', '-X', '-N', '40', 'scroll-up', ';', ...SCROLL_REPORT],
     ['-L', 'isolated', ...SCROLL_PROBE],
-    ['-L', 'isolated', 'send-keys', '-t', '$4', '-X', '-N', '500', 'scroll-down'],
+    ['-L', 'isolated', 'send-keys', '-t', '$4', '-X', '-N', '500', 'scroll-down', ';', ...SCROLL_REPORT],
   ]);
+  // The pane is parked in copy-mode until a scroll (or a keystroke) leaves it.
+  assert.deepEqual(up, { inCopyMode: true });
+  assert.deepEqual(down, { inCopyMode: true });
   await assert.rejects(() => service.scrollSession('@2', -1), /无效的 tmux 会话目标/);
 });
 
@@ -255,7 +264,8 @@ test('scrollSession forwards SGR wheel events to alt-screen apps with mouse repo
   const calls = [];
   const service = scrollService('0 1 1 129 39', calls); // Claude Code-style pane
 
-  await service.scrollSession('$4', -3);
+  // An app that owns the mouse is never put in copy-mode, so nothing to cancel.
+  assert.deepEqual(await service.scrollSession('$4', -3), { inCopyMode: false });
   await service.scrollSession('$4', 100); // event count capped at 30
   const up = `\u001b[<64;65;20M`;
   const down = `\u001b[<65;65;20M`;
@@ -281,9 +291,12 @@ test('scrollSession keeps driving copy-mode when the alt-screen pane is already 
   const calls = [];
   const service = scrollService('1 1 1 129 39', calls); // user already scrolled into copy-mode
 
-  await service.scrollSession('$4', 10);
-  assert.deepEqual(calls.filter((args) => !args.includes('display-message')), [
-    ['-L', 'isolated', 'send-keys', '-t', '$4', '-X', '-N', '10', 'scroll-down'],
+  // The last scroll-down out of copy-mode reports the live screen back.
+  assert.deepEqual(await service.scrollSession('$4', 10, '0'), { inCopyMode: true });
+  assert.deepEqual(calls.filter((args) => !args.includes('#{pane_in_mode}')
+    || args.includes('scroll-down')), [
+    ['-L', 'isolated', ...SCROLL_PROBE],
+    ['-L', 'isolated', 'send-keys', '-t', '$4', '-X', '-N', '10', 'scroll-down', ';', ...SCROLL_REPORT],
   ]);
 });
 
@@ -293,7 +306,7 @@ test('scrollSession swallows the "not in a mode" error at the live bottom', asyn
     fsImpl: executableFs(['/tmp/tmux']),
     execFileImpl: async () => { throw new Error('not in a mode'); },
   });
-  await service.scrollSession('$1', 5); // must not throw
+  assert.deepEqual(await service.scrollSession('$1', 5), { inCopyMode: false }); // must not throw
 });
 
 test('listSessions treats only no-server errors as an empty result', async () => {
@@ -473,4 +486,33 @@ test('execTmux exposes the tmux directory on PATH to spawned servers', async () 
 
   await service.run(['start-server']);
   assert.equal(seenEnv.PATH.startsWith('/opt/homebrew/bin:'), true);
+});
+
+test('resizePane clamps absolute cell sizes and cancelCopyMode swallows "not in a mode"', async () => {
+  const calls = [];
+  const service = new TmuxService({
+    tmuxPath: '/tmp/tmux',
+    fsImpl: executableFs(['/tmp/tmux']),
+    execFileImpl: async (file, args) => {
+      calls.push(args);
+      if (args.includes('cancel')) throw Object.assign(new Error('failed'), { stderr: 'not in a mode' });
+      return { stdout: '', stderr: '' };
+    },
+  });
+
+  await service.resizePane('%3', { x: 42 });
+  await service.resizePane('%3', { y: 9999 });
+  await service.resizePane('%3', { x: 0, y: 12 });
+  assert.deepEqual(calls, [
+    ['resize-pane', '-t', '%3', '-x', '42'],
+    ['resize-pane', '-t', '%3', '-y', '500'],
+    ['resize-pane', '-t', '%3', '-x', '1', '-y', '12'],
+  ]);
+  await assert.rejects(() => service.resizePane('%3', {}), /缺少 pane 尺寸/);
+  await assert.rejects(() => service.resizePane('$3', { x: 10 }), /无效的 tmux 面板目标/);
+
+  // Leaving copy-mode when the pane was never in one is the success case.
+  assert.equal(await service.cancelCopyMode('$4'), true);
+  assert.deepEqual(calls.at(-1), ['send-keys', '-t', '$4', '-X', 'cancel']);
+  await assert.rejects(() => service.cancelCopyMode('%4'), /无效的 tmux 会话目标/);
 });

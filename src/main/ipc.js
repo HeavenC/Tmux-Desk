@@ -39,6 +39,7 @@ const IPC_CHANNELS = Object.freeze([
   'panes:select',
   'panes:kill',
   'panes:split',
+  'panes:resize',
   'app:set-locale',
   'preferences:get',
   'preferences:save',
@@ -50,6 +51,7 @@ const IPC_CHANNELS = Object.freeze([
   'terminal:write',
   'terminal:resize',
   'terminal:scroll',
+  'terminal:cancel-copy-mode',
   'terminal:detach',
   'web:status',
   'web:start',
@@ -138,6 +140,7 @@ function validateTerminalPayload(kind, value) {
     if (!Number.isInteger(value.lines)) throw new Error('滚动量无效');
     return { sessionId: validateTarget(value.sessionId), lines: Math.max(-500, Math.min(500, value.lines)) };
   }
+  if (kind === 'cancel-copy-mode') return { sessionId: validateTarget(value.sessionId) };
   const terminalId = validateTerminalId(value.terminalId);
   if (kind === 'write') {
     if (typeof value.data !== 'string' || value.data.length > 1024 * 1024) throw new Error('终端输入无效');
@@ -343,6 +346,18 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       touchSnapshot('pane-kill');
       return result;
     },
+    'panes:resize': (_event, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('分屏尺寸参数无效');
+      const target = validateTarget(input.target, 'pane');
+      const size = {};
+      for (const axis of ['x', 'y']) {
+        if (input[axis] === undefined || input[axis] === null) continue;
+        if (!Number.isInteger(input[axis]) || input[axis] < 1) throw new Error('分屏尺寸参数无效');
+        size[axis] = input[axis];
+      }
+      if (!('x' in size) && !('y' in size)) throw new Error('分屏尺寸参数无效');
+      return tmuxService.resizePane(target, size).then(() => true);
+    },
     'panes:split': async (_event, input) => {
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('分割参数无效');
       const target = validateTarget(input.target, 'session');
@@ -366,7 +381,9 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       // `nativeTheme` is undefined when this module is loaded outside Electron.
       if ('theme' in validated && nativeTheme) nativeTheme.themeSource = preferences.theme;
       if ('tmuxSettings' in validated) {
-        await tmuxService.applySettingsToAllSessions(preferences.tmuxSettings);
+        await tmuxService.applySettingsToAllSessions(preferences.tmuxSettings, {
+          localMouseSession: terminalManager.attachedSessionId?.() || null,
+        });
       }
       // Re-arm the snapshot timer on the new interval and take one right away,
       // so toggling the feature on has a visible effect instead of waiting.
@@ -382,7 +399,13 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       // Fire-and-forget: tmux applies session options live, so the client sees
       // the UX baseline (mouse, history…) even if this lands after the attach.
       preferencesStore.load()
-        .then((preferences) => tmuxService.applySessionDefaults(validated.sessionId, preferences.tmuxSettings))
+        // localMouse: this client renders the session itself, so with the option
+        // on tmux's own mouse handling is turned off for THIS session only —
+        // selection/scroll become the front end's job, iTerm-style. Other
+        // clients (the web app attaches to a grouped session) keep the global.
+        .then((preferences) => tmuxService.applySessionDefaults(
+          validated.sessionId, preferences.tmuxSettings, { localMouse: true },
+        ))
         .catch(() => {});
       return terminalManager.attach(validated);
     },
@@ -390,7 +413,11 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
     'terminal:resize': (_event, payload) => terminalManager.resize(validateTerminalPayload('resize', payload)),
     'terminal:scroll': (_event, payload) => {
       const { sessionId, lines } = validateTerminalPayload('scroll', payload);
-      return tmuxService.scrollSession(sessionId, lines).then(() => true);
+      return tmuxService.scrollSession(sessionId, lines);
+    },
+    'terminal:cancel-copy-mode': (_event, payload) => {
+      const { sessionId } = validateTerminalPayload('cancel-copy-mode', payload);
+      return tmuxService.cancelCopyMode(sessionId);
     },
     'terminal:detach': () => { terminalManager.dispose(); return true; },
     'web:status': (_event, sessionName) => requireWebControl().status(validateOptionalSessionName(sessionName)),

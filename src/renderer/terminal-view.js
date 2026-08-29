@@ -56,6 +56,9 @@ class TerminalView {
     this.terminalId = null;
     this.attachRequest = 0;
     this.pendingData = new Map();
+    // Whether our own wheel scrolling has parked the pane in tmux copy-mode.
+    this.copyModeActive = false;
+    this.inputGate = null;
     this.terminal = new Terminal({
       allowProposedApi: false,
       cursorBlink: true,
@@ -155,17 +158,12 @@ class TerminalView {
         && !event.isComposing && event.keyCode !== 229) {
         event.preventDefault();
         event.stopPropagation();
-        if (this.terminalId !== null) {
-          this.api.writeTerminal({ terminalId: this.terminalId, data: '\n' }).catch((error) => this.onError?.(error));
-        }
+        this.sendInput('\n');
         return false;
       }
       return true;
     });
-    this.dataDisposable = this.terminal.onData((data) => {
-      if (this.terminalId === null) return;
-      this.api.writeTerminal({ terminalId: this.terminalId, data }).catch((error) => this.onError?.(error));
-    });
+    this.dataDisposable = this.terminal.onData((data) => this.sendInput(data));
     // iTerm-style select-to-copy: debounced so a multi-cell drag doesn't fire a
     // clipboard write per row; covers Shift+drag / Option+drag local selections
     // that bypass tmux's own mouse-mode copy-on-release.
@@ -231,6 +229,37 @@ class TerminalView {
     this.watchDevicePixelRatio();
   }
 
+  // Every keystroke goes through here. Scrolling a normal-screen pane with the
+  // wheel necessarily parks tmux in copy-mode, where keys are copy-mode commands
+  // and the pane looks deaf to input — the "I have to press Escape before I can
+  // type again" complaint, and Escape beside a running agent is exactly the key
+  // nobody wants to press on faith. So cancel the mode over the command channel
+  // (which never reaches the application) before the first key hits the pty, and
+  // hold later keys behind that promise so they cannot overtake it and be eaten
+  // as copy-mode commands. Once the queue drains, writes go direct again.
+  sendInput(data) {
+    if (this.terminalId === null) return;
+    const terminalId = this.terminalId;
+    const write = () => Promise.resolve(this.api.writeTerminal({ terminalId, data }))
+      .catch((error) => this.onError?.(error));
+    if (this.copyModeActive) {
+      this.copyModeActive = false;
+      const sessionId = this.sessionId;
+      this.inputGate = Promise.resolve(
+        sessionId && typeof this.api.cancelCopyMode === 'function'
+          ? this.api.cancelCopyMode({ sessionId })
+          : null,
+      ).catch(() => {});
+    }
+    if (!this.inputGate) {
+      write();
+      return;
+    }
+    const queued = this.inputGate.then(write);
+    this.inputGate = queued;
+    queued.finally(() => { if (this.inputGate === queued) this.inputGate = null; });
+  }
+
   // Wheel scrolling. This app is always a tmux client, and tmux runs on the outer
   // terminal's ALTERNATE screen (it emits \e[?1049h on attach), so xterm.js has no
   // scrollback of its own to move — scrolling MUST go through tmux copy-mode. We
@@ -276,6 +305,11 @@ class TerminalView {
       if (!lines || !this.sessionId || typeof this.api.scrollTerminal !== 'function') return;
       this.scrollInFlight = true;
       Promise.resolve(this.api.scrollTerminal({ sessionId: this.sessionId, lines }))
+        // Local IPC answers with { inCopyMode }; a remote takeover answers with a
+        // bare boolean, so leave the flag alone rather than guessing there.
+        .then((result) => {
+          if (result && typeof result === 'object') this.copyModeActive = result.inCopyMode === true;
+        })
         .catch(() => {})
         .finally(() => {
           this.scrollInFlight = false;
@@ -360,6 +394,8 @@ class TerminalView {
     this.terminalId = null;
     // Remembered so the wheel handler can drive tmux copy-mode on this session.
     this.sessionId = typeof sessionId === 'string' ? sessionId : null;
+    this.copyModeActive = false;
+    this.inputGate = null;
     this.pendingData.clear();
     this.terminal.reset();
     this.fitAddon.fit();
@@ -545,6 +581,8 @@ class TerminalView {
     this.unsubscribeData?.();
     this.unsubscribeExit?.();
     this.terminalId = null;
+    this.copyModeActive = false;
+    this.inputGate = null;
     this.pendingData.clear();
     this.api = api;
     this.unsubscribeData = api.onTerminalData((payload) => this.handleData(payload));
@@ -555,6 +593,8 @@ class TerminalView {
     this.attachRequest += 1;
     this.terminalId = null;
     this.sessionId = null;
+    this.copyModeActive = false;
+    this.inputGate = null;
     this.pendingData.clear();
     await this.api.detachTerminal();
   }

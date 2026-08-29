@@ -1461,6 +1461,128 @@ function onTerminalResize() {
   }, 200);
 }
 
+// ---------------------------------------------------------------------------
+// Pane mouse (localMouse). With the localMouse profile on, the session this app
+// attaches to runs with tmux's `mouse off`, so xterm.js keeps the mouse: word
+// selection on double click, line on triple, drag-select, select-to-copy — the
+// iTerm behaviour. The price is the two things tmux's own mouse used to do
+// inside the grid, so the client does them over the command channel instead:
+// clicking a split focuses it, dragging a split border resizes it.
+const PANE_BORDER_SLOP = 3;
+
+function paneMouseEnabled() {
+  return state.preferences.tmuxSettings?.localMouse !== false && !isRemoteActive();
+}
+
+// Pane rects in pixels, plus the grid extent, so callers can tell an interior
+// border (a real divider) from the window's own edge.
+function paneLayout() {
+  const metrics = terminalView?.getGridMetrics?.();
+  const panes = activeWindowPanes().filter(
+    (pane) => [pane.left, pane.top, pane.width, pane.height].every((value) => Number.isFinite(value)),
+  );
+  if (!metrics || panes.length < 2) return null;
+  return {
+    metrics,
+    panes,
+    cols: Math.max(...panes.map((pane) => pane.left + pane.width)),
+    rows: Math.max(...panes.map((pane) => pane.top + pane.height)),
+  };
+}
+
+// The divider between two panes is the one cell column/row that separates them:
+// a pane spanning columns [left, left+width) has its border at column left+width.
+function paneBorderAt(clientX, clientY) {
+  const layout = paneLayout();
+  if (!layout) return null;
+  const { metrics, panes, cols, rows } = layout;
+  for (const pane of panes) {
+    const leftPx = metrics.left + pane.left * metrics.cellWidth;
+    const topPx = metrics.top + pane.top * metrics.cellHeight;
+    const rightPx = leftPx + pane.width * metrics.cellWidth;
+    const bottomPx = topPx + pane.height * metrics.cellHeight;
+    const spansRow = clientY >= topPx && clientY <= bottomPx;
+    const spansCol = clientX >= leftPx && clientX <= rightPx;
+    if (spansRow && pane.left + pane.width < cols
+      && Math.abs(clientX - (rightPx + metrics.cellWidth / 2)) <= metrics.cellWidth / 2 + PANE_BORDER_SLOP) {
+      return { pane, axis: 'x', originPx: leftPx, cell: metrics.cellWidth };
+    }
+    if (spansCol && pane.top + pane.height < rows
+      && Math.abs(clientY - (bottomPx + metrics.cellHeight / 2)) <= metrics.cellHeight / 2 + PANE_BORDER_SLOP) {
+      return { pane, axis: 'y', originPx: topPx, cell: metrics.cellHeight };
+    }
+  }
+  return null;
+}
+
+function paneAt(clientX, clientY) {
+  const layout = paneLayout();
+  if (!layout) return null;
+  const { metrics, panes } = layout;
+  const col = (clientX - metrics.left) / metrics.cellWidth;
+  const row = (clientY - metrics.top) / metrics.cellHeight;
+  return panes.find((pane) => col >= pane.left && col < pane.left + pane.width
+    && row >= pane.top && row < pane.top + pane.height) || null;
+}
+
+function beginPaneBorderDrag(border, event) {
+  event.preventDefault();
+  event.stopPropagation();
+  const axis = border.axis === 'x' ? 'x' : 'y';
+  let lastSize = axis === 'x' ? border.pane.width : border.pane.height;
+  let pending = null;
+  const sizeAt = (position) => Math.max(1, Math.round((position - border.originPx) / border.cell));
+  // tmux reflows on every resize-pane, so throttle to roughly a frame; the
+  // pointer keeps moving while the command is in flight.
+  const apply = (size) => {
+    if (size === lastSize || pending) return;
+    lastSize = size;
+    pending = localApi.resizePane({ target: border.pane.id, [axis]: size })
+      .catch(() => {})
+      .then(() => { pending = null; });
+  };
+  const onMove = (move) => apply(sizeAt(axis === 'x' ? move.clientX : move.clientY));
+  const onUp = (up) => {
+    document.removeEventListener('mousemove', onMove, true);
+    document.removeEventListener('mouseup', onUp, true);
+    document.body.classList.remove('pane-resizing');
+    document.body.style.cursor = '';
+    apply(sizeAt(axis === 'x' ? up.clientX : up.clientY));
+    refreshDetail().catch(() => {});
+  };
+  document.body.classList.add('pane-resizing');
+  document.body.style.cursor = axis === 'x' ? 'col-resize' : 'row-resize';
+  document.addEventListener('mousemove', onMove, true);
+  document.addEventListener('mouseup', onUp, true);
+}
+
+function setupPaneMouse() {
+  const mount = refs.terminalMount;
+  if (!mount) return;
+  // Capture phase for both: xterm.js owns pointer events inside the grid, so a
+  // bubbling listener never sees the move that should flip the resize cursor.
+  mount.addEventListener('mousemove', (event) => {
+    if (!paneMouseEnabled() || event.buttons) return;
+    const border = paneBorderAt(event.clientX, event.clientY);
+    mount.style.cursor = border ? (border.axis === 'x' ? 'col-resize' : 'row-resize') : '';
+  }, true);
+  mount.addEventListener('mouseleave', () => { mount.style.cursor = ''; });
+  // A border drag must win before xterm.js starts a selection.
+  mount.addEventListener('mousedown', (event) => {
+    if (event.button !== 0 || !paneMouseEnabled()) return;
+    const border = paneBorderAt(event.clientX, event.clientY);
+    if (border) {
+      beginPaneBorderDrag(border, event);
+      return;
+    }
+    // Plain click in another split: focus it, but let the event through so the
+    // click still places/starts an xterm selection there.
+    const pane = paneAt(event.clientX, event.clientY);
+    if (!pane || pane.active) return;
+    localApi.selectPane(pane.id).then(() => refreshDetail()).catch(() => {});
+  }, true);
+}
+
 // Close the pane tmux considers active (used by the command palette; the ×
 // overlay closes a specific pane instead).
 function closeActivePane() {
@@ -2712,6 +2834,7 @@ async function toggleRemoteReshare(connection) {
 }
 
 function bindEvents() {
+  setupPaneMouse();
   refs.refreshButton.addEventListener('click', () => refreshSessions({ notify: true }));
   refs.emptyRefreshButton.addEventListener('click', () => refreshSessions({ initial: !state.systemStatus.installed, notify: true }));
   refs.newSessionButton.addEventListener('click', openNewSessionModal);

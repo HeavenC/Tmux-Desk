@@ -61,7 +61,9 @@ class TerminalManager {
         this.platform,
       ),
     });
-    const active = { terminalId, process, disposables: [] };
+    // sessionId is kept so callers can re-target session-scoped tmux options at
+    // whatever this client is attached to (see localMouse in tmux-settings).
+    const active = { terminalId, process, sessionId, disposables: [] };
     active.disposables.push(process.onData((data) => {
       this.sendEvent('terminal:data', { terminalId, data });
     }));
@@ -94,6 +96,10 @@ class TerminalManager {
     if (!this.isActive(terminalId)) return false;
     this.active.process.resize(cols, rows);
     return true;
+  }
+
+  attachedSessionId() {
+    return this.active?.sessionId || null;
   }
 
   isActive(terminalId) {

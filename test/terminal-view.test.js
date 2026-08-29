@@ -72,7 +72,7 @@ function loadTerminalView() {
   return loaded.TerminalView;
 }
 
-function createView() {
+function createView(apiOverrides = {}) {
   const previousResizeObserver = global.ResizeObserver;
   const previousCancelAnimationFrame = global.cancelAnimationFrame;
   global.ResizeObserver = class {
@@ -90,6 +90,7 @@ function createView() {
       writeTerminal(payload) { writes.push(payload); return Promise.resolve(true); },
       onTerminalData() { return () => {}; },
       onTerminalExit() { return () => {}; },
+      ...apiOverrides,
     },
     onOpenFile(reference) { openedFiles.push(reference); },
   });
@@ -251,6 +252,81 @@ test('Cmd+click opens a detected file reference while an ordinary click is inert
     links[0].hover({ metaKey: true });
     await Promise.resolve();
     assert.deepEqual(links[0].decorations, { pointerCursor: true, underline: true });
+  } finally {
+    dispose();
+  }
+});
+
+const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('the first key after a wheel scroll leaves copy-mode before reaching the pane', async () => {
+  const calls = [];
+  const { view, writes, dispose } = createView({
+    scrollTerminal(payload) { calls.push(['scroll', payload]); return Promise.resolve({ inCopyMode: true }); },
+    cancelCopyMode(payload) { calls.push(['cancel', payload]); return Promise.resolve(true); },
+  });
+  try {
+    view.terminalId = 7;
+    view.sessionId = '$4';
+    // Wheel up on a normal-screen pane: tmux answers that the pane is now
+    // parked in copy-mode, where keys would be copy-mode commands, not input.
+    view.onWheelCapture({ deltaMode: 1, deltaY: -3, preventDefault() {}, stopPropagation() {} });
+    await tick(40);
+    assert.equal(view.copyModeActive, true);
+
+    view.sendInput('l');
+    view.sendInput('s');
+    // Both keys wait behind the cancel instead of being eaten by copy-mode.
+    assert.deepEqual(writes, []);
+    await tick();
+    assert.deepEqual(calls, [
+      ['scroll', { sessionId: '$4', lines: -3 }],
+      ['cancel', { sessionId: '$4' }],
+    ]);
+    assert.deepEqual(writes, [{ terminalId: 7, data: 'l' }, { terminalId: 7, data: 's' }]);
+
+    // Gate drained: later keys go straight out, and the mode is only cancelled
+    // once per scroll, not per keystroke.
+    view.sendInput('!');
+    assert.equal(writes.length, 3);
+    assert.equal(calls.filter(([kind]) => kind === 'cancel').length, 1);
+  } finally {
+    dispose();
+  }
+});
+
+test('scrolling back to the live screen needs no copy-mode cancel', async () => {
+  const calls = [];
+  const { view, writes, dispose } = createView({
+    scrollTerminal() { return Promise.resolve({ inCopyMode: false }); },
+    cancelCopyMode(payload) { calls.push(payload); return Promise.resolve(true); },
+  });
+  try {
+    view.terminalId = 7;
+    view.sessionId = '$4';
+    view.onWheelCapture({ deltaMode: 1, deltaY: 5, preventDefault() {}, stopPropagation() {} });
+    await tick(40);
+    assert.equal(view.copyModeActive, false);
+    view.sendInput('x');
+    assert.deepEqual(writes, [{ terminalId: 7, data: 'x' }]);
+    assert.deepEqual(calls, []);
+  } finally {
+    dispose();
+  }
+});
+
+test('a remote takeover answers scrolls with a bare boolean and never gates input', async () => {
+  const { view, writes, dispose } = createView({
+    scrollTerminal() { return Promise.resolve(true); },
+  });
+  try {
+    view.terminalId = 7;
+    view.sessionId = '$4';
+    view.onWheelCapture({ deltaMode: 1, deltaY: -2, preventDefault() {}, stopPropagation() {} });
+    await tick(40);
+    assert.equal(view.copyModeActive, false);
+    view.sendInput('x');
+    assert.deepEqual(writes, [{ terminalId: 7, data: 'x' }]);
   } finally {
     dispose();
   }

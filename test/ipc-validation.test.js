@@ -248,3 +248,30 @@ test('failed tmux kill does not remove stored tag associations', async () => {
   );
   assert.equal(removed, false);
 });
+
+test('attaching takes the mouse for this session only, and pane resizes are shape-checked', async () => {
+  const handlers = new Map();
+  const applied = [];
+  const resizes = [];
+  registerIpc({
+    ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
+    tmuxService: {
+      applySessionDefaults: async (target, settings, options) => { applied.push({ target, options }); return true; },
+      resizePane: async (target, size) => { resizes.push({ target, size }); return true; },
+    },
+    terminalManager: { attach: () => ({ terminalId: 1 }) },
+    preferencesStore: { load: async () => ({ tmuxSettings: DEFAULT_TMUX_SETTINGS }) },
+    chooseDirectory: async () => null,
+  });
+
+  handlers.get('terminal:attach')(null, { sessionId: '$4', cols: 80, rows: 24 });
+  await new Promise((resolve) => setImmediate(resolve)); // the profile write is fire-and-forget
+  assert.deepEqual(applied, [{ target: '$4', options: { localMouse: true } }]);
+
+  assert.equal(await handlers.get('panes:resize')(null, { target: '%2', x: 40 }), true);
+  assert.deepEqual(resizes, [{ target: '%2', size: { x: 40 } }]);
+  // Shape checks run before the service is touched, so they throw synchronously.
+  assert.throws(() => handlers.get('panes:resize')(null, { target: '%2' }), /分屏尺寸参数无效/);
+  assert.throws(() => handlers.get('panes:resize')(null, { target: '%2', x: 0 }), /分屏尺寸参数无效/);
+  assert.throws(() => handlers.get('panes:resize')(null, { target: '$2', x: 4 }), /目标无效/);
+});

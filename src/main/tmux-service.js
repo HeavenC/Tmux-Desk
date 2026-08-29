@@ -300,7 +300,10 @@ class TmuxService {
     return allApplied;
   }
 
-  async applySettingsToAllSessions(settings = {}) {
+  // localMouseSession: the session this app's own terminal is attached to. Its
+  // `mouse off` override is session-scoped, so re-applying the profile has to
+  // re-assert it — the profile write starts by unsetting session-level options.
+  async applySettingsToAllSessions(settings = {}, { localMouseSession = null } = {}) {
     const sessions = await this.listSessions();
     const results = [];
     // Global options are part of every profile application. Keep sessions
@@ -311,6 +314,7 @@ class TmuxService {
         // Global/server/window options only need one write; every session still
         // drops stale per-session overrides left by older app versions.
         includeGlobal: index === 0,
+        localMouse: sessions[index].id === localMouseSession,
       }));
     }
     return results.every(Boolean);
@@ -324,6 +328,32 @@ class TmuxService {
   async selectPane(paneTarget) {
     validateTarget(paneTarget, PANE_TARGET, '面板');
     await this.run(['select-pane', '-t', paneTarget]);
+  }
+
+  // Resize one pane to an absolute cell size. Dragging a split divider in the UI
+  // maps to this: with tmux's own mouse off (localMouse), tmux never sees the
+  // drag, so the client has to translate pixels into a resize command.
+  async resizePane(paneTarget, { x, y } = {}) {
+    validateTarget(paneTarget, PANE_TARGET, '面板');
+    const args = ['resize-pane', '-t', paneTarget];
+    if (Number.isInteger(x)) args.push('-x', String(Math.min(1000, Math.max(1, x))));
+    if (Number.isInteger(y)) args.push('-y', String(Math.min(500, Math.max(1, y))));
+    if (args.length === 3) throw new TmuxError('COMMAND_FAILED', '缺少 pane 尺寸');
+    await this.run(args);
+  }
+
+  // Leave copy-mode without sending anything to the pane's application. The
+  // client calls this before the first keystroke that follows a wheel scroll:
+  // scrolling a normal-screen pane necessarily enters copy-mode, where every
+  // key is a copy-mode command instead of input ("typing does nothing until you
+  // press Escape"). Erroring because the pane is not in a mode is the success
+  // case, so it is swallowed.
+  async cancelCopyMode(sessionTarget) {
+    validateTarget(sessionTarget, SESSION_TARGET, '会话');
+    try {
+      await this.run(['send-keys', '-t', sessionTarget, '-X', 'cancel']);
+    } catch {}
+    return true;
   }
 
   // Wheel scrolling for a tmux front-end. tmux drives the *alternate* screen of
@@ -342,9 +372,11 @@ class TmuxService {
   // `copy-mode -e` makes scrolling back down past the newest line exit
   // copy-mode straight to the live screen, so the bottom is always reachable.
   // lines<0 = up (into history), lines>0 = down (toward live).
+  // Returns { inCopyMode } so the client can cancel copy-mode before the next
+  // keystroke instead of leaving the pane deaf to input.
   async scrollSession(sessionTarget, lines) {
     validateTarget(sessionTarget, SESSION_TARGET, '会话');
-    if (!Number.isInteger(lines) || lines === 0) return;
+    if (!Number.isInteger(lines) || lines === 0) return { inCopyMode: false };
     const count = String(Math.min(500, Math.abs(lines)));
     try {
       const { stdout } = await this.run(['display-message', '-p', '-t', sessionTarget,
@@ -362,19 +394,31 @@ class TmuxService {
         } else {
           await this.run(['send-keys', '-t', sessionTarget, '-N', count, lines < 0 ? 'Up' : 'Down']);
         }
-        return;
+        return { inCopyMode: false };
       }
+      // The trailing display-message rides along in the same tmux invocation
+      // (`;` separates commands), so the caller learns whether the pane is now
+      // in copy-mode without a second round trip. It has to know: while in copy
+      // mode the pane swallows keystrokes as copy-mode commands, and the client
+      // cancels the mode before forwarding the next key.
+      const report = ['display-message', '-p', '-t', sessionTarget, '#{pane_in_mode}'];
+      let reported;
       if (lines < 0) {
         // Enter copy-mode (idempotent) and scroll up — one tmux call via `;`.
-        await this.run(['copy-mode', '-e', '-t', sessionTarget,
-          ';', 'send-keys', '-t', sessionTarget, '-X', '-N', count, 'scroll-up']);
+        ({ stdout: reported } = await this.run(['copy-mode', '-e', '-t', sessionTarget,
+          ';', 'send-keys', '-t', sessionTarget, '-X', '-N', count, 'scroll-up',
+          ';', ...report]));
       } else {
         // Only meaningful in copy-mode; a no-op error at the live bottom is fine.
-        await this.run(['send-keys', '-t', sessionTarget, '-X', '-N', count, 'scroll-down']);
+        ({ stdout: reported } = await this.run(['send-keys', '-t', sessionTarget, '-X', '-N', count, 'scroll-down',
+          ';', ...report]));
       }
+      return { inCopyMode: String(reported || '').trim().split('\n').pop() === '1' };
     } catch {
       // scroll-down while already at the live bottom (not in copy-mode) throws
-      // "not in a mode" — that just means we're already there. Ignore.
+      // "not in a mode" — that just means we're already there, and the whole
+      // invocation (including the report) is lost, so assume the live screen.
+      return { inCopyMode: false };
     }
   }
 

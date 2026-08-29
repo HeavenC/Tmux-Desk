@@ -505,6 +505,15 @@ kbd {
 /* Overlay layer that paints a small close button at each split pane's top-right
    corner (positioned in JS from tmux cell geometry). The layer itself is
    click-through; only the buttons capture pointer events. */
+/* While a split divider is being dragged the pointer leaves the terminal and
+   would otherwise flicker between the I-beam and the resize cursor. */
+body.pane-resizing * {
+  /* body carries the real resize cursor inline; children inherit it so the
+     pointer keeps its shape when the drag leaves the terminal grid. */
+  cursor: inherit !important;
+  user-select: none;
+}
+
 .pane-close-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
 .pane-close-button {
   position: absolute; display: flex; align-items: center; justify-content: center;

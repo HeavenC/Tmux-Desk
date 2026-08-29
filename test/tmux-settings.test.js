@@ -65,3 +65,31 @@ test('managed copy-mode bindings forward Ctrl+V to the pane instead of scrolling
     ]);
   }
 });
+
+test('localMouse hands the mouse to the front end for the attaching client only', () => {
+  const withLocal = buildTmuxSettingCommands('$8', DEFAULT_TMUX_SETTINGS, { localMouse: true });
+  const mouseWrites = withLocal.filter((args) => args.includes('mouse'));
+  // Global mouse stays on (other clients — the web app on its grouped session —
+  // still get tmux's own mouse); only this session is switched off, and after
+  // the unset that opens every profile write, or it would be cleared again.
+  assert.deepEqual(mouseWrites, [
+    ['set-option', '-u', '-t', '$8', 'mouse'],
+    ['set-option', '-g', 'mouse', 'on'],
+    ['set-option', '-t', '$8', 'mouse', 'off'],
+  ]);
+  assert.deepEqual(withLocal.at(-1), ['set-option', '-t', '$8', 'mouse', 'off']);
+
+  // Off, or not requested by the caller: nothing session-scoped is written, so
+  // the session falls back to the global mouse setting.
+  const optedOut = buildTmuxSettingCommands('$8', { ...DEFAULT_TMUX_SETTINGS, localMouse: false }, { localMouse: true });
+  const notRequested = buildTmuxSettingCommands('$8', DEFAULT_TMUX_SETTINGS);
+  for (const commands of [optedOut, notRequested]) {
+    assert.equal(commands.some((args) => args[0] === 'set-option' && args[1] === '-t'), false);
+  }
+});
+
+test('re-applying the profile to other sessions still re-asserts the local mouse override', () => {
+  const commands = buildTmuxSettingCommands('$8', DEFAULT_TMUX_SETTINGS, { includeGlobal: false, localMouse: true });
+  assert.deepEqual(commands.at(-1), ['set-option', '-t', '$8', 'mouse', 'off']);
+  assert.equal(commands.length, 13);
+});

@@ -1,4 +1,5 @@
 const DEFAULT_TMUX_SETTINGS = Object.freeze({
+  localMouse: true,
   mouse: true,
   historyLimit: 50000,
   baseIndex: 1,
@@ -24,6 +25,7 @@ const DEFAULT_TMUX_SETTINGS = Object.freeze({
 });
 
 const TMUX_SETTING_FIELDS = Object.freeze([
+  { key: 'localMouse', type: 'boolean', group: 'interaction' },
   { key: 'mouse', type: 'boolean', group: 'interaction' },
   { key: 'modeKeys', type: 'select', group: 'interaction', values: ['emacs', 'vi'] },
   { key: 'prefix', type: 'select', group: 'interaction', values: ['C-b', 'C-a', 'C-Space'] },
@@ -200,7 +202,7 @@ function copyModePasteBindings() {
   ]);
 }
 
-function buildTmuxSettingCommands(sessionTarget, settings, { includeGlobal = true } = {}) {
+function buildTmuxSettingCommands(sessionTarget, settings, { includeGlobal = true, localMouse = false } = {}) {
   const profile = normalizeTmuxSettings(settings);
   const sessionOptions = [
     ['mouse', booleanValue(profile.mouse)],
@@ -217,7 +219,13 @@ function buildTmuxSettingCommands(sessionTarget, settings, { includeGlobal = tru
     ['detach-on-destroy', booleanValue(profile.detachOnDestroy)],
   ];
   const unsets = sessionOptions.map(([option]) => ['set-option', '-u', '-t', sessionTarget, option]);
-  if (!includeGlobal) return unsets;
+  // Desktop clients take the mouse away from tmux (see localMouseOverride) —
+  // that override is session-scoped, so it must be re-applied after the unsets
+  // that precede every profile write.
+  const localMouseOverride = localMouse && profile.localMouse
+    ? [['set-option', '-t', sessionTarget, 'mouse', 'off']]
+    : [];
+  if (!includeGlobal) return [...unsets, ...localMouseOverride];
   const sessionGlobals = sessionOptions.map(([option, value]) => ['set-option', '-g', option, String(value)]);
   const server = (option, value) => ['set-option', '-s', option, String(value)];
   const windowGlobal = (option, value) => ['set-window-option', '-g', option, String(value)];
@@ -235,6 +243,7 @@ function buildTmuxSettingCommands(sessionTarget, settings, { includeGlobal = tru
     windowGlobal('remain-on-exit', booleanValue(profile.remainOnExit)),
     ...copyModePasteBindings(),
     ...parseAdvancedConfig(profile.advancedConfig),
+    ...localMouseOverride,
   ];
 }
 
