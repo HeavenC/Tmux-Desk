@@ -3,16 +3,23 @@ const { FitAddon } = require('@xterm/addon-fit');
 const { ClipboardAddon } = require('@xterm/addon-clipboard');
 const { WebglAddon } = require('@xterm/addon-webgl');
 const { findTerminalFileReferences } = require('../shared/terminal-file-link');
+const {
+  DEFAULT_TERMINAL_APPEARANCE, normalizeTerminalAppearance, terminalFontStack,
+} = require('../shared/terminal-appearance');
+const {
+  DEFAULT_PASTE_GUARD, SLOW_PASTE_INTERVAL_MS, chunkPaste, normalizePasteGuard, pasteDecision,
+} = require('../shared/paste-guard');
 
 const SELECTION_COPY_DEBOUNCE_MS = 200;
 
-// "Tmux Desk Mono" is a composite @font-face defined in styles.css: Menlo for
-// everything except the wide-CJK unicode ranges, which go to PingFang SC.
-// Without it, Menlo's own half-width glyphs win for fullwidth punctuation
-// （）。「」 and xterm pads them to two cells with ~9px of letter-spacing —
-// the "中文标点特别宽" complaint. (A flat font list can't fix this: PingFang
-// placed before Menlo would also capture Latin with proportional glyphs.)
-const TERMINAL_FONT_FAMILY = '"Tmux Desk Mono", Menlo, Monaco, Consolas, monospace';
+// The font stack comes from ../shared/terminal-appearance: BASE_FONT_STACK is
+// the composite "Tmux Desk Mono" @font-face defined in styles.css (Menlo for
+// everything except the wide-CJK ranges, which go to PingFang SC). Without it,
+// Menlo's own half-width glyphs win for fullwidth punctuation （）。「」 and
+// xterm pads them to two cells with ~9px of letter-spacing — the "中文标点特别宽"
+// complaint. (A flat font list can't fix this: PingFang before Menlo would also
+// capture Latin with proportional glyphs.) A user-chosen family is prepended to
+// that stack, never substituted for it, so the CJK half always survives.
 
 // tmux emits OSC52 with an EMPTY selection parameter (\e]52;;<base64>), but
 // the addon's default BrowserClipboardProvider only acts on selection "c" and
@@ -47,32 +54,60 @@ const TERMINAL_THEMES = {
 };
 
 class TerminalView {
-  constructor({ container, api, onExit, onError, onResize, onOpenFile }) {
+  constructor({
+    container, api, onExit, onError, onResize, onOpenFile, onOpenUrl, appearance,
+    pasteGuard, onConfirmPaste,
+  }) {
     this.api = api;
     this.onExit = onExit;
     this.onError = onError;
     this.onResize = onResize;
     this.onOpenFile = onOpenFile;
+    this.onOpenUrl = onOpenUrl;
     this.terminalId = null;
     this.attachRequest = 0;
     this.pendingData = new Map();
     // Whether our own wheel scrolling has parked the pane in tmux copy-mode.
     this.copyModeActive = false;
     this.inputGate = null;
+    this.appearance = normalizeTerminalAppearance(appearance || DEFAULT_TERMINAL_APPEARANCE);
+    this.pasteGuard = normalizePasteGuard(pasteGuard || DEFAULT_PASTE_GUARD);
+    // Asked to approve a risky paste; resolves to true/false. Without it (tests,
+    // or a host that provides no UI) the guard degrades to "always allow".
+    this.onConfirmPaste = onConfirmPaste;
     this.terminal = new Terminal({
       allowProposedApi: false,
       cursorBlink: true,
       cursorStyle: 'block',
       convertEol: false,
-      fontFamily: TERMINAL_FONT_FAMILY,
-      fontSize: 13,
-      lineHeight: 1.22,
-      letterSpacing: 0,
+      fontFamily: terminalFontStack(this.appearance),
+      fontSize: this.appearance.fontSize,
+      lineHeight: this.appearance.lineHeight,
+      letterSpacing: this.appearance.letterSpacing,
       scrollback: 10000,
       theme: TERMINAL_THEMES.light,
       // iTerm habit: Option+drag always yields a local xterm.js selection even
       // while tmux mouse mode owns the drag, so it can be auto-copied below.
       macOptionClickForcesSelection: true,
+      // OSC 8 hyperlinks. The escape only survives the trip because attach()
+      // declares the "hyperlinks" terminal feature (terminal-manager.js) —
+      // without it tmux strips the sequence and nothing reaches xterm. Left as
+      // null, xterm parses the link and then drops the click on the floor.
+      // allowNonHttpProtocols stays off, so xterm filters anything but http(s)
+      // before we see it; the main process re-checks the scheme anyway, since
+      // the URL is attacker-controllable output from whatever runs in the pane.
+      linkHandler: {
+        allowNonHttpProtocols: false,
+        // Cmd+click, exactly like the file references below: a bare click in a
+        // terminal is a cursor move / selection, and unmodified clicks on text
+        // a remote host printed should never reach the OS.
+        activate: (event, uri) => {
+          if (!event.metaKey || event.button !== 0) return;
+          event.preventDefault();
+          event.stopPropagation();
+          Promise.resolve(this.onOpenUrl?.(uri)).catch((error) => this.onError?.(error));
+        },
+      },
     });
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
@@ -142,7 +177,7 @@ class TerminalView {
     // the font is definitely in, toggle fontFamily to drop xterm's WidthCache
     // and re-measure, or CJK punctuation keeps its pre-load Menlo width.
     if (typeof document !== 'undefined' && document.fonts?.load) {
-      document.fonts.load('13px "Tmux Desk Mono"', 'Aa中。（）').then(() => {
+      document.fonts.load(`${this.appearance.fontSize}px "Tmux Desk Mono"`, 'Aa中。（）').then(() => {
         const family = this.terminal.options.fontFamily;
         this.terminal.options.fontFamily = 'monospace';
         this.terminal.options.fontFamily = family;
@@ -154,6 +189,16 @@ class TerminalView {
     // which makes some TUIs submit the message immediately after adding a line.
     this.terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown' || event.isComposing || event.keyCode === 229) return true;
+      // Cmd+Shift+Enter is the app-level "maximize pane" shortcut. Enter is the
+      // one key xterm turns into CR even with Cmd held, and it cancels the event
+      // (preventDefault + stopPropagation) on the way out — so the window-level
+      // shortcut handler in app.js never sees it. Returning false here makes
+      // xterm bail out *before* that cancel, leaving the event free to bubble.
+      // Verified: with this handler absent the event reaches document-capture
+      // and stops there; nothing arrives at window.
+      if (event.key === 'Enter' && event.metaKey && event.shiftKey && !event.altKey && !event.ctrlKey) {
+        return false;
+      }
       if (event.key === 'Enter' && event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
         event.preventDefault();
         event.stopPropagation();
@@ -169,6 +214,19 @@ class TerminalView {
         event.preventDefault();
         event.stopPropagation();
         this.sendInput(event.key === 'ArrowLeft' ? '\x1bb' : '\x1bf');
+        return false;
+      }
+      // Shift+PageUp / Shift+PageDown page through history, the way every
+      // terminal emulator's scrollback binding works. xterm.js would swallow
+      // these (it scrolls its own buffer — which is empty here, tmux keeps us
+      // on the alternate screen), so route them through the same tmux channel
+      // the wheel uses. One page = a screenful minus a line of overlap.
+      if (event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey
+        && (event.key === 'PageUp' || event.key === 'PageDown')) {
+        event.preventDefault();
+        event.stopPropagation();
+        const page = Math.max(1, this.terminal.rows - 1);
+        this.scrollByLines(event.key === 'PageUp' ? -page : page);
         return false;
       }
       return true;
@@ -229,6 +287,7 @@ class TerminalView {
     this.unsubscribeData = api.onTerminalData((payload) => this.handleData(payload));
     this.unsubscribeExit = api.onTerminalExit((payload) => this.handleExit(payload));
     this.container = container;
+    this.setupPasteGuard();
     this.setupLocalWheelScroll();
     this.fitRetries = 0;
     this.resizeObserver = new ResizeObserver(() => this.scheduleFit());
@@ -301,6 +360,16 @@ class TerminalView {
       event.stopPropagation();
     };
     this.container.addEventListener('wheel', this.onWheelCapture, { capture: true, passive: false });
+  }
+
+  // Queue a scroll of `lines` (negative = into history) onto the same coalescing
+  // path as the wheel, so a held Shift+PageUp collapses into few tmux calls and
+  // cannot interleave with wheel scrolling.
+  scrollByLines(lines) {
+    if (!Number.isInteger(lines) || !lines) return;
+    if (typeof this.api.scrollTerminal !== 'function' || !this.sessionId) return;
+    this.pendingScrollLines += lines;
+    this.flushScroll();
   }
 
   // Coalesce a flurry of wheel deltas into one tmux call (~a frame) and never
@@ -445,6 +514,34 @@ class TerminalView {
     this.terminal.options.theme = TERMINAL_THEMES[theme] || TERMINAL_THEMES.light;
   }
 
+  // Typography from preferences. Changing any of these changes the cell size,
+  // so the grid must be re-fitted and tmux told the new cols/rows — otherwise
+  // the pane keeps its old geometry and the bottom rows fall out of view (the
+  // same "can't reach the bottom" failure a bad fit() causes).
+  setAppearance(appearance) {
+    const next = normalizeTerminalAppearance(appearance);
+    const current = this.appearance;
+    if (current && ['fontFamily', 'fontSize', 'lineHeight', 'letterSpacing']
+      .every((key) => current[key] === next[key])) {
+      return;
+    }
+    this.appearance = next;
+    const stack = terminalFontStack(next);
+    this.terminal.options.fontSize = next.fontSize;
+    this.terminal.options.lineHeight = next.lineHeight;
+    this.terminal.options.letterSpacing = next.letterSpacing;
+    // Assigned last and via a round trip: xterm only drops its WidthCache and
+    // the WebGL glyph atlas when fontFamily actually differs from the previous
+    // value, so a size-only change would otherwise redraw with stale glyph
+    // metrics (the same idiom the atlas-corruption guard above relies on).
+    this.terminal.options.fontFamily = 'monospace';
+    this.terminal.options.fontFamily = stack;
+    if (typeof document !== 'undefined' && document.fonts?.load) {
+      document.fonts.load(`${next.fontSize}px "Tmux Desk Mono"`, 'Aa中。（）').catch(() => {});
+    }
+    this.scheduleFit();
+  }
+
   scheduleFit() {
     cancelAnimationFrame(this.fitFrame);
     this.fitFrame = requestAnimationFrame(() => {
@@ -587,11 +684,79 @@ class TerminalView {
     return this.terminal.hasSelection() ? trimTrailingSpaces(this.terminal.getSelection()) : '';
   }
 
-  // Route pastes through xterm so bracketed-paste mode is honoured (a shell with
-  // it on must see the wrapper, or a multi-line paste executes line by line).
+  // Intercept Cmd+V / middle-click paste before xterm sees it, so the native
+  // paste goes through the same guard as the context-menu one. The listener sits
+  // on the CONTAINER in capture phase, not on xterm's textarea: at the target
+  // element itself, capture and bubble listeners fire in registration order, so
+  // a textarea listener added after xterm's would lose the race.
+  setupPasteGuard() {
+    this.onPasteCapture = (event) => {
+      const text = event.clipboardData?.getData('text');
+      if (typeof text !== 'string' || !text) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.paste(text);
+    };
+    this.container.addEventListener('paste', this.onPasteCapture, { capture: true });
+  }
+
+  setPasteGuard(guard) {
+    this.pasteGuard = normalizePasteGuard(guard);
+  }
+
+  // The single funnel every paste goes through: native, context menu, quick bar.
   paste(text) {
     if (typeof text !== 'string' || !text) return;
-    this.terminal.paste(text);
+    const decision = pasteDecision(text, this.pasteGuard);
+    if (!decision.confirm || typeof this.onConfirmPaste !== 'function') {
+      this.deliverPaste(text, decision);
+      return;
+    }
+    Promise.resolve(this.onConfirmPaste({ text, ...decision }))
+      .then((approved) => { if (approved) this.deliverPaste(text, decision); })
+      .catch((error) => this.onError?.(error));
+  }
+
+  // Normal paste goes through xterm so bracketed-paste mode is honoured (a shell
+  // with it on must see the wrapper, or a multi-line paste executes line by
+  // line). A slow paste cannot: xterm would emit its own \e[200~/\e[201~ around
+  // every chunk, and a shell reading the second start marker mid-paste ends up
+  // with the markers as literal text. So the wrapper is written once here and
+  // the body dribbled in between.
+  deliverPaste(text, decision = {}) {
+    // A second paste while one is still dribbling: close the first one's
+    // bracket before starting a new one, or the shell sees a nested start
+    // marker and keeps the escape bytes as literal text.
+    this.stopSlowPaste();
+    if (!decision.slow) {
+      this.terminal.paste(text);
+      return;
+    }
+    // Same normalization xterm's paste does: CR, LF and CRLF are all one Enter
+    // to a terminal, and CR is what a pty expects on input.
+    const chunks = chunkPaste(text.replace(/\r\n|\n/g, '\r'));
+    if (!chunks.length) return;
+    const bracketed = this.terminal.modes?.bracketedPasteMode === true;
+    if (bracketed) this.sendInput('\x1b[200~');
+    this.slowPasteBracketed = bracketed;
+    let index = 0;
+    const step = () => {
+      this.sendInput(chunks[index]);
+      index += 1;
+      if (index >= chunks.length) this.stopSlowPaste();
+    };
+    step();
+    if (index < chunks.length) this.slowPasteTimer = setInterval(step, SLOW_PASTE_INTERVAL_MS);
+  }
+
+  // Ends an in-flight slow paste, always writing the closing bracket if one was
+  // opened — dispose() and a superseding paste both go through here.
+  stopSlowPaste() {
+    clearInterval(this.slowPasteTimer);
+    this.slowPasteTimer = null;
+    if (!this.slowPasteBracketed) return;
+    this.slowPasteBracketed = false;
+    this.sendInput('\x1b[201~');
   }
 
   // Terminal find drives tmux copy-mode from outside this class (app.js), so it
@@ -632,6 +797,8 @@ class TerminalView {
     clearTimeout(this.selectionChangeTimer);
     clearTimeout(this.compositionShiftTimer);
     clearTimeout(this.scrollTimer);
+    this.stopSlowPaste();
+    this.container?.removeEventListener('paste', this.onPasteCapture, { capture: true });
     if (this.compositionTextarea) {
       this.compositionTextarea.removeEventListener('compositionstart', this.onCompositionUpdate);
       this.compositionTextarea.removeEventListener('compositionupdate', this.onCompositionUpdate);

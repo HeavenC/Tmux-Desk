@@ -4,6 +4,8 @@ const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const test = require('node:test');
 const { DEFAULT_TMUX_SETTINGS } = require('../src/shared/tmux-settings');
+const { DEFAULT_TERMINAL_APPEARANCE } = require('../src/shared/terminal-appearance');
+const { DEFAULT_PASTE_GUARD } = require('../src/shared/paste-guard');
 const { DEFAULT_SESSION_RESTORE } = require('../src/main/session-snapshot');
 
 const {
@@ -42,6 +44,8 @@ test('malformed and invalid preferences fall back to normalized defaults', async
       theme: 'light', favorites: ['api'], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null,
       sidebarWidth: null, tagRailExpanded: false, tagRailWidth: null, keepAwake: false, autoShare: false, webQuickKeys: [], remoteConnections: [],
       tmuxSettings: { ...DEFAULT_TMUX_SETTINGS },
+      terminalAppearance: { ...DEFAULT_TERMINAL_APPEARANCE },
+      pasteProtection: { ...DEFAULT_PASTE_GUARD },
       sessionRestore: { ...DEFAULT_SESSION_RESTORE },
     });
   });

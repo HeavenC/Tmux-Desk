@@ -180,6 +180,14 @@
                             title="会话快照状态"
                             data-i18n-aria="snapshot.buttonAria"
                         ></button>
+                        <button
+                            class="pane-flag hidden no-drag"
+                            id="broadcastFlag"
+                            type="button"
+                            data-i18n="workspace.broadcastFlag"
+                            data-i18n-title="workspace.broadcastFlagTitle"
+                            title="所有输入会同时发给这个窗口的每个分屏，点击关闭"
+                        >广播输入</button>
                         <label class="pane-picker no-drag hidden" id="panePickerWrap">
                             <span id="panePickerIcon"></span>
                             <select
@@ -559,6 +567,24 @@
             </div>
         </div>
 
+        <div class="modal-backdrop hidden no-drag" id="pasteConfirmModal">
+            <div class="modal compact">
+                <header>
+                    <div>
+                        <h2 data-i18n="paste.confirmTitle">确认粘贴？</h2>
+                        <p id="pasteConfirmMessage"></p>
+                    </div>
+                </header>
+                <pre class="paste-preview" id="pasteConfirmPreview"></pre>
+                <footer>
+                    <button class="button modal-cancel" data-i18n="action.cancel">取消</button
+                    ><button class="button primary" id="confirmPasteButton" data-i18n="paste.confirmAction">
+                        粘贴
+                    </button>
+                </footer>
+            </div>
+        </div>
+
         <div class="modal-backdrop hidden no-drag" id="settingsModal">
             <div class="modal settings-modal">
                 <header>
@@ -577,6 +603,66 @@
                     <section>
                         <h3 data-i18n="settings.appearance">外观</h3>
                         <div class="theme-cards" id="themeCards"></div>
+                    </section>
+                    <section>
+                        <div class="settings-section-heading">
+                            <h3 data-i18n="settings.terminalFont">终端字体</h3>
+                            <button type="button" class="button" id="terminalFontResetButton" data-i18n="settings.terminalFontReset">恢复默认</button>
+                        </div>
+                        <p class="settings-section-note" data-i18n="settings.terminalFontNote">留空字体名即使用内置的 Tmux Desk Mono（Menlo + 苹方，保证中文标点占两格）。填写的字体只接管拉丁字符，中文仍走内置字体。</p>
+                        <div class="settings-value-row">
+                            <span class="settings-toggle-copy">
+                                <strong data-i18n="settings.terminalFontFamily">字体</strong>
+                                <span data-i18n="settings.terminalFontFamilyDescription">等宽字体名，例如 JetBrains Mono、SF Mono。</span>
+                            </span>
+                            <input type="text" id="terminalFontFamilyInput" class="settings-text" spellcheck="false" maxlength="200" data-i18n-ph="settings.terminalFontFamilyPlaceholder" placeholder="Tmux Desk Mono（内置）" data-i18n-aria="settings.terminalFontFamily" />
+                        </div>
+                        <div class="settings-value-row">
+                            <span class="settings-toggle-copy">
+                                <strong data-i18n="settings.terminalFontSize">字号</strong>
+                                <span data-i18n="settings.terminalFontSizeDescription">8–32 px。</span>
+                            </span>
+                            <input type="number" id="terminalFontSizeInput" class="settings-number" min="8" max="32" step="1" data-i18n-aria="settings.terminalFontSize" />
+                        </div>
+                        <div class="settings-value-row">
+                            <span class="settings-toggle-copy">
+                                <strong data-i18n="settings.terminalLineHeight">行距</strong>
+                                <span data-i18n="settings.terminalLineHeightDescription">字号的倍数，0.8–2.4。</span>
+                            </span>
+                            <input type="number" id="terminalLineHeightInput" class="settings-number" min="0.8" max="2.4" step="0.02" data-i18n-aria="settings.terminalLineHeight" />
+                        </div>
+                        <div class="settings-value-row">
+                            <span class="settings-toggle-copy">
+                                <strong data-i18n="settings.terminalLetterSpacing">字间距</strong>
+                                <span data-i18n="settings.terminalLetterSpacingDescription">每个字符额外增加的像素，-2–4。</span>
+                            </span>
+                            <input type="number" id="terminalLetterSpacingInput" class="settings-number" min="-2" max="4" step="0.1" data-i18n-aria="settings.terminalLetterSpacing" />
+                        </div>
+                    </section>
+                    <section>
+                        <h3 data-i18n="settings.paste">粘贴保护</h3>
+                        <p class="settings-section-note" data-i18n="settings.pasteNote">开启了 bracketed paste 的 shell 会把整段粘贴当成一次输入；但在密码提示、老式 sh 或 ssh 到旧机器时没有这层保护，剪贴板里的每个换行都是一次回车。</p>
+                        <label class="settings-toggle-row" for="pasteConfirmMultilineToggle">
+                            <span class="settings-toggle-copy">
+                                <strong data-i18n="settings.pasteConfirmMultiline">多行粘贴前确认</strong>
+                                <span data-i18n="settings.pasteConfirmMultilineDescription">粘贴内容超过一行时先弹窗预览。结尾的单个换行不算。</span>
+                            </span>
+                            <input type="checkbox" id="pasteConfirmMultilineToggle" class="settings-switch" role="switch" data-i18n-aria="settings.pasteConfirmMultiline" />
+                        </label>
+                        <div class="settings-value-row">
+                            <span class="settings-toggle-copy">
+                                <strong data-i18n="settings.pasteConfirmChars">超长粘贴前确认</strong>
+                                <span data-i18n="settings.pasteConfirmCharsDescription">字符数超过这个值就确认，单行也算。填 0 关闭。</span>
+                            </span>
+                            <input type="number" id="pasteConfirmCharsInput" class="settings-number" min="0" max="1000000" step="256" data-i18n-aria="settings.pasteConfirmChars" />
+                        </div>
+                        <label class="settings-toggle-row" for="pasteSlowToggle">
+                            <span class="settings-toggle-copy">
+                                <strong data-i18n="settings.pasteSlow">慢速粘贴</strong>
+                                <span data-i18n="settings.pasteSlowDescription">分小块逐步送入，给读得慢的 TUI 或串口式链路留出处理时间。</span>
+                            </span>
+                            <input type="checkbox" id="pasteSlowToggle" class="settings-switch" role="switch" data-i18n-aria="settings.pasteSlow" />
+                        </label>
                     </section>
                     <section>
                         <h3 data-i18n="settings.language">语言</h3>

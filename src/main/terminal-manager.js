@@ -2,6 +2,31 @@ const os = require('node:os');
 const { withUtf8Locale } = require('./locale-env');
 const { buildTmuxInvocation, withTmuxDirOnPath } = require('./platform');
 
+// tmux only enables a capability for clients whose terminfo/terminal-features
+// already claim it, and xterm.js identifies as "xterm-256color", which claims
+// almost none — so the client declares them explicitly with -T. Everything
+// listed here is implemented by @xterm/xterm 6:
+//   clipboard      OSC 52 (with set-clipboard external, this is what makes a
+//                  tmux copy land on the system clipboard)
+//   RGB            24-bit SGR 38;2 / 48;2
+//   extkeys        CSI u / modifyOtherKeys, so Shift+Enter, Ctrl+Shift+x and
+//                  the phone quick-bar's combo keys survive the trip
+//   sync           DECSET 2026 synchronized output — tmux batches a redraw into
+//                  one atomic frame, which removes tearing on busy panes
+//   usstyle        SGR 4:x underline styles + SGR 58 underline colour
+//   strikethrough  SGR 9
+//   overline       SGR 53
+//   hyperlinks     OSC 8 (see linkHandler in terminal-view.js — without the
+//                  feature tmux strips the escape and the link never arrives)
+//   osc7           pane cwd reporting passthrough
+//   focus          DECSET 1004 focus in/out reports
+//   cstyle         DECSCUSR (CSI n SP q) cursor shape
+//   ccolour        OSC 12 cursor colour
+const TERMINAL_FEATURES = [
+  'clipboard', 'RGB', 'extkeys', 'sync', 'usstyle', 'strikethrough', 'overline',
+  'hyperlinks', 'osc7', 'focus', 'cstyle', 'ccolour',
+].join(',');
+
 const SESSION_TARGET = /^\$\d+$/;
 const MAX_INPUT_LENGTH = 1024 * 1024;
 
@@ -33,12 +58,7 @@ class TerminalManager {
     const terminalId = this.nextTerminalId++;
     const tmuxArgs = [
       ...(this.socketName ? ['-L', this.socketName] : []),
-      // Declare clipboard + RGB + extkeys terminal features for this client so
-      // tmux (with set-clipboard external) emits OSC52 on selection/copy and
-      // (with extended-keys on) forwards Shift+Enter etc. — otherwise tmux only
-      // enables these for clients whose terminfo/terminal-features already claim
-      // them (xterm.js's "xterm-256color" advertises none).
-      '-T', 'clipboard,RGB,extkeys',
+      '-T', TERMINAL_FEATURES,
       'attach-session', '-t', sessionId,
     ];
     // On Windows tmux runs inside WSL: spawn `wsl.exe -e tmux …` instead of a
@@ -125,4 +145,4 @@ class TerminalManager {
   }
 }
 
-module.exports = { TerminalManager, validateDimensions };
+module.exports = { TerminalManager, TERMINAL_FEATURES, validateDimensions };

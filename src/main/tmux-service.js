@@ -206,9 +206,19 @@ class TmuxService {
   async getSessionDetail(sessionTarget) {
     validateTarget(sessionTarget, SESSION_TARGET, '会话');
     const windows = parseRecords((await this.run([
-      'list-windows', '-t', sessionTarget, '-F', '#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_panes}',
-    ])).stdout).map(([id, index, name, active, panes]) => ({
-      id, index: toNumber(index), name, active: toBoolean(active), panes: toNumber(panes),
+      'list-windows', '-t', sessionTarget, '-F',
+      '#{window_id}\t#{window_index}\t#{window_name}\t#{window_active}\t#{window_panes}\t#{window_zoomed_flag}\t#{?pane_synchronized,1,0}',
+    ])).stdout).map(([id, index, name, active, panes, zoomed, synchronized]) => ({
+      id,
+      index: toNumber(index),
+      name,
+      active: toBoolean(active),
+      panes: toNumber(panes),
+      // Zoom and broadcast-input are per WINDOW, and both need to be visible in
+      // the UI: a zoomed window hides its other panes, and a window that echoes
+      // every keystroke into all panes is dangerous to forget about.
+      zoomed: toBoolean(zoomed),
+      synchronized: toBoolean(synchronized),
     }));
     const panes = parseRecords((await this.run([
       'list-panes', '-s', '-t', sessionTarget, '-F', '#{pane_id}\t#{window_id}\t#{window_index}\t#{pane_index}\t#{pane_active}\t#{pane_current_path}\t#{pane_current_command}\t#{pane_title}\t#{pane_left}\t#{pane_top}\t#{pane_width}\t#{pane_height}',
@@ -620,6 +630,46 @@ class TmuxService {
       // invocation (including the report) is lost, so assume the live screen.
       return { inCopyMode: false };
     }
+  }
+
+  // iTerm's "Maximize Active Pane": tmux zooms the active pane to the whole
+  // window and a second call restores the layout. The flag is read back in the
+  // same invocation so the caller can label its menu item correctly.
+  async toggleZoom(sessionTarget) {
+    validateTarget(sessionTarget, SESSION_TARGET, '会话');
+    const { stdout } = await this.run([
+      'resize-pane', '-Z', '-t', sessionTarget,
+      ';', 'display-message', '-p', '-t', sessionTarget, '#{window_zoomed_flag}',
+    ]);
+    return { zoomed: String(stdout || '').trim().split('\n').pop() === '1' };
+  }
+
+  // Directional pane focus (Cmd+Alt+arrow). tmux resolves "the pane to the
+  // left" from the real layout, which is why this is a tmux command and not
+  // geometry maths on the client's pane rectangles.
+  async navigatePane(sessionTarget, direction) {
+    validateTarget(sessionTarget, SESSION_TARGET, '会话');
+    const flag = { left: '-L', right: '-R', up: '-U', down: '-D' }[direction];
+    if (!flag) throw new TmuxError('COMMAND_FAILED', '无效的分屏方向');
+    // A window with a single pane, or an edge pane, makes select-pane fail;
+    // that is a no-op, not an error worth surfacing.
+    try {
+      await this.run(['select-pane', flag, '-t', sessionTarget]);
+    } catch {}
+    const { stdout } = await this.run(['display-message', '-p', '-t', sessionTarget, '#{pane_id}']);
+    return { paneId: String(stdout || '').trim() };
+  }
+
+  // Broadcast input: every keystroke goes to every pane of the window
+  // (tmux's synchronize-panes). Window-scoped, and deliberately never enabled
+  // by the tmux profile — it is a per-window action the user turns on.
+  async setSynchronizePanes(sessionTarget, enabled) {
+    validateTarget(sessionTarget, SESSION_TARGET, '会话');
+    const { stdout } = await this.run([
+      'set-window-option', '-t', sessionTarget, 'synchronize-panes', enabled ? 'on' : 'off',
+      ';', 'display-message', '-p', '-t', sessionTarget, '#{?pane_synchronized,1,0}',
+    ]);
+    return { synchronized: String(stdout || '').trim().split('\n').pop() === '1' };
   }
 
   // Close a single split pane (the inverse of splitPane). Killing panes until

@@ -122,14 +122,14 @@ test('getSessionDetail parses windows and panes with typed fields', async () => 
     fsImpl: executableFs(['/tmp/tmux']),
     execFileImpl: async (file, args) => {
       if (args.includes('list-windows')) {
-        return { stdout: '@1\t0\teditor\t1\t2\n', stderr: '' };
+        return { stdout: '@1\t0\teditor\t1\t2\t0\t1\n', stderr: '' };
       }
       return { stdout: '%1\t@1\t0\t0\t1\t/Users/liwei/work\tnvim\tmain\t0\t0\t120\t40\n', stderr: '' };
     },
   });
 
   assert.deepEqual(await service.getSessionDetail('$3'), {
-    windows: [{ id: '@1', index: 0, name: 'editor', active: true, panes: 2 }],
+    windows: [{ id: '@1', index: 0, name: 'editor', active: true, panes: 2, zoomed: false, synchronized: true }],
     panes: [{ id: '%1', windowId: '@1', windowIndex: 0, index: 0, active: true,
       path: '/Users/liwei/work', command: 'nvim', title: 'main',
       left: 0, top: 0, width: 120, height: 40 }],
@@ -417,6 +417,59 @@ test('splitPane maps orientation to tmux -h/-v and opens in the current dir', as
   assert.equal(calls[1][1], '-v');
 
   await assert.rejects(() => service.splitPane('nope', 'vertical'), /无效的 tmux/);
+});
+
+test('toggleZoom reads the zoom flag back in the same tmux invocation', async () => {
+  const calls = [];
+  const service = new TmuxService({
+    tmuxPath: '/opt/homebrew/bin/tmux',
+    fsImpl: executableFs(['/opt/homebrew/bin/tmux']),
+    execFileImpl: async (file, args) => { calls.push(args); return { stdout: '1\n', stderr: '' }; },
+  });
+
+  assert.deepEqual(await service.toggleZoom('$3'), { zoomed: true });
+  assert.deepEqual(calls[0], [
+    'resize-pane', '-Z', '-t', '$3',
+    ';', 'display-message', '-p', '-t', '$3', '#{window_zoomed_flag}',
+  ]);
+  await assert.rejects(() => service.toggleZoom('%1'), /无效的 tmux/);
+});
+
+test('navigatePane maps directions to select-pane flags and tolerates edge panes', async () => {
+  const calls = [];
+  const service = new TmuxService({
+    tmuxPath: '/opt/homebrew/bin/tmux',
+    fsImpl: executableFs(['/opt/homebrew/bin/tmux']),
+    execFileImpl: async (file, args) => {
+      calls.push(args);
+      // select-pane at the edge of a layout fails; that is a no-op, not an error.
+      if (args[0] === 'select-pane') throw Object.assign(new Error('no such pane'), { stderr: 'no such pane' });
+      return { stdout: '%4\n', stderr: '' };
+    },
+  });
+
+  assert.deepEqual(await service.navigatePane('$3', 'left'), { paneId: '%4' });
+  assert.deepEqual(calls[0], ['select-pane', '-L', '-t', '$3']);
+  await service.navigatePane('$3', 'down');
+  assert.equal(calls[2][1], '-D');
+  await assert.rejects(() => service.navigatePane('$3', 'sideways'), /无效的分屏方向/);
+});
+
+test('setSynchronizePanes toggles the window option and reports the resulting state', async () => {
+  const calls = [];
+  const service = new TmuxService({
+    tmuxPath: '/opt/homebrew/bin/tmux',
+    fsImpl: executableFs(['/opt/homebrew/bin/tmux']),
+    execFileImpl: async (file, args) => { calls.push(args); return { stdout: '0\n', stderr: '' }; },
+  });
+
+  assert.deepEqual(await service.setSynchronizePanes('$3', false), { synchronized: false });
+  assert.deepEqual(calls[0], [
+    'set-window-option', '-t', '$3', 'synchronize-panes', 'off',
+    ';', 'display-message', '-p', '-t', '$3', '#{?pane_synchronized,1,0}',
+  ]);
+  await service.setSynchronizePanes('$3', true);
+  assert.equal(calls[1][4], 'on');
 });
 
 test('applySessionDefaults applies the managed iTerm-like profile and advanced options', async () => {

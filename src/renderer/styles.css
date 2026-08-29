@@ -460,6 +460,17 @@ kbd {
 .attached-badge { color: var(--success); background: var(--success-soft); }
 .view-badge { color: var(--tag-color, var(--accent)); background: color-mix(in srgb, var(--tag-color, var(--accent)) 13%, transparent); }
 .workspace-actions { display: flex; align-items: center; gap: 6px; }
+/* Broadcast input is a mode that stays on until turned off and silently
+   multiplies every keystroke, so the header carries a persistent, clickable
+   warning badge rather than only a toast at the moment it was enabled. */
+.pane-flag {
+  flex: none; height: 24px; padding: 0 10px; border-radius: var(--r-pill);
+  font-size: 11px; font-weight: 550; letter-spacing: var(--track-caption);
+  /* Dark text on the system orange: white on #ff9500 fails contrast in both themes. */
+  color: #241503; background: var(--sys-orange, #ff9500); border: none; cursor: pointer;
+}
+.pane-flag:hover { filter: brightness(1.08); }
+.pane-flag.hidden { display: none; }
 .pane-picker {
   display: flex; align-items: center; gap: 5px;
   height: 28px; padding: 0 7px;
@@ -776,14 +787,24 @@ body.pane-resizing * {
 .tmux-settings-groups { display: flex; flex-direction: column; gap: 14px; }
 .tmux-settings-group { margin: 0 !important; padding: 0 !important; border: 0 !important; }
 .tmux-settings-group h4, .tmux-advanced h4 { margin: 0 0 7px; color: var(--text-secondary); font-size: 11px; font-weight: 650; }
+/* Preview of what is about to be pasted. Monospaced and scrollable: the point
+   is recognising the content, so it must not be reflowed or silently cut. */
+.paste-preview {
+  margin: 0 20px 4px; padding: 10px 12px; max-height: 190px; overflow: auto;
+  font-family: "Tmux Desk Mono", Menlo, Monaco, monospace; font-size: 12px; line-height: 1.5;
+  white-space: pre; tab-size: 4;
+  color: var(--text-secondary); background: var(--surface-sunken, var(--surface));
+  border: 1px solid var(--border); border-radius: var(--r-sm);
+}
 .settings-value-row { min-height: 58px; display: flex; align-items: center; gap: 18px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; }
 .settings-value-row + .settings-value-row, .settings-toggle-row + .settings-value-row, .settings-value-row + .settings-toggle-row { margin-top: 8px; }
-.settings-select, .settings-number {
+.settings-select, .settings-number, .settings-text {
   width: 150px; height: 28px; flex: none; padding: 0 8px;
   color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-sm);
 }
 .settings-number { width: 104px; text-align: right; }
-.settings-select:focus, .settings-number:focus, .tmux-advanced textarea:focus { border-color: var(--accent); outline: 3px solid color-mix(in srgb, var(--accent) 28%, transparent); outline-offset: 0; }
+.settings-text { width: 200px; }
+.settings-select:focus, .settings-number:focus, .settings-text:focus, .tmux-advanced textarea:focus { border-color: var(--accent); outline: 3px solid color-mix(in srgb, var(--accent) 28%, transparent); outline-offset: 0; }
 .tmux-advanced { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--border); }
 .tmux-advanced p { margin: 0 0 8px; color: var(--text-tertiary); font-size: 11px; line-height: 1.5; }
 .tmux-advanced textarea {

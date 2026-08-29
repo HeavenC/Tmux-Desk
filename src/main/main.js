@@ -234,6 +234,8 @@ async function bootstrap() {
         return true;
       },
       reveal: async (filePath) => { shell.showItemInFolder(await toBrowsablePath(filePath)); return true; },
+      // Scheme allow-listed in ipc.js before it reaches here.
+      openExternal: async (url) => { await shell.openExternal(url); return true; },
       openWith: async (filePath) => {
         const target = await toBrowsablePath(filePath);
         const isWin = process.platform === 'win32';

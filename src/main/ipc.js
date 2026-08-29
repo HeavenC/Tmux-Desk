@@ -2,6 +2,8 @@ const path = require('node:path');
 const { nativeTheme } = require('electron');
 const { normalizeTagId, normalizeTagName } = require('../shared/tag-model');
 const { validateTmuxSettings } = require('../shared/tmux-settings');
+const { validateTerminalAppearance } = require('../shared/terminal-appearance');
+const { validatePasteGuard } = require('../shared/paste-guard');
 const { normalizeSessionRestore } = require('./session-snapshot');
 const { parseConnectionInput } = require('../shared/remote-connection');
 const { discoverCodebases } = require('./codebase-import');
@@ -40,12 +42,16 @@ const IPC_CHANNELS = Object.freeze([
   'panes:kill',
   'panes:split',
   'panes:resize',
+  'panes:zoom',
+  'panes:navigate',
+  'panes:broadcast',
   'app:set-locale',
   'preferences:get',
   'preferences:save',
   'files:list',
   'files:open',
   'files:open-with',
+  'files:open-url',
   'files:reveal',
   'terminal:attach',
   'terminal:write',
@@ -218,7 +224,7 @@ function validateTabOrders(value) {
 
 function validatePreferencesPatch(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('偏好设置无效');
-  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders', 'keepAwake', 'autoShare', 'tmuxSettings', 'sessionRestore']);
+  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders', 'keepAwake', 'autoShare', 'tmuxSettings', 'terminalAppearance', 'pasteProtection', 'sessionRestore']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new Error('偏好字段无效');
   }
@@ -257,6 +263,8 @@ function validatePreferencesPatch(value) {
     result.autoShare = value.autoShare;
   }
   if ('tmuxSettings' in value) result.tmuxSettings = validateTmuxSettings(value.tmuxSettings);
+  if ('terminalAppearance' in value) result.terminalAppearance = validateTerminalAppearance(value.terminalAppearance);
+  if ('pasteProtection' in value) result.pasteProtection = validatePasteGuard(value.pasteProtection);
   if ('sessionRestore' in value) {
     if (!value.sessionRestore || typeof value.sessionRestore !== 'object' || Array.isArray(value.sessionRestore)) {
       throw new Error('会话快照设置无效');
@@ -265,6 +273,27 @@ function validatePreferencesPatch(value) {
   }
   if ('tabOrders' in value) result.tabOrders = validateTabOrders(value.tabOrders);
   return result;
+}
+
+// OSC 8 hyperlinks arrive from whatever is running in the pane — including a
+// remote host over ssh — so the URL is untrusted input that ends up at the OS
+// shell. Only the three schemes a terminal link plausibly needs are allowed;
+// file:, javascript: and custom app schemes are exactly the ones that turn a
+// printed escape sequence into code execution on the viewer's machine.
+const OPENABLE_URL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:']);
+
+function validateExternalUrl(value) {
+  if (typeof value !== 'string' || !value || value.length > 4096 || /[\0\r\n]/.test(value)) {
+    throw new Error('链接无效');
+  }
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error('链接无效');
+  }
+  if (!OPENABLE_URL_PROTOCOLS.has(parsed.protocol)) throw new Error('仅支持打开 http / https / mailto 链接');
+  return parsed.toString();
 }
 
 function validateFilePath(value) {
@@ -405,6 +434,20 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
       if (!('x' in size) && !('y' in size)) throw new Error('分屏尺寸参数无效');
       return tmuxService.resizePane(target, size).then(() => true);
     },
+    // Zoom / directional focus / broadcast input are all window-scoped tmux
+    // actions addressed by the SESSION target, so they act on whatever window
+    // and pane the session currently has active — the one the user is looking at.
+    'panes:zoom': (_event, target) => tmuxService.toggleZoom(validateTarget(target, 'session')),
+    'panes:navigate': (_event, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('分屏方向参数无效');
+      if (!['left', 'right', 'up', 'down'].includes(input.direction)) throw new Error('分屏方向无效');
+      return tmuxService.navigatePane(validateTarget(input.target, 'session'), input.direction);
+    },
+    'panes:broadcast': (_event, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('广播输入参数无效');
+      if (typeof input.enabled !== 'boolean') throw new Error('广播输入参数无效');
+      return tmuxService.setSynchronizePanes(validateTarget(input.target, 'session'), input.enabled);
+    },
     'panes:split': async (_event, input) => {
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('分割参数无效');
       const target = validateTarget(input.target, 'session');
@@ -440,6 +483,7 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
     'files:list': (_event, dirPath) => fileBridge.list(validateFilePath(dirPath)),
     'files:open': (_event, filePath) => fileBridge.open(validateFilePath(filePath)),
     'files:open-with': (_event, filePath) => fileBridge.openWith(validateFilePath(filePath)),
+    'files:open-url': (_event, url) => fileBridge.openExternal(validateExternalUrl(url)),
     'files:reveal': (_event, filePath) => fileBridge.reveal(validateFilePath(filePath)),
     'terminal:attach': (_event, payload) => {
       const validated = validateTerminalPayload('attach', payload);
@@ -518,6 +562,7 @@ module.exports = {
   validateTagMutation,
   validateTarget,
   validateTerminalPayload,
+  validateExternalUrl,
   validateRevealInput,
   validateSearchOptions,
 };

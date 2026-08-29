@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { TerminalManager } = require('../src/main/terminal-manager');
+const { TerminalManager, TERMINAL_FEATURES } = require('../src/main/terminal-manager');
 
 function createFakePty() {
   const listeners = { data: null, exit: null };
@@ -62,7 +62,13 @@ test('attach uses exact tmux socket arguments and terminal environment', () => {
     env: { PATH: '/bin', TERM: 'old' },
   });
   manager.attach({ sessionId: '$7', cols: 90, rows: 28 });
-  assert.deepEqual(calls[0].args, ['-L', 'isolated', '-T', 'clipboard,RGB,extkeys', 'attach-session', '-t', '$7']);
+  assert.deepEqual(calls[0].args, ['-L', 'isolated', '-T', TERMINAL_FEATURES, 'attach-session', '-t', '$7']);
+  // xterm.js advertises none of these through its terminfo name, so every one
+  // has to be declared here or tmux silently strips the capability.
+  assert.deepEqual(TERMINAL_FEATURES.split(','), [
+    'clipboard', 'RGB', 'extkeys', 'sync', 'usstyle', 'strikethrough', 'overline',
+    'hyperlinks', 'osc7', 'focus', 'cstyle', 'ccolour',
+  ]);
   assert.equal(calls[0].file, '/custom/tmux');
   assert.equal(calls[0].options.name, 'xterm-256color');
   assert.equal(calls[0].options.env.TERM, 'xterm-256color');

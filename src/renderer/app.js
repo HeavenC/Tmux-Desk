@@ -5,6 +5,8 @@ const { filterAndGroupSessions, sessionsForView } = require('../shared/session-m
 const { adjacentTagId } = require('../shared/tag-model');
 const { resolveTerminalFileReference } = require('../shared/terminal-file-link');
 const { DEFAULT_TMUX_SETTINGS, TMUX_SETTING_FIELDS, parseAdvancedConfig } = require('../shared/tmux-settings');
+const { DEFAULT_TERMINAL_APPEARANCE, normalizeTerminalAppearance } = require('../shared/terminal-appearance');
+const { DEFAULT_PASTE_GUARD, normalizePasteGuard } = require('../shared/paste-guard');
 const { applyTheme, resolveTheme } = require('./theme');
 const { TerminalView } = require('./terminal-view');
 const { RemoteApi } = require('./remote-api');
@@ -68,6 +70,7 @@ function cacheElements() {
     'globalSearch', 'globalSearchIcon', 'globalSearchInput', 'globalSearchResults', 'globalSearchStatus',
     'reconnectButton', 'emptyState', 'emptyTitle', 'emptyMessage', 'emptyActions', 'emptyNewButton',
     'emptyInstallButton', 'emptyRefreshButton', 'emptyAllButton', 'workspaceStatus', 'commandHint', 'themePopover', 'contextMenu', 'toastStack',
+    'broadcastFlag',
     'sessionModal', 'sessionForm', 'sessionNameInput', 'sessionCwdInput', 'startupCommandInput',
     'chooseDirectoryButton', 'renameModal', 'renameForm', 'renameInput', 'killModal', 'killMessage',
     'confirmKillButton', 'settingsModal', 'themeCards', 'languageCards', 'tagSettingsList', 'settingsNewTagButton', 'tagImportButton', 'tagExportButton', 'settingsTmuxVersion', 'commandPalette',
@@ -85,6 +88,10 @@ function cacheElements() {
     'snapshotSaveButton', 'snapshotRestoreButton', 'snapshotRevealButton', 'snapshotOpenButton',
     'snapshotEnabledToggle', 'snapshotAutoRestoreToggle', 'snapshotRepairToggle', 'snapshotIntervalInput',
     'snapshotSettingsStatus',
+    'terminalFontFamilyInput', 'terminalFontSizeInput', 'terminalLineHeightInput',
+    'terminalLetterSpacingInput', 'terminalFontResetButton',
+    'pasteConfirmMultilineToggle', 'pasteConfirmCharsInput', 'pasteSlowToggle',
+    'pasteConfirmModal', 'pasteConfirmMessage', 'pasteConfirmPreview', 'confirmPasteButton',
   ]) refs[id] = document.getElementById(id);
 }
 
@@ -503,6 +510,152 @@ function createTmuxSettingControl(field) {
     saveTmuxSettings({ ...state.preferences.tmuxSettings, [field.key]: nextValue }, input);
   });
   return row;
+}
+
+// ---------------------------------------------------------------------------
+// Terminal typography. Font family/size/line height/tracking were hard-coded in
+// terminal-view.js; they now live in preferences and apply to the live view.
+// ---------------------------------------------------------------------------
+
+const TERMINAL_APPEARANCE_INPUTS = [
+  { key: 'fontFamily', ref: 'terminalFontFamilyInput', kind: 'text' },
+  { key: 'fontSize', ref: 'terminalFontSizeInput', kind: 'number' },
+  { key: 'lineHeight', ref: 'terminalLineHeightInput', kind: 'number' },
+  { key: 'letterSpacing', ref: 'terminalLetterSpacingInput', kind: 'number' },
+];
+
+function currentTerminalAppearance() {
+  return normalizeTerminalAppearance(state.preferences.terminalAppearance || DEFAULT_TERMINAL_APPEARANCE);
+}
+
+function renderTerminalAppearanceSettings() {
+  const appearance = currentTerminalAppearance();
+  for (const { key, ref } of TERMINAL_APPEARANCE_INPUTS) {
+    const input = refs[ref];
+    if (input) input.value = String(appearance[key]);
+  }
+}
+
+// Applied to the live terminal first, saved second: typing a size and watching
+// the grid change is the whole point, and a rejected write just re-renders the
+// inputs from the stored value.
+function applyTerminalAppearance() {
+  terminalView?.setAppearance(currentTerminalAppearance());
+}
+
+async function saveTerminalAppearance(patch, input) {
+  const previous = state.preferences.terminalAppearance;
+  const next = normalizeTerminalAppearance({ ...currentTerminalAppearance(), ...patch });
+  state.preferences = { ...state.preferences, terminalAppearance: next };
+  applyTerminalAppearance();
+  if (input) input.disabled = true;
+  try {
+    state.preferences = await api.savePreferences({ terminalAppearance: next });
+  } catch (error) {
+    state.preferences = { ...state.preferences, terminalAppearance: previous };
+    applyTerminalAppearance();
+    toast(friendlyError(error), 'error');
+  } finally {
+    if (input?.isConnected) input.disabled = false;
+    // Always re-read from state: normalization clamps and rounds, so what the
+    // user typed is not necessarily what got stored.
+    renderTerminalAppearanceSettings();
+  }
+}
+
+function bindTerminalAppearanceInputs() {
+  for (const { key, ref, kind } of TERMINAL_APPEARANCE_INPUTS) {
+    const input = refs[ref];
+    if (!input) continue;
+    input.addEventListener('change', () => {
+      saveTerminalAppearance({ [key]: kind === 'number' ? Number(input.value) : input.value }, input);
+    });
+  }
+  refs.terminalFontResetButton?.addEventListener('click', () => {
+    saveTerminalAppearance({ ...DEFAULT_TERMINAL_APPEARANCE }, refs.terminalFontResetButton);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Paste protection. Everything that reaches the pty as a paste funnels through
+// TerminalView.paste(); this side owns the preference and the confirm dialog.
+// ---------------------------------------------------------------------------
+
+function currentPasteGuard() {
+  return normalizePasteGuard(state.preferences.pasteProtection || DEFAULT_PASTE_GUARD);
+}
+
+function renderPasteGuardSettings() {
+  const guard = currentPasteGuard();
+  if (refs.pasteConfirmMultilineToggle) refs.pasteConfirmMultilineToggle.checked = guard.confirmMultiline;
+  if (refs.pasteConfirmCharsInput) refs.pasteConfirmCharsInput.value = String(guard.confirmChars);
+  if (refs.pasteSlowToggle) refs.pasteSlowToggle.checked = guard.slow;
+}
+
+function applyPasteGuard() {
+  terminalView?.setPasteGuard(currentPasteGuard());
+}
+
+async function savePasteGuard(patch, input) {
+  const previous = state.preferences.pasteProtection;
+  const next = normalizePasteGuard({ ...currentPasteGuard(), ...patch });
+  state.preferences = { ...state.preferences, pasteProtection: next };
+  applyPasteGuard();
+  if (input) input.disabled = true;
+  try {
+    state.preferences = await api.savePreferences({ pasteProtection: next });
+  } catch (error) {
+    state.preferences = { ...state.preferences, pasteProtection: previous };
+    applyPasteGuard();
+    toast(friendlyError(error), 'error');
+  } finally {
+    if (input?.isConnected) input.disabled = false;
+    renderPasteGuardSettings();
+  }
+}
+
+function bindPasteGuardInputs() {
+  refs.pasteConfirmMultilineToggle?.addEventListener('change', () => {
+    savePasteGuard({ confirmMultiline: refs.pasteConfirmMultilineToggle.checked }, refs.pasteConfirmMultilineToggle);
+  });
+  refs.pasteSlowToggle?.addEventListener('change', () => {
+    savePasteGuard({ slow: refs.pasteSlowToggle.checked }, refs.pasteSlowToggle);
+  });
+  refs.pasteConfirmCharsInput?.addEventListener('change', () => {
+    savePasteGuard({ confirmChars: Number(refs.pasteConfirmCharsInput.value) }, refs.pasteConfirmCharsInput);
+  });
+}
+
+// Shows what is about to be pasted and resolves to the user's answer. The
+// preview is the point: "12 lines" tells you nothing, the first lines of a
+// script you did not mean to copy tell you everything.
+const PASTE_PREVIEW_LINES = 8;
+const PASTE_PREVIEW_CHARS = 600;
+let resolvePasteConfirm = null;
+
+function confirmPaste({ text, lines, chars, reason }) {
+  // A dialog is already up (a second paste raced in) — answer no rather than
+  // stranding the first promise.
+  if (resolvePasteConfirm) return Promise.resolve(false);
+  refs.pasteConfirmMessage.textContent = reason === 'size'
+    ? t('paste.confirmSize', { chars })
+    : t('paste.confirmMultiline', { lines });
+  const preview = text.split(/\r\n|\r|\n/).slice(0, PASTE_PREVIEW_LINES).join('\n').slice(0, PASTE_PREVIEW_CHARS);
+  refs.pasteConfirmPreview.textContent = preview === text ? preview : `${preview}\n…`;
+  openModal(refs.pasteConfirmModal, refs.confirmPasteButton);
+  return new Promise((resolve) => {
+    resolvePasteConfirm = resolve;
+  });
+}
+
+// Idempotent, and deliberately does NOT call closeModal(): closeModal routes
+// dismissals back here, so the two would recurse.
+function settlePasteConfirm(approved) {
+  const resolve = resolvePasteConfirm;
+  resolvePasteConfirm = null;
+  refs.pasteConfirmModal?.classList.add('hidden');
+  if (approved) terminalView?.focus();
+  resolve?.(approved === true);
 }
 
 function renderTmuxSettings() {
@@ -1404,6 +1557,10 @@ function renderDetail() {
     return option;
   }));
   refs.panePickerWrap.classList.toggle('hidden', state.detail.panes.length < 2);
+  // Broadcast input has no on-screen trace inside the terminal, so the only
+  // thing standing between the user and typing into four panes at once is this
+  // badge. It doubles as the off switch.
+  refs.broadcastFlag?.classList.toggle('hidden', !activeWindow()?.synchronized);
   renderPaneCloseButtons();
 }
 
@@ -1716,7 +1873,17 @@ function openTerminalContextMenu(event) {
       title: t('palette.splitHorizontal'),
       action: () => { closeFloatingMenus(); splitActivePane('horizontal'); },
     }));
-    if (activeWindowPanes().length >= 2) {
+    if (activeWindowPanes().length >= 2 || activeWindow()?.zoomed) {
+      items.push(menuButton({
+        iconName: 'panes',
+        title: activeWindow()?.zoomed ? t('palette.unzoomPane') : t('palette.zoomPane'),
+        action: () => { closeFloatingMenus(); toggleZoomActivePane(); },
+      }));
+      items.push(menuButton({
+        iconName: 'terminal',
+        title: activeWindow()?.synchronized ? t('palette.broadcastOff') : t('palette.broadcastOn'),
+        action: () => { closeFloatingMenus(); toggleBroadcastInput(); },
+      }));
       items.push(menuButton({
         iconName: 'close',
         title: t('palette.closePane'),
@@ -1859,6 +2026,69 @@ function setupPaneMouse() {
 
 // Close the pane tmux considers active (used by the command palette; the ×
 // overlay closes a specific pane instead).
+// The window the attached session currently shows. Zoom and broadcast input are
+// window options, so their state comes from here rather than from a pane.
+function activeWindow() {
+  const panes = state.detail.panes || [];
+  const activePane = panes.find((pane) => pane.active);
+  const windows = state.detail.windows || [];
+  return (activePane && windows.find((win) => win.id === activePane.windowId))
+    || windows.find((win) => win.active)
+    || null;
+}
+
+// tmux's `resize-pane -Z`: the active pane fills the window and a second call
+// puts the layout back — iTerm's "Maximize Active Pane". Zoom on an unsplit
+// window is a no-op in tmux, so it is only offered once there is a split.
+async function toggleZoomActivePane() {
+  if (!requireLocal()) return;
+  const session = selectedSession();
+  if (!session) { toast(t('toast.noSession')); return; }
+  if (activeWindowPanes().length < 2 && !activeWindow()?.zoomed) { toast(t('toast.noSplit')); return; }
+  try {
+    const { zoomed } = await api.zoomPane(session.id);
+    await refreshDetail();
+    terminalView?.focus();
+    toast(zoomed ? t('toast.paneZoomed') : t('toast.paneUnzoomed'));
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+  }
+}
+
+// Cmd+Alt+arrow moves focus between splits. tmux resolves the direction from
+// the real layout, so nested splits work without any geometry maths here.
+async function navigateActivePane(direction) {
+  if (isRemoteActive()) return;
+  const session = selectedSession();
+  if (!session || activeWindowPanes().length < 2) return;
+  try {
+    await api.navigatePane({ target: session.id, direction });
+    await refreshDetail();
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+  }
+}
+
+// Broadcast input (tmux synchronize-panes): every keystroke reaches every pane
+// of the window. Deliberately window-scoped and never part of the tmux profile
+// — it stays on until turned off, which is why the workspace header shows a
+// badge while it is active.
+async function toggleBroadcastInput() {
+  if (!requireLocal()) return;
+  const session = selectedSession();
+  if (!session) { toast(t('toast.noSession')); return; }
+  const enabled = !activeWindow()?.synchronized;
+  if (enabled && activeWindowPanes().length < 2) { toast(t('toast.noSplit')); return; }
+  try {
+    const result = await api.setBroadcastInput({ target: session.id, enabled });
+    await refreshDetail();
+    terminalView?.focus();
+    toast(result.synchronized ? t('toast.broadcastOn') : t('toast.broadcastOff'));
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+  }
+}
+
 function closeActivePane() {
   const active = (state.detail.panes || []).find((pane) => pane.active);
   if (!active || activeWindowPanes().length < 2) { toast(t('toast.noSession')); return; }
@@ -1897,6 +2127,14 @@ function activeSessionDir() {
   const active = state.detail.panes.find((pane) => pane.active) || state.detail.panes[0];
   if (active && active.path) return active.path;
   return selectedSession()?.path || null;
+}
+
+// OSC 8 hyperlink target. Always opened through the LOCAL bridge, never the
+// session api: the browser has to come up on the machine the user is looking
+// at, not on the host a remote takeover is attached to.
+async function openTerminalUrl(url) {
+  if (!localApi.openExternalUrl) throw new Error(t('file.resolveFailed'));
+  await localApi.openExternalUrl(url);
 }
 
 async function openTerminalFileReference(reference) {
@@ -2282,7 +2520,12 @@ function openModal(modal, focusTarget) {
   requestAnimationFrame(() => focusTarget?.focus());
 }
 
-function closeModal(modal) { modal.classList.add('hidden'); }
+function closeModal(modal) {
+  modal.classList.add('hidden');
+  // Cancel button and Escape both land here, and the paste dialog has a promise
+  // waiting on the answer — dismissing it means "no", not "hang forever".
+  if (modal === refs.pasteConfirmModal) settlePasteConfirm(false);
+}
 
 function openTagEditor(tag = null) {
   refs.tagEditorModal.dataset.tagId = tag?.id || '';
@@ -2408,6 +2651,8 @@ function openSettings() {
   refs.autoShareToggle.checked = state.preferences.autoShare === true;
   renderSnapshotSettings();
   refreshSnapshotHealth();
+  renderTerminalAppearanceSettings();
+  renderPasteGuardSettings();
   renderTmuxSettings();
   openModal(refs.settingsModal, refs.settingsModal.querySelector('.theme-card'));
 }
@@ -2774,7 +3019,9 @@ function commands() {
       { id: 'shareSession', title: t('palette.shareSessionTitle', { name: session.name }), subtitle: t('palette.shareSessionSubtitle'), keywords: ['share', 'link', '分享', '链接'], icon: 'external', action: () => openMobileAccessModal(session) },
       { id: 'splitV', title: t('palette.splitVertical'), subtitle: t('palette.splitVerticalSubtitle'), shortcut: '⌘D', icon: 'panes', action: () => splitActivePane('vertical') },
       { id: 'splitH', title: t('palette.splitHorizontal'), subtitle: t('palette.splitHorizontalSubtitle'), shortcut: '⌘⇧D', icon: 'panes', action: () => splitActivePane('horizontal') },
-      ...(activeWindowPanes().length >= 2 ? [
+      ...(activeWindowPanes().length >= 2 || activeWindow()?.zoomed ? [
+        { id: 'zoomPane', title: activeWindow()?.zoomed ? t('palette.unzoomPane') : t('palette.zoomPane'), subtitle: t('palette.zoomPaneSubtitle'), shortcut: '⌘⇧↩', keywords: ['zoom', 'maximize', '最大化', '全屏'], icon: 'panes', action: toggleZoomActivePane },
+        { id: 'broadcast', title: activeWindow()?.synchronized ? t('palette.broadcastOff') : t('palette.broadcastOn'), subtitle: t('palette.broadcastSubtitle'), keywords: ['broadcast', 'synchronize', 'sync', '广播', '同步'], icon: 'terminal', action: toggleBroadcastInput },
         { id: 'closePane', title: t('palette.closePane'), subtitle: t('palette.closePaneSubtitle'), icon: 'close', action: closeActivePane },
       ] : []),
       { id: 'rename', title: t('palette.renameTitle', { name: session.name }), subtitle: t('palette.renameSubtitle'), icon: 'edit', action: () => openRenameModal(session) },
@@ -3124,8 +3371,12 @@ function bindEvents() {
   refs.tagImportButton.addEventListener('click', importTags);
   refs.keepAwakeToggle.addEventListener('change', () => setKeepAwakePreference(refs.keepAwakeToggle.checked));
   refs.autoShareToggle.addEventListener('change', () => setAutoSharePreference(refs.autoShareToggle.checked));
+  refs.broadcastFlag?.addEventListener('click', toggleBroadcastInput);
   refs.tmuxResetButton.addEventListener('click', resetTmuxSettings);
   refs.tmuxAdvancedApplyButton.addEventListener('click', applyAdvancedTmuxSettings);
+  bindTerminalAppearanceInputs();
+  bindPasteGuardInputs();
+  refs.confirmPasteButton?.addEventListener('click', () => settlePasteConfirm(true));
   refs.emptyInstallButton.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText('brew install tmux'); toast(t('toast.copiedInstallCmd')); }
     catch (error) { toast(friendlyError(error), 'error'); }
@@ -3362,6 +3613,10 @@ function bindEvents() {
   });
 }
 
+const PANE_ARROW_DIRECTIONS = Object.freeze({
+  ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down',
+});
+
 function handleKeyboard(event) {
   if (!refs.commandPalette.classList.contains('hidden')) {
     const items = filteredCommands();
@@ -3404,6 +3659,15 @@ function handleKeyboard(event) {
   else if (meta && /^[1-9]$/.test(event.key)) {
     const windowInfo = state.detail.windows[Number(event.key) - 1];
     if (windowInfo) { event.preventDefault(); sessionApi().selectWindow(windowInfo.id).then(refreshDetail).catch((error) => toast(friendlyError(error), 'error')); }
+  } else if (meta && event.shiftKey && !event.altKey && event.key === 'Enter') {
+    // iTerm's Maximize Active Pane. Shift+Enter alone is a newline the terminal
+    // view handles; adding Cmd makes it a window action instead.
+    event.preventDefault();
+    toggleZoomActivePane();
+  } else if (event.metaKey && event.altKey && !event.shiftKey && PANE_ARROW_DIRECTIONS[event.key]) {
+    // Cmd+Alt+arrow moves focus between splits (iTerm's pane navigation).
+    event.preventDefault();
+    navigateActivePane(PANE_ARROW_DIRECTIONS[event.key]);
   } else if (event.metaKey && !event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')
     && state.view.kind !== 'all' && selectedSession()) {
     event.preventDefault();
@@ -3483,6 +3747,8 @@ async function initialize() {
     onError: (error) => toast(friendlyError(error), 'error'),
     onResize: () => onTerminalResize(),
     onOpenFile: (reference) => openTerminalFileReference(reference),
+    onOpenUrl: (url) => openTerminalUrl(url),
+    onConfirmPaste: (info) => confirmPaste(info),
   });
   bindEvents();
   loadRemoteConnections();
@@ -3497,6 +3763,8 @@ async function initialize() {
     loadRemoteConnections();
     renderSourceBar();
     applyCurrentTheme();
+    applyTerminalAppearance();
+    applyPasteGuard();
     applySidebarWidth();
     applyTagRailWidth();
     applyTagRailExpanded();

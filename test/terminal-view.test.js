@@ -164,13 +164,30 @@ test('ordinary and additionally modified Enter events keep xterm default handlin
       enterEvent(),
       enterEvent({ shiftKey: true, altKey: true }),
       enterEvent({ shiftKey: true, ctrlKey: true }),
-      enterEvent({ shiftKey: true, metaKey: true }),
     ];
     for (const event of events) {
       assert.equal(view.terminal.customKeyHandler(event), true);
       assert.equal(event.defaultPrevented, false);
       assert.equal(event.propagationStopped, false);
     }
+    assert.deepEqual(writes, []);
+  } finally {
+    dispose();
+  }
+});
+
+test('Cmd+Shift+Enter is declined so it can bubble to the app shortcut handler', () => {
+  const { view, writes, dispose } = createView();
+  try {
+    view.terminalId = 7;
+    const event = enterEvent({ shiftKey: true, metaKey: true });
+    // Returning false makes xterm bail out of _keyDown before it turns Enter
+    // into CR and cancels the event. It must NOT stop propagation itself: the
+    // window-level handler in app.js is what maximizes the pane, and it only
+    // ever sees the event if this one leaves it alone.
+    assert.equal(view.terminal.customKeyHandler(event), false);
+    assert.equal(event.defaultPrevented, false);
+    assert.equal(event.propagationStopped, false);
     assert.deepEqual(writes, []);
   } finally {
     dispose();
