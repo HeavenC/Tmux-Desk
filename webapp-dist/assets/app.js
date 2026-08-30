@@ -13923,6 +13923,38 @@ ${s3.join("\n")}
     const scale = ratio > 1.05 ? Math.min(ratio, 3) : 1;
     document.documentElement.style.setProperty("--chrome-scale", scale.toFixed(3));
   }
+  function applyWebAppChrome() {
+    if (navigator.standalone === true) {
+      document.documentElement.setAttribute("data-ios-webapp", "");
+    }
+  }
+  function setupEdgeSwipeBack() {
+    const EDGE_START = 24;
+    const COMMIT_DISTANCE = 70;
+    const view = el("view-terminal");
+    let startX = 0;
+    let startY = 0;
+    let tracking = false;
+    const stop = () => {
+      tracking = false;
+    };
+    view.addEventListener("touchstart", (event) => {
+      tracking = event.touches.length === 1 && !el("back-btn").hidden && event.touches[0].clientX <= EDGE_START;
+      if (!tracking) return;
+      startX = event.touches[0].clientX;
+      startY = event.touches[0].clientY;
+    }, { capture: true, passive: true });
+    view.addEventListener("touchmove", (event) => {
+      if (!tracking || event.touches.length !== 1) return;
+      const dx = event.touches[0].clientX - startX;
+      const dy = event.touches[0].clientY - startY;
+      if (dx < COMMIT_DISTANCE || Math.abs(dy) > Math.abs(dx) / 2) return;
+      tracking = false;
+      backToList();
+    }, { capture: true, passive: true });
+    view.addEventListener("touchend", stop, { capture: true, passive: true });
+    view.addEventListener("touchcancel", stop, { capture: true, passive: true });
+  }
   function setupViewportHandling() {
     let fitFrame = null;
     const onViewportChange = () => {
@@ -14005,6 +14037,8 @@ ${s3.join("\n")}
     setupStaticHandlers();
     setupToolbar();
     setupTouchScroll();
+    setupEdgeSwipeBack();
+    applyWebAppChrome();
     setupViewportHandling();
     setupFullscreen();
     renderWorkspaceFilters();

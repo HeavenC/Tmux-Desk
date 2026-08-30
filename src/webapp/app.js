@@ -1934,6 +1934,50 @@ function applyChromeScale() {
   document.documentElement.style.setProperty('--chrome-scale', scale.toFixed(3));
 }
 
+/* iOS Home Screen web apps get a system "•••" menu painted over the top-left
+   corner, on top of the page and outside our stacking context — it hides the
+   back chevron and swallows the tap. navigator.standalone is the iOS-only
+   signal for that launch mode; the CSS keeps both top bars clear of the corner
+   (--ios-corner-gutter) once it's set. */
+function applyWebAppChrome() {
+  if (navigator.standalone === true) {
+    document.documentElement.setAttribute('data-ios-webapp', '');
+  }
+}
+
+/* Second way out of the terminal, so a corner that some OS decides to cover can
+   never strand the session: swipe in from the left edge, iOS-style. Deliberately
+   strict — the finger has to start on the edge and travel mostly sideways — so a
+   drag that was meant to scroll the terminal doesn't pop the view. */
+function setupEdgeSwipeBack() {
+  const EDGE_START = 24;
+  const COMMIT_DISTANCE = 70;
+  const view = el('view-terminal');
+  let startX = 0;
+  let startY = 0;
+  let tracking = false;
+  const stop = () => { tracking = false; };
+  view.addEventListener('touchstart', (event) => {
+    // Shared-session links have no list to go back to (the button is hidden too).
+    tracking = event.touches.length === 1
+      && !el('back-btn').hidden
+      && event.touches[0].clientX <= EDGE_START;
+    if (!tracking) return;
+    startX = event.touches[0].clientX;
+    startY = event.touches[0].clientY;
+  }, { capture: true, passive: true });
+  view.addEventListener('touchmove', (event) => {
+    if (!tracking || event.touches.length !== 1) return;
+    const dx = event.touches[0].clientX - startX;
+    const dy = event.touches[0].clientY - startY;
+    if (dx < COMMIT_DISTANCE || Math.abs(dy) > Math.abs(dx) / 2) return;
+    tracking = false;
+    backToList();
+  }, { capture: true, passive: true });
+  view.addEventListener('touchend', stop, { capture: true, passive: true });
+  view.addEventListener('touchcancel', stop, { capture: true, passive: true });
+}
+
 function setupViewportHandling() {
   let fitFrame = null;
   const onViewportChange = () => {
@@ -2023,6 +2067,8 @@ function bootstrap() {
   setupStaticHandlers();
   setupToolbar();
   setupTouchScroll();
+  setupEdgeSwipeBack();
+  applyWebAppChrome();
   setupViewportHandling();
   setupFullscreen();
   renderWorkspaceFilters();

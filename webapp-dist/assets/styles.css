@@ -75,6 +75,9 @@
   --tag-purple: var(--sys-purple);
   --tag-rose: var(--sys-pink);
   --tag-cyan: var(--sys-teal);
+  /* Width the iOS web-app "•••" control needs at the leading edge; measured
+     off a device screenshot at ~46pt wide starting ~20pt in. */
+  --ios-corner-gutter: 56px;
 }
 
 :root[data-theme="light"] {
@@ -635,6 +638,18 @@ body {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+/* Launched from the iOS Home Screen the system paints its own translucent "•••"
+   web-app menu over the top-left corner of the page. It sits above the web
+   content, so the back chevron underneath is both hidden and untappable — no
+   z-index of ours can win, because it isn't in our stacking context at all.
+   The only fix is to vacate the corner: both top bars indent their leading edge
+   past it. Applied only for iOS home-screen launches (see applyWebAppChrome),
+   so everywhere else the bars keep their normal 16px inset. */
+:root[data-ios-webapp] .topbar,
+:root[data-ios-webapp] .term-topbar {
+  padding-left: calc(max(env(safe-area-inset-left), 16px) + var(--ios-corner-gutter));
 }
 
 .term-title {
