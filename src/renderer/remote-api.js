@@ -8,6 +8,19 @@
 // switch. Session create/kill/rename/split and pane ops stay local-only; the app
 // guards them when a remote source is active.
 
+// A remote host that is simply gone (stale IP after the machine moved networks,
+// laptop asleep, firewall dropping SYNs) never answers and never refuses — the
+// fetch would hang for the OS TCP timeout (~75s on macOS). Everything here is
+// therefore bounded by an explicit AbortController deadline, the same way the
+// web-server's own upstream relay already is.
+const REQUEST_TIMEOUT_MS = 5000;
+const PROBE_TIMEOUT_MS = 2000;
+const ATTACH_TIMEOUT_MS = 8000;
+
+function nowMs() {
+  return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+}
+
 function toWsBase(base) {
   if (/^https:/i.test(base)) return `wss${base.slice('https'.length)}`;
   if (/^http:/i.test(base)) return `ws${base.slice('http'.length)}`;
@@ -55,24 +68,48 @@ class RemoteApi {
     return url.toString();
   }
 
-  async request(pathname, { method = 'GET', params, body } = {}) {
-    const options = { method, headers: {} };
+  async request(pathname, { method = 'GET', params, body, timeout = REQUEST_TIMEOUT_MS } = {}) {
+    const controller = new AbortController();
+    const options = { method, headers: {}, signal: controller.signal };
     if (body !== undefined) {
       options.headers['Content-Type'] = 'application/json';
       options.body = JSON.stringify(body);
     }
-    let response;
+    const timer = setTimeout(() => controller.abort(), timeout);
     try {
-      response = await fetch(this.restUrl(pathname, params), options);
-    } catch {
-      throw new Error('无法连接远程主机');
+      let response;
+      try {
+        response = await fetch(this.restUrl(pathname, params), options);
+      } catch {
+        // AbortError and a real connection failure both land here; only the
+        // signal tells them apart, and the wording matters for the user (a
+        // timeout means "host unreachable", not "wrong URL").
+        throw new Error(controller.signal.aborted ? '远程主机无响应（超时）' : '无法连接远程主机');
+      }
+      let payload = null;
+      try { payload = await response.json(); } catch { /* non-JSON error body */ }
+      if (!response.ok || !payload || payload.ok === false) {
+        throw new Error((payload && payload.error) || `远程请求失败（${response.status}）`);
+      }
+      return payload;
+    } finally {
+      clearTimeout(timer);
     }
-    let payload = null;
-    try { payload = await response.json(); } catch { /* non-JSON error body */ }
-    if (!response.ok || !payload || payload.ok === false) {
-      throw new Error((payload && payload.error) || `远程请求失败（${response.status}）`);
+  }
+
+  // Cheap reachability check used to light up the source popover before the user
+  // commits to a switch. Short deadline on purpose: this runs for every saved
+  // host in parallel while a menu is open, so a dead one must not hold the row
+  // in "checking" for seconds.
+  async probe({ timeout = PROBE_TIMEOUT_MS } = {}) {
+    const started = nowMs();
+    try {
+      const payload = await this.request('/api/sessions', { timeout });
+      const sessions = Array.isArray(payload.sessions) ? payload.sessions : [];
+      return { ok: true, ms: Math.round(nowMs() - started), sessions: sessions.length };
+    } catch (error) {
+      return { ok: false, ms: Math.round(nowMs() - started), error: error?.message || '无法连接远程主机' };
     }
-    return payload;
   }
 
   async getSystemStatus() {
@@ -112,6 +149,20 @@ class RemoteApi {
       }
       this.ws = ws;
       this.intentionalClose = false;
+      // Same reasoning as request(): a black-holed host leaves the handshake
+      // pending indefinitely, which would freeze the attach with no feedback.
+      const handshakeTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        this.closeSocket(true);
+        reject(new Error('远程会话连接超时'));
+      }, ATTACH_TIMEOUT_MS);
+      const settle = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(handshakeTimer);
+        fn(value);
+      };
 
       ws.addEventListener('message', (event) => {
         let message = null;
@@ -119,7 +170,7 @@ class RemoteApi {
         if (message.type === 'ready') {
           this.terminalId = message.terminalId;
           this.grouped = message.grouped || null;
-          if (!settled) { settled = true; resolve({ terminalId: message.terminalId }); }
+          settle(resolve, { terminalId: message.terminalId });
           return;
         }
         if (message.type === 'data') {
@@ -131,20 +182,21 @@ class RemoteApi {
           return;
         }
         if (message.type === 'error') {
-          if (!settled) { settled = true; reject(new Error(message.message || '远程连接失败')); }
+          settle(reject, new Error(message.message || '远程连接失败'));
         }
       });
 
       ws.addEventListener('close', () => {
         if (this.ws === ws) this.ws = null;
-        if (!settled) { settled = true; reject(new Error('远程连接已关闭')); return; }
+        if (!settled) { settle(reject, new Error('远程连接已关闭')); return; }
+        clearTimeout(handshakeTimer);
         // An unexpected drop (not our own detach) surfaces as an exit so the UI
         // shows the reconnect affordance instead of a silently frozen terminal.
         if (!this.intentionalClose) this.emitExit({ terminalId: this.terminalId, exitCode: null, signal: null });
       });
 
       ws.addEventListener('error', () => {
-        if (!settled) { settled = true; reject(new Error('远程连接错误')); }
+        settle(reject, new Error('远程连接错误'));
       });
     });
   }

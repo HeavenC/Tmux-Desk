@@ -51,6 +51,11 @@ const MESSAGES = {
     'source.reshareTitle': '允许经本机再分享给浏览器/其他设备',
     'source.reshareOn': '已开启再分享：本机的浏览器分享里可见此远程会话',
     'source.reshareOff': '未开启再分享（点击开启）',
+    'source.checking': '检测中…',
+    'source.onlineLatency': '在线 {ms} ms',
+    'source.unreachable': '连不上',
+    'source.unreachableHint': '连不上这台主机，检查地址是否变了或对方是否开着共享',
+    'source.loadingSessions': '正在载入远程会话…',
 
     'remote.addTitle': '添加远程主机',
     'remote.addSubtitle': '接管另一台运行 Tmux Desk 的机器上的 tmux 会话。',
@@ -536,6 +541,11 @@ const MESSAGES = {
     'source.reshareTitle': 'Allow re-sharing through this machine to browsers/other devices',
     'source.reshareOn': 'Re-sharing on: this remote appears in this machine’s browser share',
     'source.reshareOff': 'Re-sharing off (click to enable)',
+    'source.checking': 'checking…',
+    'source.onlineLatency': 'online {ms} ms',
+    'source.unreachable': 'unreachable',
+    'source.unreachableHint': 'Cannot reach this host — check the address or whether sharing is on there',
+    'source.loadingSessions': 'Loading remote sessions…',
 
     'remote.addTitle': 'Add remote host',
     'remote.addSubtitle': 'Take over tmux sessions on another machine running Tmux Desk.',

@@ -46,6 +46,11 @@ const state = {
   source: { kind: 'local', id: 'local' },
   remoteConnections: [],
   sourceStatus: 'online',
+  // Reachability of each saved remote host, keyed by connection id:
+  // { status: 'checking' | 'online' | 'offline', ms, error, at }. Filled by
+  // probeRemoteHosts() so the source popover can say which host is actually
+  // there before the user commits to a switch.
+  remoteProbes: new Map(),
   // Session snapshot health, pushed from the main process (see session-snapshot.js).
   snapshot: null,
 };
@@ -54,6 +59,7 @@ const systemTheme = window.matchMedia('(prefers-color-scheme: dark)');
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 let terminalView = null;
 let pollTimer = null;
+let lastOfflinePoll = 0;
 let selectionToken = 0;
 let sourceToken = 0;
 let tagActivationToken = 0;
@@ -1302,7 +1308,10 @@ function renderSessionList() {
   if (!groups.favorites.length && !groups.sessions.length) {
     const empty = document.createElement('div');
     empty.className = 'sidebar-empty';
-    empty.textContent = state.query ? t('session.noMatch') : t('session.none');
+    if (state.query) empty.textContent = t('session.noMatch');
+    else if (isRemoteActive() && state.sourceStatus === 'connecting') empty.textContent = t('source.loadingSessions');
+    else if (isRemoteActive() && state.sourceStatus === 'offline') empty.textContent = t('source.unreachableHint');
+    else empty.textContent = t('session.none');
     refs.sessionList.append(empty);
   }
   const attached = state.sessions.filter((session) => session.attached).length;
@@ -2366,7 +2375,12 @@ async function refreshSessions({ initial = false, notify = false, poll = false }
     // A source switch (or another concurrent refresh) happened while we awaited;
     // these results belong to the old source — drop them.
     if (token !== sourceToken) return;
-    if (isRemoteActive() && state.sourceStatus !== 'online') { state.sourceStatus = 'online'; renderSourceBar(); }
+    if (isRemoteActive()) {
+      // A successful listing is a stronger reachability signal than the probe;
+      // keep the popover's dot in sync with it.
+      state.remoteProbes.set(state.source.id, { status: 'online', ms: null, at: Date.now() });
+      if (state.sourceStatus !== 'online') { state.sourceStatus = 'online'; renderSourceBar(); }
+    }
     const previousId = state.selectedSessionId;
     state.sessions = sessions;
     if (previousId && !sessions.some((session) => session.id === previousId)) {
@@ -2398,9 +2412,13 @@ async function refreshSessions({ initial = false, notify = false, poll = false }
     }
     if (notify) toast(t('toast.sessionsRefreshed'));
   } catch (error) {
-    if (isRemoteActive() && state.sourceStatus !== 'offline') {
-      state.sourceStatus = 'offline';
-      renderSourceBar();
+    if (isRemoteActive()) {
+      state.remoteProbes.set(state.source.id, { status: 'offline', error: error?.message, at: Date.now() });
+      if (state.sourceStatus !== 'offline') {
+        state.sourceStatus = 'offline';
+        renderSourceBar();
+        renderSessionList();
+      }
     }
     // Background polls fail quietly (a remote blip shouldn't spam toasts); only
     // user-initiated refreshes surface the error.
@@ -3140,11 +3158,73 @@ function sessionApi() {
 
 function ensureRemoteApi(connection) {
   let remote = remoteApis.get(connection.id);
+  // The stored base/token can change under a live id (host moved networks, token
+  // rotated); a cached api built from the old values would keep talking to the
+  // dead address forever.
+  if (remote && (remote.base !== String(connection.base || '').replace(/\/+$/, '') || remote.token !== connection.token)) {
+    remote.dispose();
+    remoteApis.delete(connection.id);
+    remote = null;
+  }
   if (!remote) {
     remote = new RemoteApi({ base: connection.base, token: connection.token });
     remoteApis.set(connection.id, remote);
   }
   return remote;
+}
+
+// How long a reachability answer stays trustworthy. Short enough that a host
+// that just came back shows up on the next menu open, long enough that opening
+// the menu twice in a row does not re-ping.
+const PROBE_FRESH_MS = 8000;
+
+// Ping every saved host in parallel and repaint the rows as answers land, so the
+// popover opens instantly and then fills in "online 3 ms" / "unreachable"
+// instead of making the user discover a dead host by clicking it and waiting.
+function probeRemoteHosts({ force = false } = {}) {
+  const now = Date.now();
+  for (const connection of state.remoteConnections) {
+    const cached = state.remoteProbes.get(connection.id);
+    if (cached && cached.status === 'checking') continue;
+    if (!force && cached && now - cached.at < PROBE_FRESH_MS) continue;
+    state.remoteProbes.set(connection.id, { status: 'checking', at: now });
+    ensureRemoteApi(connection).probe().then((result) => {
+      state.remoteProbes.set(connection.id, {
+        status: result.ok ? 'online' : 'offline',
+        ms: result.ms,
+        sessions: result.sessions,
+        error: result.error,
+        at: Date.now(),
+      });
+      paintRemoteProbes();
+    });
+  }
+  paintRemoteProbes();
+}
+
+function probeStatusText(entry) {
+  if (!entry) return '';
+  if (entry.status === 'checking') return t('source.checking');
+  if (entry.status === 'online') {
+    return Number.isFinite(entry.ms) ? t('source.onlineLatency', { ms: entry.ms }) : t('source.online');
+  }
+  return t('source.unreachable');
+}
+
+// In-place update so a probe landing while the menu is open does not rebuild the
+// rows under the pointer.
+function paintRemoteProbes() {
+  const popover = refs.sourcePopover;
+  if (!popover || popover.classList.contains('hidden')) return;
+  for (const row of popover.querySelectorAll('.source-row[data-connection-id]')) {
+    const entry = state.remoteProbes.get(row.dataset.connectionId);
+    const dot = row.querySelector('.source-row-dot');
+    const status = row.querySelector('.source-row-status');
+    const main = row.querySelector('.source-row-main');
+    if (dot) dot.dataset.status = entry ? entry.status : 'unknown';
+    if (status) status.textContent = probeStatusText(entry);
+    if (main) main.title = entry?.error || '';
+  }
 }
 
 // Guard for mutating actions that only make sense on the local machine. Remote
@@ -3200,9 +3280,10 @@ function closeSourcePopover() {
   refs.sourceButton?.setAttribute('aria-expanded', 'false');
 }
 
-function sourceRow({ iconName, label, sublabel, active, onClick, onRemove, reshare, onToggleReshare }) {
+function sourceRow({ iconName, label, sublabel, active, connectionId, onClick, onRemove, reshare, onToggleReshare }) {
   const row = document.createElement('div');
   row.className = `source-row${active ? ' active' : ''}`;
+  if (connectionId) row.dataset.connectionId = connectionId;
   const main = document.createElement('button');
   main.type = 'button';
   main.className = 'source-row-main';
@@ -3216,7 +3297,23 @@ function sourceRow({ iconName, label, sublabel, active, onClick, onRemove, resha
   if (sublabel) {
     const sub = document.createElement('span');
     sub.className = 'source-row-sub';
-    sub.textContent = sublabel;
+    const subText = document.createElement('span');
+    subText.className = 'source-row-sub-text';
+    subText.textContent = sublabel;
+    sub.append(subText);
+    if (connectionId) {
+      const entry = state.remoteProbes.get(connectionId);
+      const dot = document.createElement('span');
+      dot.className = 'source-row-dot';
+      dot.dataset.status = entry ? entry.status : 'unknown';
+      const status = document.createElement('span');
+      status.className = 'source-row-status';
+      status.textContent = probeStatusText(entry);
+      // A probe uses a tighter deadline than a real switch, so an unreachable
+      // verdict is a hint, not a veto — the row stays clickable and says why.
+      if (entry?.error) main.title = entry.error;
+      sub.append(dot, status);
+    }
     text.append(sub);
   }
   main.append(text);
@@ -3268,6 +3365,7 @@ function renderSourcePopover() {
       label: connection.label,
       sublabel: connection.base,
       active: isRemoteActive() && state.source.id === connection.id,
+      connectionId: connection.id,
       onClick: () => switchSource({ kind: 'remote', id: connection.id }),
       onRemove: () => removeRemoteConnection(connection),
       reshare: connection.reshare === true,
@@ -3289,6 +3387,7 @@ function toggleSourcePopover() {
   refs.sourcePopover.classList.remove('hidden');
   refs.sourceButton.setAttribute('aria-expanded', 'true');
   placePopover(refs.sourcePopover, refs.sourceButton);
+  probeRemoteHosts();
 }
 
 async function switchSource(source) {
@@ -3398,6 +3497,9 @@ function bindEvents() {
     saveSnapshotSettings({ intervalMinutes: minutes });
   });
   refs.sourceButton.addEventListener('click', toggleSourcePopover);
+  // Warm the reachability check on hover so the menu is already decided by the
+  // time it opens (a LAN probe answers in ~30ms; the pointer takes longer).
+  refs.sourceButton.addEventListener('pointerenter', () => probeRemoteHosts());
   refs.remoteForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const submit = refs.remoteForm.querySelector('[type="submit"]');
@@ -3769,7 +3871,14 @@ async function initialize() {
     applyTagRailWidth();
     applyTagRailExpanded();
     await refreshSessions({ initial: true });
-    pollTimer = setInterval(() => { if (!document.hidden) refreshSessions({ poll: true }); }, 2000);
+    pollTimer = setInterval(() => {
+      if (document.hidden) return;
+      // An unreachable remote costs a full request timeout per poll; stop
+      // hammering it every 2s and retry on a slower beat instead.
+      if (isRemoteActive() && state.sourceStatus === 'offline' && Date.now() - lastOfflinePoll < 10000) return;
+      if (isRemoteActive() && state.sourceStatus === 'offline') lastOfflinePoll = Date.now();
+      refreshSessions({ poll: true });
+    }, 2000);
   } catch (error) {
     toast(friendlyError(error), 'error');
     renderWorkspace();
