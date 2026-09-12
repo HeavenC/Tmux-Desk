@@ -20,6 +20,11 @@ const {
   decodeImagePayload,
   MAX_IMAGE_BYTES,
 } = require('../main/clipboard-image');
+const {
+  stageUploadedFile,
+  decodeFilePayload,
+  MAX_UPLOAD_BYTES,
+} = require('../main/upload-file');
 const { TerminalManager } = require('../main/terminal-manager');
 const { TmuxService } = require('../main/tmux-service');
 
@@ -466,6 +471,31 @@ function startWebServer({
       if (!await requireScopedTarget(res, scope, target)) return;
       const { buffer, mime } = decodeImagePayload(body);
       const staged = await stageImageForPaste(buffer, mime);
+      return sendJson(res, 200, { ok: true, ...staged });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/upload-file') {
+      const body = await readJsonBody(req, Math.ceil(MAX_UPLOAD_BYTES * 1.4) + 4096);
+      const target = body.session;
+      const parsed = parseTarget(target);
+      if (parsed && parsed.kind === 'remote') {
+        // The path only means anything on the machine running the session, so a
+        // relayed target is staged by ITS host, not here.
+        if (scope !== null) return sendError(res, 403, '无权访问此会话');
+        const connection = await findReshareConnection(parsed.connId);
+        if (!connection) return sendError(res, 404, '远程会话不可用');
+        const staged = await upstreamRequest(connection, '/api/upload-file', {
+          method: 'POST',
+          body: { session: parsed.id, name: body.name, data: body.data },
+          timeout: 60000,
+        });
+        return sendJson(res, 200, { ok: true, path: staged.path, name: staged.name });
+      }
+      if (typeof target !== 'string' || !SESSION_TARGET.test(target)) {
+        return sendError(res, 400, '无效的会话');
+      }
+      if (!await requireScopedTarget(res, scope, target)) return;
+      const { buffer } = decodeFilePayload(body);
+      const staged = await stageUploadedFile(buffer, body.name);
       return sendJson(res, 200, { ok: true, ...staged });
     }
     return sendError(res, 404, '未知接口');

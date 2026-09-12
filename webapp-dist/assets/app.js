@@ -12012,7 +12012,8 @@ ${s3.join("\n")}
           "term.windowAria": "tmux \u7A97\u53E3",
           "quick.keyboard": "\u952E\u76D8",
           "quick.copy": "\u590D\u5236",
-          "quick.image": "\u56FE\u7247",
+          "quick.file": "\u6587\u4EF6",
+          "drop.hint": "\u677E\u5F00\u5373\u53EF\u4E0A\u4F20\u5E76\u5F15\u7528\u6587\u4EF6",
           "quick.edit": "\u7F16\u8F91",
           "quick.ballAria": "\u5FEB\u6377\u952E",
           "quick.editTitle": "\u7F16\u8F91\u5FEB\u6377\u680F",
@@ -12051,9 +12052,13 @@ ${s3.join("\n")}
           "toast.fullscreenSafariHint": "\u5728 Safari \u4E2D\u70B9\u51FB\u5206\u4EAB \u2192 \u6DFB\u52A0\u5230\u4E3B\u5C4F\u5E55\uFF0C\u5373\u53EF\u5168\u5C4F\u4F7F\u7528",
           "toast.imageSending": "\u6B63\u5728\u8D34\u56FE\u2026",
           "toast.imagePasted": "\u56FE\u7247\u5DF2\u7C98\u8D34\uFF0C\u82E5\u65E0\u53CD\u5E94\u8BF7\u624B\u52A8\u6309 \u2303V",
-          "toast.imagePathSent": "\u5DF2\u53D1\u9001\u56FE\u7247\u8DEF\u5F84",
           "toast.imageDecodeFailed": "\u65E0\u6CD5\u8BFB\u53D6\u8FD9\u5F20\u56FE\u7247",
-          "toast.imageFailed": "\u8D34\u56FE\u5931\u8D25\uFF1A",
+          "toast.fileSending": "\u6B63\u5728\u4E0A\u4F20\u6587\u4EF6\u2026",
+          "toast.filePathSent": "\u5DF2\u53D1\u9001\u6587\u4EF6\u8DEF\u5F84",
+          "toast.fileReadFailed": "\u65E0\u6CD5\u8BFB\u53D6\u8FD9\u4E2A\u6587\u4EF6",
+          "toast.fileTooLarge": "\u6587\u4EF6\u8FC7\u5927\uFF08\u4E0A\u9650 32 MB\uFF09",
+          "toast.fileFailed": "\u4E0A\u4F20\u5931\u8D25\uFF1A",
+          "toast.filesPathsSent": "\u5DF2\u53D1\u9001 {n} \u4E2A\u6587\u4EF6\u8DEF\u5F84",
           "error.badResponse": "\u670D\u52A1\u5668\u54CD\u5E94\u683C\u5F0F\u9519\u8BEF",
           "error.requestFailed": "\u8BF7\u6C42\u5931\u8D25",
           "error.loadFailed": "\u52A0\u8F7D\u5931\u8D25",
@@ -12101,7 +12106,8 @@ ${s3.join("\n")}
           "term.windowAria": "tmux window",
           "quick.keyboard": "Keyboard",
           "quick.copy": "Copy",
-          "quick.image": "Image",
+          "quick.file": "File",
+          "drop.hint": "Drop to upload and reference the files",
           "quick.edit": "Edit",
           "quick.ballAria": "Quick keys",
           "quick.editTitle": "Edit Quick Bar",
@@ -12140,9 +12146,13 @@ ${s3.join("\n")}
           "toast.fullscreenSafariHint": "In Safari, tap Share \u2192 Add to Home Screen to use fullscreen",
           "toast.imageSending": "Pasting image\u2026",
           "toast.imagePasted": "Image pasted \u2014 press \u2303V manually if nothing happened",
-          "toast.imagePathSent": "Sent the image path",
           "toast.imageDecodeFailed": "Couldn't read that image",
-          "toast.imageFailed": "Image paste failed: ",
+          "toast.fileSending": "Uploading file\u2026",
+          "toast.filePathSent": "Sent the file path",
+          "toast.fileReadFailed": "Couldn't read that file",
+          "toast.fileTooLarge": "File too large (32 MB max)",
+          "toast.fileFailed": "Upload failed: ",
+          "toast.filesPathsSent": "Sent {n} file paths",
           "error.badResponse": "Malformed server response",
           "error.requestFailed": "Request failed",
           "error.loadFailed": "Failed to load",
@@ -13791,6 +13801,7 @@ ${s3.join("\n")}
   }
   var PASTE_IMAGE_MAX_EDGE = 1568;
   var PASTE_IMAGE_QUALITY = 0.82;
+  var UPLOAD_MAX_BYTES = 32 * 1024 * 1024;
   function loadImageElement(file) {
     return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(file);
@@ -13832,43 +13843,117 @@ ${s3.join("\n")}
     });
     return { mime, data: await blobToBase64(blob) };
   }
+  function sendPathReference(filePath) {
+    sendWsInput(`@${filePath} `);
+  }
   async function pasteImageFile(file) {
-    if (!file || !state.currentSession) return;
-    showToast(t("toast.imageSending"));
-    try {
-      const { mime, data } = await encodeImageForPaste(file);
-      const staged = await fetchJson(apiUrl("/api/paste-image"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session: state.currentSession.id, mime, data })
-      });
-      if (staged.clipboard) {
-        sendWsInput("");
-        showToast(t("toast.imagePasted"));
-      } else if (staged.path) {
-        sendWsInput(`${staged.path} `);
-        showToast(t("toast.imagePathSent"));
-      } else {
-        showToast(t("toast.imageFailed"));
-      }
-    } catch (error) {
-      showToast(t("toast.imageFailed") + (error?.message || ""));
+    const { mime, data } = await encodeImageForPaste(file);
+    const staged = await fetchJson(apiUrl("/api/paste-image"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session: state.currentSession.id, mime, data })
+    });
+    if (staged.clipboard) {
+      sendWsInput("");
+      showToast(t("toast.imagePasted"));
+    } else if (staged.path) {
+      sendPathReference(staged.path);
+      showToast(t("toast.filePathSent"));
+    } else {
+      throw new Error(t("error.badResponse"));
     }
   }
-  function setupImagePaste() {
-    const input = el("image-input");
-    const button = el("image-btn");
+  function readFileBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",", 2)[1] || "");
+      reader.onerror = () => reject(new Error(t("toast.fileReadFailed")));
+      reader.readAsDataURL(file);
+    });
+  }
+  async function uploadPlainFile(file) {
+    if (file.size > UPLOAD_MAX_BYTES) throw new Error(t("toast.fileTooLarge"));
+    const data = await readFileBase64(file);
+    const staged = await fetchJson(apiUrl("/api/upload-file"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session: state.currentSession.id, name: file.name, data })
+    });
+    if (!staged.path) throw new Error(t("error.badResponse"));
+    sendPathReference(staged.path);
+    showToast(t("toast.filePathSent"));
+  }
+  async function sendPickedFile(file, { preferClipboard = true } = {}) {
+    if (!file || !state.currentSession) return;
+    const asImage = preferClipboard && typeof file.type === "string" && file.type.startsWith("image/");
+    showToast(t(asImage ? "toast.imageSending" : "toast.fileSending"));
+    try {
+      if (asImage) await pasteImageFile(file);
+      else await uploadPlainFile(file);
+      return true;
+    } catch (error) {
+      showToast(t("toast.fileFailed") + (error?.message || ""));
+      return false;
+    }
+  }
+  async function sendPickedFiles(files) {
+    const picked = files.filter(Boolean);
+    if (!picked.length || !state.currentSession) return;
+    for (const file of picked) {
+      const sent = await sendPickedFile(file, { preferClipboard: picked.length === 1 });
+      if (!sent) return;
+    }
+    if (picked.length > 1) showToast(t("toast.filesPathsSent", { n: picked.length }));
+  }
+  function setupFileDrop() {
+    const view = el("view-terminal");
+    const overlay = el("drop-overlay");
+    if (!view || !overlay) return;
+    let depth = 0;
+    const hasFiles = (event) => Array.from(event.dataTransfer?.types || []).includes("Files");
+    const reset = () => {
+      depth = 0;
+      overlay.hidden = true;
+    };
+    view.addEventListener("dragenter", (event) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      depth += 1;
+      overlay.hidden = false;
+    });
+    view.addEventListener("dragover", (event) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+    });
+    view.addEventListener("dragleave", () => {
+      depth = Math.max(0, depth - 1);
+      if (!depth) overlay.hidden = true;
+    });
+    view.addEventListener("drop", (event) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      reset();
+      sendPickedFiles(Array.from(event.dataTransfer.files || []));
+    });
+    window.addEventListener("dragend", reset);
+    window.addEventListener("blur", reset);
+  }
+  function setupFilePicker() {
+    const input = el("file-input");
+    const button = el("file-btn");
     if (!input || !button) return;
     button.addEventListener("click", () => input.click());
     input.addEventListener("change", () => {
-      const file = input.files && input.files[0];
+      const files = Array.from(input.files || []);
       input.value = "";
-      pasteImageFile(file);
+      sendPickedFiles(files);
     });
   }
   function setupToolbar() {
     bindTap(el("copy-btn"), openCopyOverlay);
-    setupImagePaste();
+    setupFilePicker();
+    setupFileDrop();
     el("keyboard-btn").addEventListener("click", toggleKeyboard);
     bindTap(el("quickedit-open"), openQuickEdit);
     renderQuickKeys();

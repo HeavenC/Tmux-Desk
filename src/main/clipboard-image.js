@@ -38,15 +38,19 @@ function run(file, args) {
    app — so os.tmpdir() pointed at a directory that no longer existed and the
    first mkdtemp died with ENOENT. A path we derive ourselves can't be poisoned
    by whatever launched us, and it also gives the fallback a stable location. */
-function pasteDir() {
+function cacheDir(name) {
   if (process.platform === 'darwin') {
-    return path.join(os.homedir(), 'Library', 'Caches', 'tmux-desk', 'pasted-images');
+    return path.join(os.homedir(), 'Library', 'Caches', 'tmux-desk', name);
   }
-  return path.join(os.homedir(), '.cache', 'tmux-desk', 'pasted-images');
+  return path.join(os.homedir(), '.cache', 'tmux-desk', name);
 }
 
-async function prunePasted(dir) {
-  const cutoff = Date.now() - KEEP_MS;
+function pasteDir() {
+  return cacheDir('pasted-images');
+}
+
+async function pruneOld(dir, keepMs) {
+  const cutoff = Date.now() - keepMs;
   const names = await fs.readdir(dir).catch(() => []);
   await Promise.all(names.map(async (name) => {
     const file = path.join(dir, name);
@@ -78,7 +82,7 @@ async function stageImageForPaste(buffer, mime) {
 
   const dir = pasteDir();
   await fs.mkdir(dir, { recursive: true });
-  await prunePasted(dir).catch(() => {});
+  await pruneOld(dir, KEEP_MS).catch(() => {});
 
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '');
   const base = `paste-${stamp}-${crypto.randomBytes(3).toString('hex')}`;
@@ -117,4 +121,4 @@ function decodeImagePayload({ data, mime }) {
   return { buffer, mime };
 }
 
-module.exports = { stageImageForPaste, decodeImagePayload, pasteDir, MAX_IMAGE_BYTES };
+module.exports = { stageImageForPaste, decodeImagePayload, pasteDir, cacheDir, pruneOld, MAX_IMAGE_BYTES };

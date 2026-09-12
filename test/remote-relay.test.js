@@ -73,6 +73,7 @@ function localServiceStub() {
 // web-server does, so device "B" can relay to it without a real tmux upstream.
 function startMockUpstream(token) {
   const selectCalls = [];
+  const uploadCalls = [];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://internal');
     res.setHeader('Content-Type', 'application/json');
@@ -100,10 +101,20 @@ function startMockUpstream(token) {
       req.on('end', () => { selectCalls.push(JSON.parse(body || '{}')); res.end(JSON.stringify({ ok: true })); });
       return;
     }
+    if (url.pathname === '/api/upload-file' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        const parsed = JSON.parse(body || '{}');
+        uploadCalls.push(parsed);
+        res.end(JSON.stringify({ ok: true, path: `/upstream/uploads/${parsed.name}`, name: parsed.name }));
+      });
+      return;
+    }
     res.writeHead(404); res.end(JSON.stringify({ ok: false, error: 'nope' }));
   });
   return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port, selectCalls }));
+    server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port, selectCalls, uploadCalls }));
   });
 }
 
@@ -154,6 +165,15 @@ test('web-server aggregates + proxies reshare-enabled remotes (REST relay)', asy
     assert.deepEqual(remoteKeys.keys, [{ type: 'text', label: 'A-key', text: 'from-A', enter: true }]);
     const localKeys = await (await fetch(`${b}/api/quick-keys?token=Btoken`)).json();
     assert.deepEqual(localKeys.keys, [{ type: 'preset', id: 'esc' }]);
+
+    // An upload for a relayed session is staged by the host that RUNS it: the
+    // path only means anything there, so it comes back from upstream verbatim.
+    const upload = await (await fetch(`${b}/api/upload-file?token=Btoken`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session: 'r:remote-c1:$7', name: 'notes.md', data: Buffer.from('hi').toString('base64') }),
+    })).json();
+    assert.equal(upload.path, '/upstream/uploads/notes.md');
+    assert.deepEqual(upstream.uploadCalls.at(-1), { session: '$7', name: 'notes.md', data: Buffer.from('hi').toString('base64') });
 
     // A scoped single-session share never sees relayed remotes.
     const share = createSessionShareToken('Btoken', 'local1');

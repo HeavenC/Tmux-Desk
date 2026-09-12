@@ -1766,16 +1766,26 @@ function bindTap(button, handler) {
   button.addEventListener('click', () => handler());
 }
 
-/* ---- Paste a photo into the session -------------------------------------
-   There is no escape sequence that carries image bytes into a pane, so this
-   reproduces exactly what a desktop does: the image goes onto the *session
-   host's* system clipboard (POST /api/paste-image), then \x16 goes down the
-   normal input path, and whatever is in the foreground — Claude Code, say —
-   reads the clipboard the way it would for a local ⌃V. */
+/* ---- Send a photo or a file into the session -----------------------------
+   No escape sequence carries file bytes into a pane, so both routes upload to
+   the *session host* first and then type something the foreground program can
+   act on.
+
+   Images reproduce what a desktop does: the picture goes onto that host's
+   system clipboard (POST /api/paste-image) and \x16 goes down the normal input
+   path, so Claude Code — or whatever is in the foreground — reads it exactly as
+   it would a local ⌃V.
+
+   Everything else is staged as a file (POST /api/upload-file) and its absolute
+   path is typed as `@<path>`, the reference form agents expect. Images fall
+   back to the same `@<path>` when the clipboard route isn't available. */
 
 // Claude's own long-edge cap; anything larger is bytes on the wire for nothing.
 const PASTE_IMAGE_MAX_EDGE = 1568;
 const PASTE_IMAGE_QUALITY = 0.82;
+// Mirrors MAX_UPLOAD_BYTES on the host; checked here so a 200MB pick fails
+// instantly instead of after base64-ing it onto the wire.
+const UPLOAD_MAX_BYTES = 32 * 1024 * 1024;
 
 function loadImageElement(file) {
   return new Promise((resolve, reject) => {
@@ -1819,51 +1829,146 @@ async function encodeImageForPaste(file) {
   return { mime, data: await blobToBase64(blob) };
 }
 
+// Type an uploaded file's absolute path as an agent-style reference. The
+// trailing space closes the token so the next keystroke starts a new word.
+function sendPathReference(filePath) {
+  sendWsInput(`@${filePath} `);
+}
+
 async function pasteImageFile(file) {
-  if (!file || !state.currentSession) return;
-  showToast(t('toast.imageSending'));
-  try {
-    const { mime, data } = await encodeImageForPaste(file);
-    const staged = await fetchJson(apiUrl('/api/paste-image'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session: state.currentSession.id, mime, data }),
-    });
-    if (staged.clipboard) {
-      sendWsInput('\x16');
-      showToast(t('toast.imagePasted'));
-    } else if (staged.path) {
-      // No clipboard on that host — type the absolute path instead. Agents read
-      // an image path just as happily, and the file stays put for a day.
-      sendWsInput(`${staged.path} `);
-      showToast(t('toast.imagePathSent'));
-    } else {
-      showToast(t('toast.imageFailed'));
-    }
-  } catch (error) {
-    showToast(t('toast.imageFailed') + (error?.message || ''));
+  const { mime, data } = await encodeImageForPaste(file);
+  const staged = await fetchJson(apiUrl('/api/paste-image'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: state.currentSession.id, mime, data }),
+  });
+  if (staged.clipboard) {
+    sendWsInput('\x16');
+    showToast(t('toast.imagePasted'));
+  } else if (staged.path) {
+    // No clipboard on that host — reference the absolute path instead. Agents
+    // read an image path just as happily, and the file stays put for a day.
+    sendPathReference(staged.path);
+    showToast(t('toast.filePathSent'));
+  } else {
+    throw new Error(t('error.badResponse'));
   }
 }
 
-function setupImagePaste() {
-  const input = el('image-input');
-  const button = el('image-btn');
+function readFileBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    // readAsDataURL, not btoa over the bytes: btoa needs a binary string and
+    // building one from a multi-MB buffer blows the argument limit.
+    reader.onload = () => resolve(String(reader.result).split(',', 2)[1] || '');
+    reader.onerror = () => reject(new Error(t('toast.fileReadFailed')));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadPlainFile(file) {
+  if (file.size > UPLOAD_MAX_BYTES) throw new Error(t('toast.fileTooLarge'));
+  const data = await readFileBase64(file);
+  const staged = await fetchJson(apiUrl('/api/upload-file'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session: state.currentSession.id, name: file.name, data }),
+  });
+  if (!staged.path) throw new Error(t('error.badResponse'));
+  sendPathReference(staged.path);
+  showToast(t('toast.filePathSent'));
+}
+
+async function sendPickedFile(file, { preferClipboard = true } = {}) {
+  if (!file || !state.currentSession) return;
+  // Images keep the clipboard route (a pasted picture is what an agent wants to
+  // *see*); anything else can only be referenced by path. A multi-file drop
+  // can't use the clipboard at all — it holds one picture.
+  const asImage = preferClipboard && typeof file.type === 'string' && file.type.startsWith('image/');
+  showToast(t(asImage ? 'toast.imageSending' : 'toast.fileSending'));
+  try {
+    if (asImage) await pasteImageFile(file);
+    else await uploadPlainFile(file);
+    return true;
+  } catch (error) {
+    showToast(t('toast.fileFailed') + (error?.message || ''));
+    return false;
+  }
+}
+
+/* Upload one after another: each one types its own `@path` into the prompt, and
+   interleaving those writes would shuffle the references together. */
+async function sendPickedFiles(files) {
+  const picked = files.filter(Boolean);
+  if (!picked.length || !state.currentSession) return;
+  for (const file of picked) {
+    const sent = await sendPickedFile(file, { preferClipboard: picked.length === 1 });
+    if (!sent) return;
+  }
+  if (picked.length > 1) showToast(t('toast.filesPathsSent', { n: picked.length }));
+}
+
+/* Desktop browsers can drop files straight onto the terminal. The drop still
+   uploads — the browser never reveals a local path — so it lands in exactly the
+   same place the picker does. */
+function setupFileDrop() {
+  const view = el('view-terminal');
+  const overlay = el('drop-overlay');
+  if (!view || !overlay) return;
+  // dragenter/dragleave fire for every child the pointer crosses, so a counter
+  // is what keeps the overlay from flickering mid-drag.
+  let depth = 0;
+  const hasFiles = (event) => Array.from(event.dataTransfer?.types || []).includes('Files');
+  const reset = () => { depth = 0; overlay.hidden = true; };
+
+  view.addEventListener('dragenter', (event) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    depth += 1;
+    overlay.hidden = false;
+  });
+  view.addEventListener('dragover', (event) => {
+    if (!hasFiles(event)) return;
+    // Without preventDefault on dragover the browser refuses the drop and
+    // navigates to the file instead.
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  });
+  view.addEventListener('dragleave', () => {
+    depth = Math.max(0, depth - 1);
+    if (!depth) overlay.hidden = true;
+  });
+  view.addEventListener('drop', (event) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    reset();
+    sendPickedFiles(Array.from(event.dataTransfer.files || []));
+  });
+  // A drag that ends outside the window never fires drop, and dragend doesn't
+  // reach us at all when the source is another app — so also clear on leaving.
+  window.addEventListener('dragend', reset);
+  window.addEventListener('blur', reset);
+}
+
+function setupFilePicker() {
+  const input = el('file-input');
+  const button = el('file-btn');
   if (!input || !button) return;
   // A plain click keeps the tap a genuine user gesture, which iOS requires
-  // before it will open the photo picker (same reason keyboard-btn avoids
-  // bindTap).
+  // before it will open the picker (same reason keyboard-btn avoids bindTap).
   button.addEventListener('click', () => input.click());
   input.addEventListener('change', () => {
-    const file = input.files && input.files[0];
-    // Clear first: picking the same photo twice otherwise fires no change event.
+    const files = Array.from(input.files || []);
+    // Clear first: picking the same file twice otherwise fires no change event.
     input.value = '';
-    pasteImageFile(file);
+    sendPickedFiles(files);
   });
 }
 
 function setupToolbar() {
   bindTap(el('copy-btn'), openCopyOverlay);
-  setupImagePaste();
+  setupFilePicker();
+  setupFileDrop();
   // A plain click (not bindTap) keeps the tap a genuine user gesture so the
   // focus() inside toggleKeyboard reliably raises the soft keyboard; bindTap's
   // touchstart preventDefault is what made the first tap silently fail.
