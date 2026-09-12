@@ -121,6 +121,13 @@ const MESSAGES = {
 
     'terminal.aria': '终端',
     'terminal.connectionEnded': '连接已结束',
+    'terminal.dropHint': '松开即可把文件路径插入终端',
+    'terminal.dropUploading': '正在上传到远程主机…',
+    'terminal.dropUploaded': '已上传 {n} 个文件',
+    'terminal.dropNoSession': '请先打开一个会话',
+    'terminal.dropNoPath': '无法获取该文件的路径',
+    'terminal.dropReadFailed': '无法读取这个文件',
+    'terminal.dropTooLarge': '文件过大（上限 32 MB）',
 
     'menu.connectSession': '连接会话',
     'menu.unfavorite': '取消收藏',
@@ -611,6 +618,13 @@ const MESSAGES = {
 
     'terminal.aria': 'Terminal',
     'terminal.connectionEnded': 'Connection ended',
+    'terminal.dropHint': 'Drop to insert the file path',
+    'terminal.dropUploading': 'Uploading to the remote host…',
+    'terminal.dropUploaded': 'Uploaded {n} file(s)',
+    'terminal.dropNoSession': 'Open a session first',
+    'terminal.dropNoPath': "Couldn't resolve that file's path",
+    'terminal.dropReadFailed': "Couldn't read that file",
+    'terminal.dropTooLarge': 'File too large (32 MB max)',
 
     'menu.connectSession': 'Connect session',
     'menu.unfavorite': 'Unfavorite',

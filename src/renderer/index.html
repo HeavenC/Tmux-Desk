@@ -234,6 +234,11 @@
                             ><button id="reconnectButton" data-i18n="action.reconnect">重新连接</button>
                         </div>
                     </div>
+                    <!-- Drag & drop target for files. Hidden until a drag that
+                         actually carries files enters the stage. -->
+                    <div class="terminal-drop hidden" id="terminalDrop" aria-hidden="true">
+                        <p class="terminal-drop-card" data-i18n="terminal.dropHint">松开即可把文件路径插入终端</p>
+                    </div>
                     <div class="empty-state" id="emptyState">
                         <div class="empty-illustration"><span>&gt;_</span></div>
                         <h2 id="emptyTitle" data-i18n="empty.workspaceTitle">你的 tmux 工作台</h2>

@@ -12,6 +12,7 @@ const {
   normalizeQuickKeyEntry,
 } = require('../shared/quick-key');
 const { createSpring, createVelocityTracker, project, rubberband } = require('../shared/spring');
+const { pathReference } = require('../shared/terminal-path');
 const { t, applyStaticI18n, setLocale, getLocale, detectLocale } = require('./i18n');
 
 const LIST_REFRESH_MS = 15000;
@@ -1829,10 +1830,9 @@ async function encodeImageForPaste(file) {
   return { mime, data: await blobToBase64(blob) };
 }
 
-// Type an uploaded file's absolute path as an agent-style reference. The
-// trailing space closes the token so the next keystroke starts a new word.
+// Type an uploaded file's absolute path as an agent-style reference.
 function sendPathReference(filePath) {
-  sendWsInput(`@${filePath} `);
+  sendWsInput(pathReference(filePath));
 }
 
 async function pasteImageFile(file) {

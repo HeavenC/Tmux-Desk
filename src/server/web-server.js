@@ -483,11 +483,22 @@ function startWebServer({
         if (scope !== null) return sendError(res, 403, '无权访问此会话');
         const connection = await findReshareConnection(parsed.connId);
         if (!connection) return sendError(res, 404, '远程会话不可用');
-        const staged = await upstreamRequest(connection, '/api/upload-file', {
-          method: 'POST',
-          body: { session: parsed.id, name: body.name, data: body.data },
-          timeout: 60000,
-        });
+        let staged;
+        try {
+          staged = await upstreamRequest(connection, '/api/upload-file', {
+            method: 'POST',
+            body: { session: parsed.id, name: body.name, data: body.data },
+            timeout: 60000,
+          });
+        } catch (error) {
+          // A host that predates this endpoint answers the generic 404 body, and
+          // relaying "未知接口" verbatim reads like a bug in the app rather than
+          // the version skew it is.
+          if (/未知接口|404/.test(error?.message || '')) {
+            throw new Error(`远程主机「${connection.label || connection.base}」版本较旧，不支持文件上传`);
+          }
+          throw error;
+        }
         return sendJson(res, 200, { ok: true, path: staged.path, name: staged.name });
       }
       if (typeof target !== 'string' || !SESSION_TARGET.test(target)) {

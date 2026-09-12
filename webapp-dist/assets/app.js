@@ -11968,6 +11968,21 @@ ${s3.join("\n")}
     }
   });
 
+  // src/shared/terminal-path.js
+  var require_terminal_path = __commonJS({
+    "src/shared/terminal-path.js"(exports, module) {
+      "use strict";
+      var NEEDS_ESCAPE = /[\s"'\\$`&|;<>()*?[\]{}~!#]/g;
+      function escapePathForTerminal(filePath) {
+        return String(filePath || "").replace(NEEDS_ESCAPE, (char) => `\\${char}`);
+      }
+      function pathReference2(filePath) {
+        return `@${escapePathForTerminal(filePath)} `;
+      }
+      module.exports = { escapePathForTerminal, pathReference: pathReference2 };
+    }
+  });
+
   // src/webapp/i18n.js
   var require_i18n = __commonJS({
     "src/webapp/i18n.js"(exports, module) {
@@ -12212,6 +12227,7 @@ ${s3.join("\n")}
     normalizeQuickKeyEntry
   } = require_quick_key();
   var { createSpring, createVelocityTracker, project, rubberband } = require_spring();
+  var { pathReference } = require_terminal_path();
   var { t, applyStaticI18n, setLocale, getLocale, detectLocale } = require_i18n();
   var LIST_REFRESH_MS = 15e3;
   var PING_INTERVAL_MS = 25e3;
@@ -13844,7 +13860,7 @@ ${s3.join("\n")}
     return { mime, data: await blobToBase64(blob) };
   }
   function sendPathReference(filePath) {
-    sendWsInput(`@${filePath} `);
+    sendWsInput(pathReference(filePath));
   }
   async function pasteImageFile(file) {
     const { mime, data } = await encodeImageForPaste(file);

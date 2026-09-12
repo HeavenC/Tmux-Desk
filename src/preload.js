@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 function on(channel, listener) {
   const wrapped = (_event, payload) => listener(payload);
@@ -44,6 +44,9 @@ contextBridge.exposeInMainWorld('tmuxDesk', Object.freeze({
   openFile: (filePath) => ipcRenderer.invoke('files:open', filePath),
   openFileWith: (filePath) => ipcRenderer.invoke('files:open-with', filePath),
   openExternalUrl: (url) => ipcRenderer.invoke('files:open-url', url),
+  // Electron 32 removed File.path; webUtils is the only way a renderer can learn
+  // where a dropped file actually lives, and it has to be called from preload.
+  getFilePath: (file) => { try { return webUtils.getPathForFile(file); } catch { return ''; } },
   revealFile: (filePath) => ipcRenderer.invoke('files:reveal', filePath),
   attachTerminal: (payload) => ipcRenderer.invoke('terminal:attach', payload),
   writeTerminal: (payload) => ipcRenderer.invoke('terminal:write', payload),

@@ -4,6 +4,7 @@ const { searchCommands } = require('./command-palette');
 const { filterAndGroupSessions, sessionsForView } = require('../shared/session-model');
 const { adjacentTagId } = require('../shared/tag-model');
 const { resolveTerminalFileReference } = require('../shared/terminal-file-link');
+const { pathReference } = require('../shared/terminal-path');
 const { DEFAULT_TMUX_SETTINGS, TMUX_SETTING_FIELDS, parseAdvancedConfig } = require('../shared/tmux-settings');
 const { DEFAULT_TERMINAL_APPEARANCE, normalizeTerminalAppearance } = require('../shared/terminal-appearance');
 const { DEFAULT_PASTE_GUARD, normalizePasteGuard } = require('../shared/paste-guard');
@@ -72,7 +73,7 @@ function cacheElements() {
     'remoteModal', 'remoteForm', 'remoteLabelInput', 'remoteUrlInput', 'remoteTokenInput',
     'tmuxStatusDot', 'tmuxStatusText', 'themeButton', 'settingsButton', 'activeSessionName',
     'activeSessionPath', 'attachedBadge', 'workspaceViewBadge', 'panePickerWrap', 'panePicker', 'panePickerIcon',
-    'sessionMenuButton', 'sessionTabs', 'terminalSurface', 'terminalMount', 'paneCloseLayer', 'terminalReconnect',
+    'sessionMenuButton', 'sessionTabs', 'terminalStage', 'terminalSurface', 'terminalMount', 'paneCloseLayer', 'terminalReconnect', 'terminalDrop',
     'globalSearch', 'globalSearchIcon', 'globalSearchInput', 'globalSearchResults', 'globalSearchStatus',
     'reconnectButton', 'emptyState', 'emptyTitle', 'emptyMessage', 'emptyActions', 'emptyNewButton',
     'emptyInstallButton', 'emptyRefreshButton', 'emptyAllButton', 'workspaceStatus', 'commandHint', 'themePopover', 'contextMenu', 'toastStack',
@@ -2005,6 +2006,106 @@ function beginPaneBorderDrag(border, event) {
   document.addEventListener('mouseup', onUp, true);
 }
 
+/* ---- Drag & drop a file onto the terminal --------------------------------
+   What gets typed is always `@<absolute path>`, but where that path comes from
+   depends on who runs the session. A local session shares this filesystem, so
+   the file is already reachable and only its real path is needed — no copy, no
+   upload. A remote takeover does not: the agent lives on the other machine, so
+   the bytes travel to its host first and the path that gets typed is the one it
+   staged them at. */
+
+// Mirrors MAX_UPLOAD_BYTES on the receiving host.
+const DROP_UPLOAD_MAX_BYTES = 32 * 1024 * 1024;
+
+function dragCarriesFiles(event) {
+  return Array.from(event.dataTransfer?.types || []).includes('Files');
+}
+
+function readFileBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    // readAsDataURL, not btoa over the bytes: btoa needs a binary string and
+    // building one from a multi-MB buffer blows the argument limit.
+    reader.onload = () => resolve(String(reader.result).split(',', 2)[1] || '');
+    reader.onerror = () => reject(new Error(t('terminal.dropReadFailed')));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function dropFilesOnTerminal(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  if (!state.selectedSessionId || !terminalView) {
+    toast(t('terminal.dropNoSession'), 'error');
+    return;
+  }
+  const remote = isRemoteActive();
+  const paths = [];
+  if (remote) toast(t('terminal.dropUploading'));
+  try {
+    for (const file of files) {
+      if (!remote) {
+        // Electron 32 removed File.path; preload's webUtils bridge is the only
+        // way to learn where a dropped file actually lives.
+        const filePath = localApi.getFilePath ? localApi.getFilePath(file) : '';
+        if (!filePath) throw new Error(t('terminal.dropNoPath'));
+        paths.push(filePath);
+        continue;
+      }
+      if (file.size > DROP_UPLOAD_MAX_BYTES) throw new Error(t('terminal.dropTooLarge'));
+      const staged = await sessionApi().uploadFile({ name: file.name, data: await readFileBase64(file) });
+      paths.push(staged.path);
+    }
+  } catch (error) {
+    toast(friendlyError(error), 'error');
+    return;
+  }
+  terminalView.focus();
+  for (const filePath of paths) terminalView.sendInput(pathReference(filePath));
+  if (remote) toast(t('terminal.dropUploaded', { n: paths.length }));
+}
+
+function setupTerminalFileDrop() {
+  const stage = refs.terminalStage;
+  const overlay = refs.terminalDrop;
+  if (!stage || !overlay) return;
+  // dragenter/dragleave fire for every child the pointer crosses, so a counter
+  // is what keeps the overlay from flickering mid-drag.
+  let depth = 0;
+  const reset = () => { depth = 0; overlay.classList.add('hidden'); };
+
+  stage.addEventListener('dragenter', (event) => {
+    if (!dragCarriesFiles(event)) return;
+    event.preventDefault();
+    depth += 1;
+    if (state.selectedSessionId) overlay.classList.remove('hidden');
+  });
+  stage.addEventListener('dragover', (event) => {
+    if (!dragCarriesFiles(event)) return;
+    // Without preventDefault here the drop is refused outright.
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  });
+  stage.addEventListener('dragleave', () => {
+    depth = Math.max(0, depth - 1);
+    if (!depth) overlay.classList.add('hidden');
+  });
+  stage.addEventListener('drop', (event) => {
+    if (!dragCarriesFiles(event)) return;
+    event.preventDefault();
+    reset();
+    dropFilesOnTerminal(event.dataTransfer.files);
+  });
+  // A drag that ends outside the window never fires drop, and a drag started in
+  // another app sends us no dragend either — so also clear on losing focus.
+  window.addEventListener('dragend', reset);
+  window.addEventListener('blur', reset);
+  // Anywhere else in the window, a dropped file would make Chromium navigate to
+  // it and replace the whole app with a file:// view.
+  window.addEventListener('dragover', (event) => { if (dragCarriesFiles(event)) event.preventDefault(); });
+  window.addEventListener('drop', (event) => { if (dragCarriesFiles(event)) event.preventDefault(); });
+}
+
 function setupPaneMouse() {
   const mount = refs.terminalMount;
   if (!mount) return;
@@ -3457,6 +3558,7 @@ async function toggleRemoteReshare(connection) {
 
 function bindEvents() {
   setupPaneMouse();
+  setupTerminalFileDrop();
   setupGlobalSearch();
   refs.refreshButton.addEventListener('click', () => refreshSessions({ notify: true }));
   refs.emptyRefreshButton.addEventListener('click', () => refreshSessions({ initial: !state.systemStatus.installed, notify: true }));

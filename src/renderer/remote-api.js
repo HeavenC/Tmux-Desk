@@ -16,6 +16,9 @@
 const REQUEST_TIMEOUT_MS = 5000;
 const PROBE_TIMEOUT_MS = 2000;
 const ATTACH_TIMEOUT_MS = 8000;
+// An upload is bytes on the wire, not a status call — the short request deadline
+// would abort a few-MB file on any non-LAN link.
+const UPLOAD_TIMEOUT_MS = 60000;
 
 function nowMs() {
   return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
@@ -37,6 +40,7 @@ class RemoteApi {
     this.ws = null;
     this.terminalId = null;
     this.grouped = null;
+    this.sessionId = null;
     this.lastDetail = { windows: [], panes: [] };
     this.intentionalClose = false;
   }
@@ -134,6 +138,10 @@ class RemoteApi {
 
   attachTerminal({ sessionId, cols, rows } = {}) {
     this.closeSocket(true);
+    // Remembered for uploads: a dropped file has to be staged on the machine
+    // that RUNS this session, addressed by the id this host knows it under
+    // (which may itself be a relayed `r:<conn>:$n`).
+    this.sessionId = sessionId || null;
     return new Promise((resolve, reject) => {
       let settled = false;
       // restUrl builds a fully-formed http(s) URL with token + query; only the
@@ -238,7 +246,22 @@ class RemoteApi {
     this.closeSocket(true);
     this.terminalId = null;
     this.grouped = null;
+    this.sessionId = null;
     return true;
+  }
+
+  // Drag & drop of a local file onto a REMOTE session: the file exists on this
+  // machine, the agent runs on the other one, so the bytes have to travel and
+  // the path that gets typed is the remote host's.
+  async uploadFile({ name, data } = {}) {
+    if (!this.sessionId) throw new Error('远程会话尚未连接');
+    const payload = await this.request('/api/upload-file', {
+      method: 'POST',
+      body: { session: this.sessionId, name, data },
+      timeout: UPLOAD_TIMEOUT_MS,
+    });
+    if (!payload.path) throw new Error('远程主机未返回文件路径');
+    return { path: payload.path, name: payload.name };
   }
 
   closeSocket(intentional) {
