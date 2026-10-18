@@ -48,7 +48,8 @@ jobs:
             os: macos-14
             script: release:mac
           - name: macOS x64
-            os: macos-13
+            # Intel runner — node-pty's native module is built for the runner's arch.
+            os: macos-15-intel
             script: release:mac:x64
           - name: Windows x64
             os: windows-latest
