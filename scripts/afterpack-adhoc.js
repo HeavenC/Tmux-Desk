@@ -91,7 +91,11 @@ exports.default = async function afterPack(context) {
     // ── Pass 1: leaf Mach-O binaries ──────────────────────────────────────
     console.log('  • scanning for leaf Mach-O binaries …');
     console.time('  • scan');
-    const leafBinaries = collectLeafBinaries(appPath);
+    // Deepest first: codesign seals a framework's main binary over its nested
+    // code (e.g. Electron Framework → Helpers/chrome_crashpad_handler), so the
+    // nested binaries must already be signed when it gets there.
+    const depth = (p) => p.split(path.sep).length;
+    const leafBinaries = collectLeafBinaries(appPath).sort((a, b) => depth(b) - depth(a));
     console.timeEnd('  • scan');
     console.log(`    found ${leafBinaries.length} leaf binaries`);
 
