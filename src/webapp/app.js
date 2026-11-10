@@ -2,6 +2,7 @@ const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
 const { ClipboardAddon } = require('@xterm/addon-clipboard');
 const { liveCountForView, mobileSessionsForView } = require('./mobile-session-model');
+const { sessionMatchesQuery } = require('../shared/session-model');
 const {
   NAMED_KEYS,
   MODIFIERS,
@@ -89,6 +90,9 @@ const state = {
   listView: { kind: 'all' },
   // Host filter: null = every host, 'local' = 本机, or a relayed source id.
   hostFilter: null,
+  // Search box text. Narrows the list within the active host/view filters; the
+  // chip counts stay totals, as the desktop sidebar's do.
+  query: '',
   currentSession: null,
   grouped: null,
   windows: [],
@@ -132,6 +136,8 @@ function applySharedSessionMode() {
   document.querySelectorAll('.shared-mode-badge').forEach((badge) => { badge.hidden = !shared; });
   el('workspace-filters').hidden = shared;
   if (el('host-filters')) el('host-filters').hidden = shared;
+  // A share link carries exactly one session; there is nothing to search.
+  el('list-search').hidden = shared;
   el('back-btn').hidden = shared;
   if (shared) closeSessionTagsModal();
 }
@@ -324,7 +330,49 @@ function ensureHostFilter() {
 }
 
 function currentListSessions() {
-  return mobileSessionsForView(hostFilteredSessions(), state.preferences, state.listView);
+  return mobileSessionsForView(hostFilteredSessions(), state.preferences, state.listView)
+    .filter((session) => sessionMatchesQuery(session, state.query));
+}
+
+function setSearchQuery(value) {
+  state.query = String(value ?? '');
+  const input = el('session-search');
+  if (input.value !== state.query) input.value = state.query;
+  el('session-search-clear').hidden = !state.query;
+  setListState({ loading: false, error: null, sessions: currentListSessions() });
+}
+
+function setupSessionSearch() {
+  const input = el('session-search');
+  input.addEventListener('input', () => setSearchQuery(input.value));
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      // First Escape clears, second one leaves the field.
+      event.preventDefault();
+      if (input.value) setSearchQuery('');
+      else input.blur();
+    } else if (event.key === 'Enter') {
+      // The phone keyboard's "Search" key: the list is already filtered live,
+      // so this just puts the keyboard away to reveal the results.
+      event.preventDefault();
+      input.blur();
+    }
+  });
+  bindTap(el('session-search-clear'), () => {
+    setSearchQuery('');
+    input.focus();
+  });
+  // "/" jumps to the box from anywhere on the list (desktop browsers), the
+  // way most web lists do — ⌘F/Ctrl+F stays the browser's own find.
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== '/' || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (state.currentView !== 'list' || state.share) return;
+    const target = event.target;
+    if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+    event.preventDefault();
+    input.focus();
+    input.select();
+  });
 }
 
 function sessionsForShare(sessions) {
@@ -369,6 +417,8 @@ function setListState({ loading = false, error = null, sessions = null }) {
     const emptyText = el('list-empty').querySelector('p');
     emptyText.textContent = state.share
       ? t('list.emptyShared')
+      : state.query.trim()
+        ? t('list.noMatch', { query: state.query.trim() })
       : state.listView.kind === 'all'
         ? t('list.emptyAll')
         : t('list.emptyFiltered', { label: currentListLabel() });
@@ -2170,6 +2220,7 @@ function bootstrap() {
   applyTheme(storedTheme());
   loadQuickKeys();
   setupStaticHandlers();
+  setupSessionSearch();
   setupToolbar();
   setupTouchScroll();
   setupEdgeSwipeBack();

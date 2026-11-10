@@ -141,3 +141,18 @@ test('shared-session mode forwards only its signed share credential and exposes 
   assert.match(i18n, /'share\.badge': '共享会话'/);
   assert.match(i18n, /'share\.badge': 'Shared session'/);
 });
+
+test('web list search reuses the desktop session-search predicate', async () => {
+  const [app, html, css] = await Promise.all([
+    readFile(join(webappDir, 'app.js'), 'utf8'),
+    readFile(join(webappDir, 'index.html'), 'utf8'),
+    readFile(join(webappDir, 'styles.css'), 'utf8'),
+  ]);
+  assert.match(app, /const \{ sessionMatchesQuery \} = require\(['"]\.\.\/shared\/session-model['"]\)/);
+  assert.match(app, /function currentListSessions\(\)\s*\{[\s\S]{0,200}sessionMatchesQuery\(session, state\.query\)/);
+  assert.match(html, /<input id="session-search"[^>]*type="search"/);
+  // iOS zooms into any focused field below 16px.
+  assert.match(css, /\.list-search-input\s*\{[^}]*font-size:\s*16px/s);
+  assert.match(css, /\.list-search\[hidden\]\s*\{\s*display:\s*none/);
+  assert.match(app, /el\('list-search'\)\.hidden = shared/);
+});

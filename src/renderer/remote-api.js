@@ -13,6 +13,8 @@
 // fetch would hang for the OS TCP timeout (~75s on macOS). Everything here is
 // therefore bounded by an explicit AbortController deadline, the same way the
 // web-server's own upstream relay already is.
+const { normalizeSessionTags, normalizeTags } = require('../shared/tag-model');
+
 const REQUEST_TIMEOUT_MS = 5000;
 const PROBE_TIMEOUT_MS = 2000;
 const ATTACH_TIMEOUT_MS = 8000;
@@ -28,6 +30,30 @@ function toWsBase(base) {
   if (/^https:/i.test(base)) return `wss${base.slice('https'.length)}`;
   if (/^http:/i.test(base)) return `ws${base.slice('http'.length)}`;
   return base;
+}
+
+function stringList(value) {
+  return Array.isArray(value) ? value.filter((item) => typeof item === 'string') : [];
+}
+
+// The remote host's own tags / favorites / tab order, as its /api/sessions
+// sends them. Its sessions were tagged over THERE, keyed by its session names,
+// so they are the only config that can filter its list. Normalized with the same
+// rules this host applies to its own preferences: the payload comes from another
+// machine (possibly an older build), and a tag color outside the palette would
+// otherwise reach a CSS custom property.
+function normalizeViewPreferences(value) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const tags = normalizeTags(source.tags);
+  const rawOrders = source.tabOrders && typeof source.tabOrders === 'object' && !Array.isArray(source.tabOrders)
+    ? source.tabOrders
+    : {};
+  return {
+    tags,
+    sessionTags: normalizeSessionTags(source.sessionTags, tags),
+    favorites: stringList(source.favorites),
+    tabOrders: Object.fromEntries(Object.entries(rawOrders).map(([view, names]) => [view, stringList(names)])),
+  };
 }
 
 class RemoteApi {
@@ -123,8 +149,15 @@ class RemoteApi {
   }
 
   async listSessions() {
+    return (await this.listSessionsWithPreferences()).sessions;
+  }
+
+  async listSessionsWithPreferences() {
     const payload = await this.request('/api/sessions');
-    return Array.isArray(payload.sessions) ? payload.sessions : [];
+    return {
+      sessions: Array.isArray(payload.sessions) ? payload.sessions : [],
+      preferences: normalizeViewPreferences(payload.preferences),
+    };
   }
 
   async getSessionDetail(target) {
@@ -292,4 +325,4 @@ class RemoteApi {
   }
 }
 
-module.exports = { RemoteApi, toWsBase };
+module.exports = { RemoteApi, normalizeViewPreferences, toWsBase };

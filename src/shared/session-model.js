@@ -5,6 +5,19 @@ function searchableText(session) {
     .toLocaleLowerCase();
 }
 
+function normalizeSessionQuery(query) {
+  return typeof query === 'string' ? query.trim().toLocaleLowerCase() : '';
+}
+
+// The one definition of "this session matches the search box", shared by the
+// desktop sidebar and the web list so both answer the same query the same way:
+// case-insensitive substring over name, working directory and running command.
+function sessionMatchesQuery(session, query) {
+  const needle = normalizeSessionQuery(query);
+  if (!needle) return true;
+  return Boolean(session) && searchableText(session).includes(needle);
+}
+
 function byRecentActivity(left, right) {
   const activityDifference = Number(right.activity || 0) - Number(left.activity || 0);
   if (activityDifference) return activityDifference;
@@ -15,10 +28,7 @@ function filterAndGroupSessions(sessions, favorites, query, favoritesOnly) {
   const items = Array.isArray(sessions) ? sessions : [];
   const favoriteNames = Array.isArray(favorites) ? favorites : [];
   const favoriteOrder = new Map(favoriteNames.map((name, index) => [name, index]));
-  const normalizedQuery = typeof query === 'string' ? query.trim().toLocaleLowerCase() : '';
-  const filtered = items.filter((session) => (
-    !normalizedQuery || searchableText(session).includes(normalizedQuery)
-  ));
+  const filtered = items.filter((session) => sessionMatchesQuery(session, query));
   const favoriteSessions = filtered
     .filter((session) => favoriteOrder.has(session.name))
     .sort((left, right) => favoriteOrder.get(left.name) - favoriteOrder.get(right.name));
@@ -75,4 +85,4 @@ function sessionsForView(sessions, preferences, view) {
   return sortByTabOrder(matched, tabOrders[viewKey]);
 }
 
-module.exports = { filterAndGroupSessions, sessionsForView };
+module.exports = { filterAndGroupSessions, sessionMatchesQuery, sessionsForView };

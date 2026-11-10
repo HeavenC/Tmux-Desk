@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { filterAndGroupSessions, sessionsForView } = require('../src/shared/session-model');
+const { filterAndGroupSessions, sessionMatchesQuery, sessionsForView } = require('../src/shared/session-model');
 
 const sessions = [
   { name: 'api', path: '/work/backend', activeCommand: 'node', activity: 20 },
@@ -90,4 +90,24 @@ test('stale names in the stored tab order are ignored when the session is no lon
     sessionsForView(sessions, preferences, { kind: 'favorites' }).map((item) => item.name),
     ['api'],
   );
+});
+
+test('sessionMatchesQuery matches name, path and command case-insensitively; blank matches all', () => {
+  const names = (query) => sessions.filter((session) => sessionMatchesQuery(session, query)).map((item) => item.name);
+  assert.deepEqual(names(''), ['api', 'db', '☸️ K8S-UAT']);
+  assert.deepEqual(names('   '), ['api', 'db', '☸️ K8S-UAT']);
+  assert.deepEqual(names('k8s'), ['☸️ K8S-UAT']);
+  assert.deepEqual(names('  BACKEND '), ['api']);
+  assert.deepEqual(names('mysql'), ['db']);
+  assert.deepEqual(names('nothing-here'), []);
+  assert.equal(sessionMatchesQuery(null, 'x'), false);
+});
+
+test('the desktop sidebar and the shared predicate agree on every query', () => {
+  for (const query of ['', 'a', 'WORK', 'kubectl', '☸️', 'zzz']) {
+    const grouped = filterAndGroupSessions(sessions, ['db'], query, false);
+    const desktop = [...grouped.favorites, ...grouped.sessions].map((item) => item.name).sort();
+    const shared = sessions.filter((session) => sessionMatchesQuery(session, query)).map((item) => item.name).sort();
+    assert.deepEqual(desktop, shared, `query ${JSON.stringify(query)}`);
+  }
 });

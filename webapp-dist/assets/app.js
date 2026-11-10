@@ -11604,6 +11604,14 @@ ${s3.join("\n")}
       function searchableText(session) {
         return [session.name, session.path, session.activeCommand].filter((value) => typeof value === "string").join("\n").toLocaleLowerCase();
       }
+      function normalizeSessionQuery(query) {
+        return typeof query === "string" ? query.trim().toLocaleLowerCase() : "";
+      }
+      function sessionMatchesQuery2(session, query) {
+        const needle = normalizeSessionQuery(query);
+        if (!needle) return true;
+        return Boolean(session) && searchableText(session).includes(needle);
+      }
       function byRecentActivity(left, right) {
         const activityDifference = Number(right.activity || 0) - Number(left.activity || 0);
         if (activityDifference) return activityDifference;
@@ -11613,8 +11621,7 @@ ${s3.join("\n")}
         const items = Array.isArray(sessions) ? sessions : [];
         const favoriteNames = Array.isArray(favorites) ? favorites : [];
         const favoriteOrder = new Map(favoriteNames.map((name, index) => [name, index]));
-        const normalizedQuery = typeof query === "string" ? query.trim().toLocaleLowerCase() : "";
-        const filtered = items.filter((session) => !normalizedQuery || searchableText(session).includes(normalizedQuery));
+        const filtered = items.filter((session) => sessionMatchesQuery2(session, query));
         const favoriteSessions = filtered.filter((session) => favoriteOrder.has(session.name)).sort((left, right) => favoriteOrder.get(left.name) - favoriteOrder.get(right.name));
         const ordinarySessions = favoritesOnly ? [] : filtered.filter((session) => !favoriteOrder.has(session.name)).sort(byRecentActivity);
         return { favorites: favoriteSessions, sessions: ordinarySessions };
@@ -11655,7 +11662,7 @@ ${s3.join("\n")}
         const tabOrders = stored.tabOrders && typeof stored.tabOrders === "object" && !Array.isArray(stored.tabOrders) ? stored.tabOrders : {};
         return sortByTabOrder(matched, tabOrders[viewKey]);
       }
-      module.exports = { filterAndGroupSessions, sessionsForView };
+      module.exports = { filterAndGroupSessions, sessionMatchesQuery: sessionMatchesQuery2, sessionsForView };
     }
   });
 
@@ -12008,6 +12015,9 @@ ${s3.join("\n")}
           "list.emptyAll": "\u6682\u65E0 tmux \u4F1A\u8BDD",
           "list.emptyShared": "\u5171\u4EAB\u4F1A\u8BDD\u6682\u4E0D\u53EF\u7528",
           "list.emptyFiltered": "{label}\u4E2D\u6682\u65E0\u4F1A\u8BDD",
+          "list.searchPlaceholder": "\u641C\u7D22\u4F1A\u8BDD\u540D\u3001\u76EE\u5F55\u6216\u547D\u4EE4",
+          "list.searchClear": "\u6E05\u9664\u641C\u7D22",
+          "list.noMatch": "\u6CA1\u6709\u5339\u914D\u201C{query}\u201D\u7684\u4F1A\u8BDD",
           "list.tagsAssociatedAria": "\u5DF2\u5173\u8054 Tag",
           "list.manageTagsAria": "\u7BA1\u7406 {name} \u7684 Tag",
           "list.sessionSub": "{windows} \u7A97\u53E3 \xB7 {panes} \u9762\u677F \xB7 {cmd}",
@@ -12102,6 +12112,9 @@ ${s3.join("\n")}
           "list.emptyAll": "No tmux sessions",
           "list.emptyShared": "The shared session is unavailable",
           "list.emptyFiltered": "No sessions in {label}",
+          "list.searchPlaceholder": "Search name, folder or command",
+          "list.searchClear": "Clear search",
+          "list.noMatch": "No sessions match \u201C{query}\u201D",
           "list.tagsAssociatedAria": "Associated tags",
           "list.manageTagsAria": "Manage tags for {name}",
           "list.sessionSub": "{windows} windows \xB7 {panes} panes \xB7 {cmd}",
@@ -12217,6 +12230,7 @@ ${s3.join("\n")}
   var { FitAddon } = require_addon_fit();
   var { ClipboardAddon } = require_addon_clipboard();
   var { liveCountForView, mobileSessionsForView } = require_mobile_session_model();
+  var { sessionMatchesQuery } = require_session_model();
   var {
     NAMED_KEYS,
     MODIFIERS,
@@ -12330,6 +12344,9 @@ ${s3.join("\n")}
     listView: { kind: "all" },
     // Host filter: null = every host, 'local' = 本机, or a relayed source id.
     hostFilter: null,
+    // Search box text. Narrows the list within the active host/view filters; the
+    // chip counts stay totals, as the desktop sidebar's do.
+    query: "",
     currentSession: null,
     grouped: null,
     windows: [],
@@ -12371,6 +12388,7 @@ ${s3.join("\n")}
     });
     el("workspace-filters").hidden = shared;
     if (el("host-filters")) el("host-filters").hidden = shared;
+    el("list-search").hidden = shared;
     el("back-btn").hidden = shared;
     if (shared) closeSessionTagsModal();
   }
@@ -12530,7 +12548,41 @@ ${s3.join("\n")}
     if (!remotes.some((host) => host.id === state.hostFilter)) state.hostFilter = null;
   }
   function currentListSessions() {
-    return mobileSessionsForView(hostFilteredSessions(), state.preferences, state.listView);
+    return mobileSessionsForView(hostFilteredSessions(), state.preferences, state.listView).filter((session) => sessionMatchesQuery(session, state.query));
+  }
+  function setSearchQuery(value) {
+    state.query = String(value ?? "");
+    const input = el("session-search");
+    if (input.value !== state.query) input.value = state.query;
+    el("session-search-clear").hidden = !state.query;
+    setListState({ loading: false, error: null, sessions: currentListSessions() });
+  }
+  function setupSessionSearch() {
+    const input = el("session-search");
+    input.addEventListener("input", () => setSearchQuery(input.value));
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (input.value) setSearchQuery("");
+        else input.blur();
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        input.blur();
+      }
+    });
+    bindTap(el("session-search-clear"), () => {
+      setSearchQuery("");
+      input.focus();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (state.currentView !== "list" || state.share) return;
+      const target = event.target;
+      if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      event.preventDefault();
+      input.focus();
+      input.select();
+    });
   }
   function sessionsForShare(sessions) {
     if (!state.share) return sessions;
@@ -12568,7 +12620,7 @@ ${s3.join("\n")}
     el("list-empty").hidden = sessions === null || sessions.length > 0;
     if (sessions !== null) {
       const emptyText = el("list-empty").querySelector("p");
-      emptyText.textContent = state.share ? t("list.emptyShared") : state.listView.kind === "all" ? t("list.emptyAll") : t("list.emptyFiltered", { label: currentListLabel() });
+      emptyText.textContent = state.share ? t("list.emptyShared") : state.query.trim() ? t("list.noMatch", { query: state.query.trim() }) : state.listView.kind === "all" ? t("list.emptyAll") : t("list.emptyFiltered", { label: currentListLabel() });
       renderSessionList(sessions);
     }
   }
@@ -14136,6 +14188,7 @@ ${s3.join("\n")}
     applyTheme(storedTheme());
     loadQuickKeys();
     setupStaticHandlers();
+    setupSessionSearch();
     setupToolbar();
     setupTouchScroll();
     setupEdgeSwipeBack();

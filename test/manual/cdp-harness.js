@@ -86,9 +86,12 @@ class Cdp {
 // writes session-snapshot.json NEXT TO it, and a shared temp dir would let one
 // run's snapshot be restored into the next run's sandbox — extra sessions appear
 // out of nowhere and every count in the script is off.
-async function launchApp({ socket, port = 9223 }) {
+// `preferences` (optional) seeds that file before launch — tags, saved remote
+// hosts and so on — instead of starting from a blank profile.
+async function launchApp({ socket, port = 9223, preferences: seed = null }) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tmux-desk-e2e-'));
   const preferences = path.join(home, 'preferences.json');
+  if (seed) fs.writeFileSync(preferences, JSON.stringify(seed));
   const app = spawn('npx', ['electron', '.', `--remote-debugging-port=${port}`], {
     env: { ...process.env, TMUX_DESK_SOCKET: socket, TMUX_DESK_PREFERENCES_FILE: preferences },
     stdio: ['ignore', 'pipe', 'pipe'],

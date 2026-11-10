@@ -136,3 +136,16 @@ test('compact-view shortcuts switch adjacent sessions and reserve Shift for tab 
   assert.match(app, /async function selectAdjacentTab\(direction\)/);
   assert.match(app, /if \(event\.shiftKey\) moveSelectedTab\([^)]+\);\s*else selectAdjacentTab\([^)]+\);/s);
 });
+
+test('a remote source drives the tag rail from that host\'s tags and keeps local tag writes off', async () => {
+  const app = await readFile(join(rendererDir, 'app.js'), 'utf8');
+  assert.match(app, /function viewPrefs\(\)\s*\{\s*return isRemoteActive\(\) \? state\.remotePrefs : state\.preferences;/);
+  assert.match(app, /sessionsForView\(state\.sessions, viewPrefs\(\), state\.view\)/);
+  assert.match(app, /for \(const tag of viewPrefs\(\)\.tags\)/);
+  assert.match(app, /listSessionsWithPreferences\(\)/);
+  assert.match(app, /state\.remotePrefs = emptyViewPrefs\(\);/);
+  // Writes that would land in this machine's preferences under remote ids/names.
+  assert.match(app, /async function activateTag\(tag\)[\s\S]{0,300}if \(isRemoteActive\(\)\)/);
+  assert.match(app, /function openSessionTagsModal\(session = selectedSession\(\)\)\s*\{[\s\S]{0,160}requireLocal\(\)/);
+  assert.match(app, /async function persistTabOrder\(names\)\s*\{[\s\S]{0,120}requireLocal\(\)/);
+});

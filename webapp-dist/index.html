@@ -26,6 +26,14 @@
           <button id="refresh-btn" class="icon-btn" data-i18n-aria="list.refresh" aria-label="刷新" type="button">&#x21bb;</button>
         </div>
       </header>
+      <div id="list-search" class="list-search" role="search">
+        <svg class="list-search-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m10.8 10.8 3.4 3.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <input id="session-search" class="list-search-input" type="search" enterkeyhint="search"
+               autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+               placeholder="搜索会话" aria-label="搜索会话"
+               data-i18n-ph="list.searchPlaceholder" data-i18n-aria="list.searchPlaceholder" />
+        <button id="session-search-clear" class="list-search-clear" type="button" aria-label="清除搜索" data-i18n-aria="list.searchClear" hidden>&#x2715;</button>
+      </div>
       <nav id="host-filters" class="workspace-filters host-filters" data-i18n-aria="host.aria" aria-label="主机筛选" hidden></nav>
       <nav id="workspace-filters" class="workspace-filters" data-i18n-aria="list.workspaceAria" aria-label="会话工作区"></nav>
       <div id="list-content" class="list-content">

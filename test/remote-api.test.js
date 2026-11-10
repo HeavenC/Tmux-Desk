@@ -5,7 +5,8 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 const test = require('node:test');
 
-const { RemoteApi } = require('../src/renderer/remote-api');
+const { RemoteApi, normalizeViewPreferences } = require('../src/renderer/remote-api');
+const { sessionsForView } = require('../src/shared/session-model');
 
 // A server that accepts the connection and then simply never replies — the same
 // shape as a black-holed host, but deterministic.
@@ -63,4 +64,52 @@ test('probe reports a reachable host with a latency reading', async () => {
   } finally {
     server.close();
   }
+});
+
+// Viewing another host's sessions from here: they were tagged over THERE, so the
+// tag rail has to use that host's tags — this machine's sessionTags are keyed by
+// its own session names and select nothing on the remote list.
+test('listSessionsWithPreferences carries the remote host\'s own tag config', async () => {
+  const remotePreferences = {
+    tags: [
+      { id: 'tag-vm', name: 'vm-work', color: 'blue', pinned: true },
+      { id: 'tag-bad', name: 'bad color', color: 'url(x)' },
+    ],
+    sessionTags: { api: ['tag-vm'], db: ['tag-vm', 'tag-bad', 'tag-gone'], 'bad.name': ['tag-vm'] },
+    favorites: ['db', 42],
+    tabOrders: { 'tag-vm': ['db', 'api', null] },
+  };
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      ok: true,
+      sessions: [{ id: '$1', name: 'api' }, { id: '$2', name: 'db' }, { id: '$3', name: 'scratch' }],
+      preferences: remotePreferences,
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const api = new RemoteApi({ base: `http://127.0.0.1:${server.address().port}`, token: 'tok' });
+    const { sessions, preferences } = await api.listSessionsWithPreferences();
+    assert.equal(sessions.length, 3);
+    assert.deepEqual(preferences.tags, [{ id: 'tag-vm', name: 'vm-work', color: 'blue', pinned: true }]);
+    assert.deepEqual(preferences.sessionTags, { api: ['tag-vm'], db: ['tag-vm'] });
+    assert.deepEqual(preferences.favorites, ['db']);
+    assert.deepEqual(preferences.tabOrders, { 'tag-vm': ['db', 'api'] });
+
+    const view = { kind: 'tag', tagId: 'tag-vm' };
+    assert.deepEqual(sessionsForView(sessions, preferences, view).map((s) => s.name), ['db', 'api']);
+    // What the rail did before: the local machine's tags against remote names.
+    const local = { tags: [{ id: 'tag-vm', name: 'x', color: 'blue' }], sessionTags: { 'host-only': ['tag-vm'] } };
+    assert.deepEqual(sessionsForView(sessions, local, view), []);
+
+    assert.deepEqual((await api.listSessions()).map((s) => s.name), ['api', 'db', 'scratch']);
+  } finally {
+    server.close();
+  }
+});
+
+test('normalizeViewPreferences tolerates an older host that sends no preferences', () => {
+  assert.deepEqual(normalizeViewPreferences(undefined), { tags: [], sessionTags: {}, favorites: [], tabOrders: {} });
+  assert.deepEqual(normalizeViewPreferences([]), { tags: [], sessionTags: {}, favorites: [], tabOrders: {} });
 });

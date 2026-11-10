@@ -20,6 +20,10 @@ const api = window.tmuxDesk;
 // method shape TerminalView + the session code expect.
 const localApi = api;
 const remoteApis = new Map();
+
+function emptyViewPrefs() {
+  return { tags: [], sessionTags: {}, favorites: [], tabOrders: {} };
+}
 const $ = (selector) => document.querySelector(selector);
 const refs = {};
 const state = {
@@ -45,6 +49,8 @@ const state = {
   commandIndex: 0,
   files: { open: false, root: null },
   source: { kind: 'local', id: 'local' },
+  // Tags / favorites / tab order of the remote host being viewed (see viewPrefs).
+  remotePrefs: emptyViewPrefs(),
   remoteConnections: [],
   sourceStatus: 'online',
   // Reachability of each saved remote host, keyed by connection id:
@@ -131,13 +137,22 @@ function selectedSession() {
   return state.sessions.find((session) => session.id === state.selectedSessionId) || null;
 }
 
+// Tags, favorites and tab order of the machine whose sessions are on screen.
+// A remote host's sessions were tagged on THAT host (its preferences come along
+// with its /api/sessions); this machine's sessionTags are keyed by its own
+// session names and can never select them. Everything that READS tag state for
+// the rail, the list or the tabs goes through here; writes stay local-only.
+function viewPrefs() {
+  return isRemoteActive() ? state.remotePrefs : state.preferences;
+}
+
 function currentTag() {
   if (state.view.kind !== 'tag') return null;
-  return state.preferences.tags.find((tag) => tag.id === state.view.tagId) || null;
+  return viewPrefs().tags.find((tag) => tag.id === state.view.tagId) || null;
 }
 
 function compactSessions() {
-  return sessionsForView(state.sessions, state.preferences, state.view);
+  return sessionsForView(state.sessions, viewPrefs(), state.view);
 }
 
 // Key into preferences.tabOrders for the currently active compact view, or
@@ -149,8 +164,9 @@ function currentViewKey() {
 }
 
 function tagsForSession(name) {
-  const ids = new Set(state.preferences.sessionTags[name] || []);
-  return state.preferences.tags.filter((tag) => ids.has(tag.id));
+  const prefs = viewPrefs();
+  const ids = new Set(prefs.sessionTags[name] || []);
+  return prefs.tags.filter((tag) => ids.has(tag.id));
 }
 
 function tagColor(tag) {
@@ -158,7 +174,8 @@ function tagColor(tag) {
 }
 
 function tagSessionCount(tagId) {
-  return state.sessions.filter((session) => (state.preferences.sessionTags[session.name] || []).includes(tagId)).length;
+  const { sessionTags } = viewPrefs();
+  return state.sessions.filter((session) => (sessionTags[session.name] || []).includes(tagId)).length;
 }
 
 function compactViewLabel() {
@@ -1194,7 +1211,8 @@ function renderTagRail(previousPositions = null) {
   document.querySelectorAll('[data-view]').forEach((button) => {
     button.classList.toggle('active', button.dataset.view === state.view.kind);
   });
-  for (const tag of state.preferences.tags) {
+  const remote = isRemoteActive();
+  for (const tag of viewPrefs().tags) {
     const count = tagSessionCount(tag.id);
     const button = document.createElement('button');
     button.className = `rail-button tag-rail-button ${state.view.kind === 'tag' && state.view.tagId === tag.id ? 'active' : ''}`;
@@ -1221,6 +1239,10 @@ function renderTagRail(previousPositions = null) {
       pin.className = 'tag-pin';
       pin.innerHTML = icon('star', 11);
       button.append(pin);
+    }
+    // Reordering pinned tags writes this machine's preferences; a remote host's
+    // tags are shown, not managed.
+    if (tag.pinned && !remote) {
       button.draggable = true;
       // Show the grab cursor only after a short press-and-hold, so a normal
       // click to open the tag doesn't feel draggable; a plain hover stays a
@@ -1250,6 +1272,12 @@ function renderTagRail(previousPositions = null) {
 
 async function activateTag(tag) {
   const token = ++tagActivationToken;
+  // The recency promotion below persists to this machine's tag list; a remote
+  // host's tags only switch the view.
+  if (isRemoteActive()) {
+    await setView({ kind: 'tag', tagId: tag.id });
+    return;
+  }
   const promoted = withTagPromoted(state.preferences.tags, tag.id);
   const reordered = !tagOrderEqual(promoted, state.preferences.tags);
   const previousPositions = reordered ? tagRailPositions() : null;
@@ -1284,7 +1312,7 @@ async function activateTag(tag) {
 function renderSessionList() {
   const groups = filterAndGroupSessions(
     state.sessions,
-    state.preferences.favorites,
+    viewPrefs().favorites,
     state.query,
     false,
   );
@@ -1335,7 +1363,7 @@ function createSessionRow(session) {
   name.className = 'session-name';
   name.textContent = session.name;
   nameLine.append(name);
-  if (state.preferences.favorites.includes(session.name)) {
+  if (viewPrefs().favorites.includes(session.name)) {
     const star = document.createElement('span');
     star.className = 'favorite-mark';
     star.innerHTML = icon('star', 11);
@@ -1439,7 +1467,7 @@ function renderSessionTabs() {
     button.setAttribute('role', 'tab');
     button.setAttribute('aria-selected', String(active));
     button.title = session.name;
-    button.draggable = true;
+    button.draggable = !isRemoteActive();
     const stateDot = document.createElement('span');
     stateDot.className = `session-tab-state ${session.attached ? 'attached' : ''}`;
     const name = document.createElement('span');
@@ -1510,6 +1538,7 @@ function clearTabDragState() {
 async function persistTabOrder(names) {
   const viewKey = currentViewKey();
   if (!viewKey) return;
+  if (!requireLocal()) return;
   try {
     state.preferences = await api.savePreferences({
       tabOrders: { ...state.preferences.tabOrders, [viewKey]: names },
@@ -1547,7 +1576,7 @@ async function selectAdjacentTab(direction) {
 // effect is "click that tag once" minus the recency promotion.
 async function selectAdjacentTagView(direction) {
   const currentTagId = state.view.kind === 'tag' ? state.view.tagId : null;
-  const targetId = adjacentTagId(state.preferences.tags, currentTagId, direction);
+  const targetId = adjacentTagId(viewPrefs().tags, currentTagId, direction);
   if (!targetId) return;
   await setView({ kind: 'tag', tagId: targetId });
 }
@@ -2396,7 +2425,7 @@ async function clearSessionSelection() {
 async function setView(view, { tagRailPreviousPositions = null } = {}) {
   let nextView = view;
   if (!nextView || !['all', 'favorites', 'tag'].includes(nextView.kind)) nextView = { kind: 'all' };
-  if (nextView.kind === 'tag' && !state.preferences.tags.some((tag) => tag.id === nextView.tagId)) {
+  if (nextView.kind === 'tag' && !viewPrefs().tags.some((tag) => tag.id === nextView.tagId)) {
     nextView = { kind: 'all' };
   }
   state.view = nextView;
@@ -2472,10 +2501,26 @@ async function refreshSessions({ initial = false, notify = false, poll = false }
     } else if (initial || !state.systemStatus.installed) {
       state.systemStatus = await api.getSystemStatus();
     }
-    const sessions = state.systemStatus.installed ? await sessionApi().listSessions() : [];
+    const source = sessionApi();
+    let sessions = [];
+    let remotePrefs = null;
+    if (state.systemStatus.installed && isRemoteActive() && typeof source.listSessionsWithPreferences === 'function') {
+      ({ sessions, preferences: remotePrefs } = await source.listSessionsWithPreferences());
+    } else if (state.systemStatus.installed) {
+      sessions = await source.listSessions();
+    }
     // A source switch (or another concurrent refresh) happened while we awaited;
     // these results belong to the old source — drop them.
     if (token !== sourceToken) return;
+    if (remotePrefs) {
+      state.remotePrefs = remotePrefs;
+      // The tag being viewed was deleted (or renamed away) on the remote host.
+      if (state.view.kind === 'tag' && !remotePrefs.tags.some((tag) => tag.id === state.view.tagId)) {
+        state.view = { kind: 'all' };
+        refs.appShell.classList.remove('compact-view');
+        applySidebarWidth();
+      }
+    }
     if (isRemoteActive()) {
       // A successful listing is a stronger reachability signal than the probe;
       // keep the popover's dot in sync with it.
@@ -2614,6 +2659,13 @@ function openSessionMenu(session, anchor) {
 
 function openTagMenu(tag, x, y) {
   closeFloatingMenus();
+  const openItem = menuButton({ iconName: 'terminal', title: t('menu.openTag', { name: tag.name }), action: () => setView({ kind: 'tag', tagId: tag.id }) });
+  if (isRemoteActive()) {
+    // Pin / rename / delete edit this machine's tag list, not the remote's.
+    refs.contextMenu.replaceChildren(openItem);
+    placePopoverAt(refs.contextMenu, x, y);
+    return;
+  }
   const topUnpinned = firstUnpinnedTag();
   let pinItem;
   if (tag.pinned) {
@@ -2624,7 +2676,7 @@ function openTagMenu(tag, x, y) {
     pinItem = menuButton({ iconName: 'star', title: t('menu.pinDisabledHint'), disabled: true });
   }
   refs.contextMenu.replaceChildren(
-    menuButton({ iconName: 'terminal', title: t('menu.openTag', { name: tag.name }), action: () => setView({ kind: 'tag', tagId: tag.id }) }),
+    openItem,
     separator(),
     pinItem,
     menuButton({ iconName: 'edit', title: t('menu.renameTag'), action: () => { closeFloatingMenus(); openTagEditor(tag); } }),
@@ -2687,6 +2739,8 @@ function openTagDeleteModal(tag) {
 
 function openSessionTagsModal(session = selectedSession()) {
   if (!session) return;
+  // It would file a REMOTE session name under this machine's tags.
+  if (!requireLocal()) return;
   refs.sessionTagsModal.dataset.sessionName = session.name;
   refs.sessionTagsMessage.textContent = t('session.tagsMessage', { name: session.name });
   const selectedIds = new Set(state.preferences.sessionTags[session.name] || []);
@@ -3120,7 +3174,7 @@ function commands() {
     { id: 'files', title: state.files.open ? t('palette.hideFiles') : t('palette.showFiles'), subtitle: t('palette.filesSubtitle'), shortcut: '⌘B', icon: 'sidebar', action: toggleFileBrowser },
     { id: 'all', title: t('palette.showAll'), subtitle: t('palette.showAllSubtitle'), icon: 'terminal', action: () => setView({ kind: 'all' }) },
     { id: 'favorites', title: t('palette.openFavorites'), subtitle: t('palette.favoritesSubtitle'), icon: 'star', action: () => setView({ kind: 'favorites' }) },
-    { id: 'newTag', title: t('tag.new'), subtitle: t('palette.newTagSubtitle'), icon: 'tag', action: () => openTagEditor() },
+    { id: 'newTag', title: t('tag.new'), subtitle: t('palette.newTagSubtitle'), icon: 'tag', action: () => { if (requireLocal()) openTagEditor(); } },
     { id: 'theme', title: t('theme.toggle'), subtitle: t('palette.themeSubtitle'), shortcut: '⌘⇧T', keywords: ['light', 'dark'], icon: 'palette', action: cycleTheme },
     { id: 'settings', title: t('palette.openSettings'), subtitle: t('palette.settingsSubtitle'), icon: 'settings', action: openSettings },
     ...IMPORT_TOOLS.map((tool) => ({
@@ -3146,7 +3200,7 @@ function commands() {
       { id: 'rename', title: t('palette.renameTitle', { name: session.name }), subtitle: t('palette.renameSubtitle'), icon: 'edit', action: () => openRenameModal(session) },
       { id: 'duplicate', title: t('palette.duplicateTitle', { name: session.name }), subtitle: t('palette.duplicateSubtitle'), icon: 'copy', action: () => openDuplicateModal(session) },
       { id: 'sessionTags', title: t('palette.manageTagsTitle', { name: session.name }), subtitle: t('palette.manageTagsSubtitle'), icon: 'tag', action: () => openSessionTagsModal(session) },
-      { id: 'favorite', title: state.preferences.favorites.includes(session.name) ? t('palette.unfavoriteCurrent') : t('palette.favoriteCurrent'), subtitle: session.name, icon: 'star', action: () => toggleSelectedFavorite() },
+      { id: 'favorite', title: viewPrefs().favorites.includes(session.name) ? t('palette.unfavoriteCurrent') : t('palette.favoriteCurrent'), subtitle: session.name, icon: 'star', action: () => toggleSelectedFavorite() },
       { id: 'kill', title: t('palette.killTitle', { name: session.name }), subtitle: t('palette.killSubtitle'), icon: 'trash', action: () => openKillModal(session) },
     ] : []),
   ];
@@ -3505,6 +3559,7 @@ async function switchSource(source) {
   sourceToken += 1;
   try { await terminalView.detach(); } catch { /* nothing attached */ }
   state.source = source;
+  state.remotePrefs = emptyViewPrefs();
   state.selectedSessionId = null;
   state.detail = { windows: [], panes: [] };
   state.sessions = [];
@@ -3565,7 +3620,9 @@ function bindEvents() {
   refs.newSessionButton.addEventListener('click', openNewSessionModal);
   refs.emptyNewButton.addEventListener('click', openNewSessionModal);
   refs.emptyAllButton.addEventListener('click', () => setView({ kind: 'all' }));
-  refs.newTagButton.addEventListener('click', () => openTagEditor());
+  // The rail lists the viewed host's tags, so a tag created here while a remote
+  // is on screen would vanish from it. Settings (always this machine) still can.
+  refs.newTagButton.addEventListener('click', () => { if (requireLocal()) openTagEditor(); });
   refs.tagRailToggleButton.addEventListener('click', () => setTagRailExpanded(!state.preferences.tagRailExpanded));
   refs.settingsNewTagButton.addEventListener('click', () => openTagEditor());
   refs.tagExportButton.addEventListener('click', exportTags);
@@ -3881,7 +3938,7 @@ function handleKeyboard(event) {
     else selectAdjacentTab(event.key === 'ArrowLeft' ? -1 : 1);
   } else if (event.metaKey && !event.altKey && !event.shiftKey
     && (event.key === 'ArrowUp' || event.key === 'ArrowDown')
-    && state.preferences.tags.length) {
+    && viewPrefs().tags.length) {
     event.preventDefault();
     // ⌘↑/↓ switches between tags (jumps to the target tag's first session),
     // without triggering the recency reorder that clicking a tag does.

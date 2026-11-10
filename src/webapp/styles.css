@@ -242,6 +242,74 @@ body {
   z-index: 2;
 }
 
+/* Session search, iOS search-field style: a filled rounded field sitting in the
+   same translucent chrome as the filter rows, so the list scrolls under it. */
+.list-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 8px max(env(safe-area-inset-right), 12px) 8px max(env(safe-area-inset-left), 12px);
+  background: var(--surface);
+  backdrop-filter: var(--blur-thin);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  z-index: 2;
+}
+
+.list-search[hidden] { display: none; }
+
+.list-search-icon {
+  position: absolute;
+  left: calc(max(env(safe-area-inset-left), 12px) + 10px);
+  width: 15px;
+  height: 15px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.list-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+  /* iOS zooms the page into any focused field under 16px — keep it at 16. */
+  font: inherit;
+  font-size: 16px;
+  letter-spacing: var(--track-body);
+  color: var(--text);
+  padding: 0 40px 0 33px;
+  border: 0;
+  border-radius: var(--r-md, 10px);
+  background: var(--fill-tertiary);
+  -webkit-appearance: none;
+  appearance: none;
+  outline: none;
+  transition: box-shadow var(--response-fast) var(--ease-standard);
+}
+
+.list-search-input::placeholder { color: var(--text-faint); }
+.list-search-input:focus-visible { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+/* Our own clear button replaces the native one, which only some engines draw. */
+.list-search-input::-webkit-search-cancel-button,
+.list-search-input::-webkit-search-decoration { -webkit-appearance: none; display: none; }
+
+.list-search-clear {
+  position: absolute;
+  right: max(env(safe-area-inset-right), 12px);
+  width: 44px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.list-search-clear[hidden] { display: none; }
+.list-search-clear:active { color: var(--text); }
+
 /* `display: flex` above beats the UA `[hidden] { display: none }`, so a hidden
    filter row (e.g. the host row with only one host) still reserved its full
    58px and painted an empty band under the title. */
@@ -1162,6 +1230,6 @@ body {
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .topbar, .workspace-filters, .copy-header, .copy-footer,
+  .topbar, .workspace-filters, .list-search, .copy-header, .copy-footer,
   .quickball, .quickpanel, .toast, .sheet-backdrop { backdrop-filter: none; }
 }
