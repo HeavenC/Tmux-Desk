@@ -9,6 +9,5 @@ coverage/
 
 # Local agent / planning material — not for the public repo
 .Codex/
-CLAUDE.md
 docs/superpowers/
 export-plus-*.md
