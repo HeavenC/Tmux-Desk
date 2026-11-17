@@ -11,6 +11,7 @@ const { PreferencesStore } = require('./preferences-store');
 const { SessionSnapshotService } = require('./session-snapshot');
 const { TerminalManager } = require('./terminal-manager');
 const { TmuxService } = require('./tmux-service');
+const { createTransferBridge } = require('./transfer-bridge');
 const { createWebControl } = require('./web-control');
 
 const CSP = [
@@ -35,6 +36,7 @@ let terminalManager = null;
 let webControl = null;
 let keepAwakeController = null;
 let snapshotService = null;
+let transferBridge = null;
 
 function sendToRenderer(channel, payload) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
@@ -210,6 +212,20 @@ async function bootstrap() {
   if ((await preferencesStore.load()).autoShare) {
     webControl.start().catch((error) => console.error('自动开启共享失败:', error));
   }
+  transferBridge = createTransferBridge({
+    preferencesStore,
+    // Env override for sandboxed runs (e2e), same idea as TMUX_DESK_PREFERENCES_FILE.
+    downloadsDir: () => process.env.TMUX_DESK_DOWNLOADS_DIR || app.getPath('downloads'),
+    chooseSavePath: async (defaultPath) => {
+      const result = await dialog.showSaveDialog(mainWindow, { title: '保存远程文件', defaultPath });
+      return result.canceled ? null : result.filePath || null;
+    },
+    openPath: async (filePath) => {
+      const message = await shell.openPath(filePath);
+      if (message) throw new Error(message);
+    },
+    onProgress: (progress) => sendToRenderer('files:transfer-progress', progress),
+  });
   registerIpc({
     ipcMain,
     setAppLocale: setMenuLocale,
@@ -234,6 +250,10 @@ async function bootstrap() {
         return true;
       },
       reveal: async (filePath) => { shell.showItemInFolder(await toBrowsablePath(filePath)); return true; },
+      downloadRemote: (request) => transferBridge.download(request),
+      uploadRemote: (request) => transferBridge.upload(request),
+      copyInto: (request) => transferBridge.copyInto(request),
+      cancelTransfer: async (transferId) => transferBridge.cancel(transferId),
       // Scheme allow-listed in ipc.js before it reaches here.
       openExternal: async (url) => { await shell.openExternal(url); return true; },
       openWith: async (filePath) => {
@@ -319,5 +339,6 @@ app.on('before-quit', () => {
   snapshotService?.dispose();
   terminalManager?.dispose();
   keepAwakeController?.dispose();
+  transferBridge?.dispose();
   webControl?.dispose().catch(() => {});
 });

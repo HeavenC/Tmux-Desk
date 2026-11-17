@@ -280,8 +280,19 @@
                 data-i18n-aria="file.browserAria"
             >
                 <header class="file-browser-header">
-                    <span class="fb-title" data-i18n="file.title">文件</span>
+                    <div class="fb-heading">
+                        <span class="fb-title" data-i18n="file.title">文件</span>
+                        <span class="fb-host hidden" id="fbHost"></span>
+                    </div>
                     <div class="fb-actions">
+                        <button
+                            class="icon-button"
+                            id="fbUploadButton"
+                            aria-label="上传到当前目录"
+                            title="上传到当前目录"
+                            data-i18n-aria="file.uploadHere"
+                            data-i18n-title="file.uploadHere"
+                        ></button>
                         <button
                             class="icon-button"
                             id="fbRevealButton"
@@ -310,6 +321,11 @@
                 </header>
                 <div class="fb-path" id="fbPath" title=""></div>
                 <div class="fb-tree" id="fbTree" aria-live="polite"></div>
+                <div class="fb-transfers hidden" id="fbTransfers" aria-live="polite"></div>
+                <div class="fb-drop hidden" id="fbDrop" aria-hidden="true">
+                    <p class="fb-drop-card" id="fbDropText"></p>
+                </div>
+                <input id="fbUploadInput" type="file" multiple hidden />
             </aside>
         </div>
 

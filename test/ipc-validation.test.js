@@ -11,6 +11,8 @@ const {
   validateTagMutation,
   validateTarget,
   validateTerminalPayload,
+  validateRemoteFileRequest,
+  validateCopyInto,
 } = require('../src/main/ipc');
 const { DEFAULT_TMUX_SETTINGS } = require('../src/shared/tmux-settings');
 
@@ -274,4 +276,20 @@ test('attaching takes the mouse for this session only, and pane resizes are shap
   assert.throws(() => handlers.get('panes:resize')(null, { target: '%2' }), /分屏尺寸参数无效/);
   assert.throws(() => handlers.get('panes:resize')(null, { target: '%2', x: 0 }), /分屏尺寸参数无效/);
   assert.throws(() => handlers.get('panes:resize')(null, { target: '$2', x: 4 }), /目标无效/);
+});
+
+test('remote file transfer requests are validated before reaching the main process', () => {
+  assert.deepEqual(validateRemoteFileRequest('download', {
+    connectionId: 'remote-abc', session: 'r:remote-x:$3', path: '/work/报告.md', mode: 'open', transferId: 't1',
+  }), { connectionId: 'remote-abc', session: 'r:remote-x:$3', transferId: 't1', path: '/work/报告.md', mode: 'open' });
+  assert.equal(validateRemoteFileRequest('download', { connectionId: 'remote-abc', session: '$1', path: '/a' }).mode, 'download');
+  assert.throws(() => validateRemoteFileRequest('download', { connectionId: 'remote-abc', session: '$1', path: 'rel' }), /路径无效/);
+  assert.throws(() => validateRemoteFileRequest('download', { connectionId: 'remote-abc', session: 'nope', path: '/a' }), /tmux 目标/);
+  assert.throws(() => validateRemoteFileRequest('download', { connectionId: '../x', session: '$1', path: '/a' }), /远程主机/);
+  assert.throws(() => validateRemoteFileRequest('download', { connectionId: 'remote-abc', session: '$1', path: '/a', mode: 'exec' }), /下载方式/);
+  assert.throws(() => validateRemoteFileRequest('upload', { connectionId: 'remote-abc', session: '$1', dir: '/a', source: 'relative' }), /路径无效/);
+  assert.throws(() => validateRemoteFileRequest('upload', { connectionId: 'remote-abc', session: '$1', dir: '/a', source: '/b', transferId: 'x y' }), /传输编号/);
+  assert.deepEqual(validateCopyInto({ sources: ['/a', '/b'], dir: '/c' }), { sources: ['/a', '/b'], dir: '/c' });
+  assert.throws(() => validateCopyInto({ sources: [], dir: '/c' }), /文件列表/);
+  assert.throws(() => validateCopyInto({ sources: ['rel'], dir: '/c' }), /路径无效/);
 });

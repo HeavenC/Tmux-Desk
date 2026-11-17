@@ -5,7 +5,7 @@ const { validateTmuxSettings } = require('../shared/tmux-settings');
 const { validateTerminalAppearance } = require('../shared/terminal-appearance');
 const { validatePasteGuard } = require('../shared/paste-guard');
 const { normalizeSessionRestore } = require('./session-snapshot');
-const { parseConnectionInput } = require('../shared/remote-connection');
+const { parseConnectionInput, parseTarget } = require('../shared/remote-connection');
 const { discoverCodebases } = require('./codebase-import');
 
 const TARGET_PATTERNS = {
@@ -53,6 +53,10 @@ const IPC_CHANNELS = Object.freeze([
   'files:open-with',
   'files:open-url',
   'files:reveal',
+  'files:remote-download',
+  'files:remote-upload',
+  'files:copy-into',
+  'files:cancel-transfer',
   'terminal:attach',
   'terminal:write',
   'terminal:resize',
@@ -303,6 +307,45 @@ function validateFilePath(value) {
   return value;
 }
 
+const CONNECTION_ID = /^[a-zA-Z0-9-]{1,64}$/;
+const TRANSFER_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const DOWNLOAD_MODES = new Set(['download', 'open', 'save-as']);
+
+// A path in the remote session's namespace (tmux reports POSIX paths, WSL on
+// Windows included), so it is checked as POSIX whatever this machine runs.
+function validateSessionFilePath(value) {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.length > 4096 || value.includes('\0')) {
+    throw new Error('路径无效');
+  }
+  return value;
+}
+
+function validateTransferId(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string' || !TRANSFER_ID.test(value)) throw new Error('传输编号无效');
+  return value;
+}
+
+function validateRemoteFileRequest(kind, value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('文件传输参数无效');
+  if (typeof value.connectionId !== 'string' || !CONNECTION_ID.test(value.connectionId)) throw new Error('远程主机无效');
+  // The remote host may itself relay another host's session (r:<conn>:$n).
+  if (!parseTarget(value.session)) throw new Error('tmux 目标无效');
+  const base = { connectionId: value.connectionId, session: value.session, transferId: validateTransferId(value.transferId) };
+  if (kind === 'download') {
+    const mode = value.mode ?? 'download';
+    if (!DOWNLOAD_MODES.has(mode)) throw new Error('下载方式无效');
+    return { ...base, path: validateSessionFilePath(value.path), mode };
+  }
+  return { ...base, dir: validateSessionFilePath(value.dir), source: validateFilePath(value.source) };
+}
+
+function validateCopyInto(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('文件参数无效');
+  if (!Array.isArray(value.sources) || !value.sources.length || value.sources.length > 200) throw new Error('文件列表无效');
+  return { sources: value.sources.map(validateFilePath), dir: validateFilePath(value.dir) };
+}
+
 function buildTagExport(preferences) {
   return {
     type: 'tmux-desk-tags',
@@ -485,6 +528,10 @@ function registerIpc({ ipcMain, tmuxService, terminalManager, preferencesStore, 
     'files:open-with': (_event, filePath) => fileBridge.openWith(validateFilePath(filePath)),
     'files:open-url': (_event, url) => fileBridge.openExternal(validateExternalUrl(url)),
     'files:reveal': (_event, filePath) => fileBridge.reveal(validateFilePath(filePath)),
+    'files:remote-download': (_event, payload) => fileBridge.downloadRemote(validateRemoteFileRequest('download', payload)),
+    'files:remote-upload': (_event, payload) => fileBridge.uploadRemote(validateRemoteFileRequest('upload', payload)),
+    'files:copy-into': (_event, payload) => fileBridge.copyInto(validateCopyInto(payload)),
+    'files:cancel-transfer': (_event, transferId) => fileBridge.cancelTransfer(validateTransferId(transferId)),
     'terminal:attach': (_event, payload) => {
       const validated = validateTerminalPayload('attach', payload);
       // Fire-and-forget: tmux applies session options live, so the client sees
@@ -565,4 +612,6 @@ module.exports = {
   validateExternalUrl,
   validateRevealInput,
   validateSearchOptions,
+  validateRemoteFileRequest,
+  validateCopyInto,
 };

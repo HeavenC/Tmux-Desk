@@ -31,14 +31,16 @@ async function listDirectory(dirPath, { fsImpl = fs, platform } = {}) {
     let isDir = dirent.isDirectory();
     const isSymlink = dirent.isSymbolicLink();
     let size = 0;
+    let mtime = 0;
     try {
       const stat = isSymlink ? await fsImpl.stat(full) : await fsImpl.lstat(full);
       isDir = isSymlink ? stat.isDirectory() : isDir;
       size = stat.isFile() ? stat.size : 0;
+      mtime = Number.isFinite(stat.mtimeMs) ? Math.round(stat.mtimeMs) : 0;
     } catch {
       // Broken symlink or permission denied — surface the entry, just without a size.
     }
-    return { name: dirent.name, path: full, isDir, isSymlink, hidden: dirent.name.startsWith('.'), size };
+    return { name: dirent.name, path: full, isDir, isSymlink, hidden: dirent.name.startsWith('.'), size, mtime };
   }));
   entries.sort((left, right) => (
     left.isDir === right.isDir

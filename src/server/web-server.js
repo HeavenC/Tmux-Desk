@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const { pipeline } = require('node:stream/promises');
 const { promisify } = require('node:util');
 
 const { WebSocketServer, WebSocket } = require('ws');
@@ -25,6 +26,15 @@ const {
   decodeFilePayload,
   MAX_UPLOAD_BYTES,
 } = require('../main/upload-file');
+const {
+  hostUrl,
+  listSessionDirectory,
+  openSessionFile,
+  readJsonResponse,
+  receiveSessionUpload,
+  sendSessionFile,
+  streamRequest,
+} = require('../main/file-transfer');
 const { TerminalManager } = require('../main/terminal-manager');
 const { TmuxService } = require('../main/tmux-service');
 
@@ -509,7 +519,87 @@ function startWebServer({
       const staged = await stageUploadedFile(buffer, body.name);
       return sendJson(res, 200, { ok: true, ...staged });
     }
+    if (url.pathname.startsWith('/api/files/')) return handleFilesApi(req, res, url, scope);
     return sendError(res, 404, '未知接口');
+  }
+
+  // Cross-device file transfer: browse, download and upload the files under one
+  // session's working directories (see file-transfer.js for the confinement).
+  // Bodies are streamed — a download is piped from disk, an upload straight to
+  // disk — so neither size nor memory limits what can cross between devices.
+  // HEAD on download lets a browser check a file before handing the URL to its
+  // download manager — which would otherwise save an error body AS the file.
+  const FILE_ACTIONS = { list: ['GET'], download: ['GET', 'HEAD'], upload: ['POST'] };
+
+  async function handleFilesApi(req, res, url, scope) {
+    const action = url.pathname.slice('/api/files/'.length);
+    if (!FILE_ACTIONS[action]?.includes(req.method)) return sendError(res, 404, '未知接口');
+    const target = url.searchParams.get('session');
+    const parsed = parseTarget(target);
+    if (!parsed) return sendError(res, 400, '无效的会话');
+    if (parsed.kind === 'remote') {
+      // The files live on the machine that RUNS the session, so a relayed target
+      // is answered by its host, with this one only passing bytes through.
+      if (scope !== null) return sendError(res, 403, '无权访问此会话');
+      const connection = await findReshareConnection(parsed.connId);
+      if (!connection) return sendError(res, 404, '远程会话不可用');
+      return relayFilesRequest(req, res, connection, action, url, parsed.id);
+    }
+    if (!await requireScopedTarget(res, scope, target)) return;
+    const detail = await service.getSessionDetail(target);
+    if (action === 'list') {
+      return sendJson(res, 200, { ok: true, ...await listSessionDirectory(detail, url.searchParams.get('path')) });
+    }
+    if (action === 'download') {
+      return sendSessionFile(res, await openSessionFile(detail, url.searchParams.get('path')), {
+        headOnly: req.method === 'HEAD',
+      });
+    }
+    const uploaded = await receiveSessionUpload(req, detail, {
+      dir: url.searchParams.get('dir'),
+      name: url.searchParams.get('name'),
+    });
+    log(`[files] upload ${uploaded.path} (${uploaded.size} bytes)`);
+    return sendJson(res, 200, { ok: true, ...uploaded });
+  }
+
+  const RELAYED_DOWNLOAD_HEADERS = [
+    'content-type', 'content-length', 'content-disposition', 'cache-control',
+    'x-content-type-options', 'content-security-policy',
+  ];
+
+  async function relayFilesRequest(req, res, connection, action, url, upstreamSession) {
+    const params = { token: connection.token, session: upstreamSession };
+    for (const key of ['path', 'dir', 'name']) {
+      const value = url.searchParams.get(key);
+      if (value !== null) params[key] = value;
+    }
+    const target = hostUrl(connection.base, `/api/files/${action}`, params);
+    const label = connection.label || connection.base;
+    if (action === 'list') {
+      // Same budget as the other relayed REST calls: one dead host must not
+      // hang the panel.
+      const upstream = await streamRequest(target, { idleTimeout: 8000 });
+      return sendJson(res, 200, await readJsonResponse(upstream, { label }));
+    }
+    if (action === 'download') {
+      const upstream = await streamRequest(target, { method: req.method });
+      if (upstream.statusCode !== 200) await readJsonResponse(upstream, { label }); // throws the upstream's error
+      const headers = {};
+      for (const name of RELAYED_DOWNLOAD_HEADERS) {
+        if (upstream.headers[name] !== undefined) headers[name] = upstream.headers[name];
+      }
+      res.writeHead(200, headers);
+      if (req.method === 'HEAD') {
+        upstream.resume();
+        return res.end();
+      }
+      return pipeline(upstream, res);
+    }
+    const headers = { 'Content-Type': 'application/octet-stream' };
+    if (req.headers['content-length']) headers['Content-Length'] = req.headers['content-length'];
+    const upstream = await streamRequest(target, { method: 'POST', headers, body: req });
+    return sendJson(res, 200, await readJsonResponse(upstream, { label }));
   }
 
   const server = http.createServer(async (req, res) => {
@@ -536,7 +626,13 @@ function startWebServer({
       }
       return sendError(res, 404, '未找到资源');
     } catch (error) {
-      return sendError(res, error && error.name === 'TmuxError' ? 500 : 400, error?.message || '请求失败');
+      // A streamed download that fails mid-body can't switch to a JSON error;
+      // cutting the connection is the only honest signal left.
+      if (res.headersSent) { res.destroy(); return undefined; }
+      const status = Number.isInteger(error?.status) && error.status >= 400 && error.status < 600
+        ? error.status
+        : (error && error.name === 'TmuxError' ? 500 : 400);
+      return sendError(res, status, error?.message || '请求失败');
     }
   });
 

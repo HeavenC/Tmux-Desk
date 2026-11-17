@@ -297,6 +297,19 @@ class RemoteApi {
     return { path: payload.path, name: payload.name };
   }
 
+  // The file panel for a remote session: the directory lives on the host that
+  // runs the session, so it is listed by that host (which also confines it to
+  // the session's own pane directories). Bytes never come through here — the
+  // main process streams downloads/uploads itself (see transfer-bridge.js).
+  async listSessionFiles({ sessionId, path } = {}) {
+    try {
+      return await this.request('/api/files/list', { params: { session: sessionId, path } });
+    } catch (error) {
+      if (/未知接口/.test(error?.message || '')) throw new Error('远程主机版本较旧，不支持文件浏览');
+      throw error;
+    }
+  }
+
   closeSocket(intentional) {
     if (!this.ws) return;
     this.intentionalClose = Boolean(intentional);

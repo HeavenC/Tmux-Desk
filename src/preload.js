@@ -48,6 +48,11 @@ contextBridge.exposeInMainWorld('tmuxDesk', Object.freeze({
   // where a dropped file actually lives, and it has to be called from preload.
   getFilePath: (file) => { try { return webUtils.getPathForFile(file); } catch { return ''; } },
   revealFile: (filePath) => ipcRenderer.invoke('files:reveal', filePath),
+  downloadRemoteFile: (payload) => ipcRenderer.invoke('files:remote-download', payload),
+  uploadRemoteFile: (payload) => ipcRenderer.invoke('files:remote-upload', payload),
+  copyFilesInto: (payload) => ipcRenderer.invoke('files:copy-into', payload),
+  cancelTransfer: (transferId) => ipcRenderer.invoke('files:cancel-transfer', transferId),
+  onTransferProgress: (listener) => on('files:transfer-progress', listener),
   attachTerminal: (payload) => ipcRenderer.invoke('terminal:attach', payload),
   writeTerminal: (payload) => ipcRenderer.invoke('terminal:write', payload),
   resizeTerminal: (payload) => ipcRenderer.invoke('terminal:resize', payload),

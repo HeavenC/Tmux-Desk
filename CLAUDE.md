@@ -70,6 +70,22 @@ Electron + xterm.js@6 的 tmux 图形前端。桌面端 renderer 在 `src/render
 - 验证：`test/manual/file-drop-e2e.js`（真起 Electron，不在 `npm test` 里）。CDP 的 **`Input.dispatchDragEvent` 能带真实文件名**（`data.files`），合成 `DragEvent` 不行 —— 后者 `getPathForFile` 返回空串，本机路径那半根本测不到。断言两段：本机拖 → pane 里是 `@<转义后的真实路径>` 且**没有** `/uploads/`；切到远程源再拖 → pane 里是 `@<.../uploads/xxx-6位hex.txt>` 且字节一致。**capture-pane 要加 `-J`**，长路径会被 tmux 折行，不 join 永远匹配不上。
 
 
+### 跨设备文件传输：文件面板 + 浏览器「会话文件」（2026-11-17）
+- **起因（真 bug）**：远程源下右侧文件面板一直走本机 IPC，拿远程 pane 的路径去列**本机**同名目录——两台机器路径恰好一样时看起来"正常"，其实全是本机文件。`syncFileBrowser` 的去重键因此改成「源 + 会话 + 目录」（`fileContext().key`），切源时同路径也会重新列。
+- **服务端** `src/main/file-transfer.js`，web-server 挂 `GET /api/files/list`、`GET|HEAD /api/files/download`、`POST /api/files/upload?dir=&name=`（**原始字节体，不是 base64 JSON**）。双向都是流：下载 `createReadStream → res`，上传 `req → 隐藏的 .xxx.tmux-desk-part → 完整后 rename`，中断不留半截文件。上限 4GB（只防把磁盘写满，不占内存）。
+- **路径限定**：只允许会话各 pane 的 cwd 之内（`sessionRoots`，活动窗口的活动 pane 排第一 = 默认根）；在 tmux 的 POSIX 命名空间里判包含，最后一步才 `toBrowsablePath`（Windows/WSL）。这不是比终端更强的边界（有 shell 的人本来就能读），只是别让传输接口比旁边的终端开得更大。
+- **单会话分享链接也能用**：走 `requireScopedTarget`，只认被分享的会话（及其 grouped id），请求别的会话 403；`r:` 中继会话对分享链接一律 403。测试覆盖了 list/download/upload 三个动作的放行与拒绝。
+- **重名**：上传 / 下载 / 本机拷贝都不覆盖，`name (1).ext` 递增；占名用 `open(..., 'wx')` / `mkdir` 原子创建再 rename 过去，不会和并发上传撞名。
+- **`r:` 中继**：`relayFilesRequest` 用 `streamRequest`（http/https 原生请求，空闲 30s 超时）把字节原样转给上游。上游没有这些接口时回 404 `未知接口` → 统一改写成「远程主机版本较旧，不支持文件传输」。
+- **桌面端**：远程源下列目录走 `RemoteApi.listSessionFiles`；**下载/上传在主进程**（`src/main/transfer-bridge.js`，IPC `files:remote-download|remote-upload|copy-into|cancel-transfer`）——renderer 只传 connectionId + 会话路径，token 不出主进程、没有 CORS 问题、大文件不过 renderer 内存。进度经 `files:transfer-progress` 推回，面板底部是传输列表（下载完成点一下 = 在访达中显示；失败的行保留到手动移除）。点远程文件 = 下载到「下载」并打开；右键有只下载 / 另存为 / `@路径` 引用 / 复制路径。拖到文件夹行 = 传进那个文件夹，拖到空白处 = 当前根目录；**本机源下拖入是 `fs.cp` 拷贝**。`TMUX_DESK_DOWNLOADS_DIR` 可覆盖下载目录（e2e 用）。
+- **手机/浏览器端**：终端顶栏文件夹按钮 → `#files-modal` sheet，逐层进入（不是树），默认隐藏点文件（底部「显示 N 个隐藏项目」，localStorage 记住）。上传用 XHR（要 `upload.onprogress`，fetch 拿不到上传进度）。
+- **坑：下载前必须先 `HEAD`**。`<a download>` 碰到错误响应时浏览器会把错误 JSON **当成那个文件保存下来**；所以先 HEAD，失败再 GET 一次读出错误文案 toast。
+- **坑：`fs.cp` 往自己刚 `mkdir` 占好的空目录里拷要 `errorOnExist: false`**，否则直接 `ERR_FS_CP_EEXIST`（目录是我们自己的空占位，不存在覆盖风险）。
+- **坑：主进程抛的错误类不要改 `name`**。Electron 把 IPC 异常序列化成 `<name>: <message>`，renderer 的 `friendlyError` 只剥 `Error:` 前缀，`TransferError: 已取消` 会原样显示。
+- 下载文件名用 RFC 5987（`filename*=UTF-8''…`）带原名，另给 ASCII 兜底；下载响应一律 `attachment` + `CSP: sandbox` + `nosniff`，HTML/SVG 不给真实 MIME——文件是从 app 自己的 origin 发出去的，能执行的类型绝不能被渲染。
+- 顺手修：文件面板路径标签是 `direction: rtl`（为了从左边截断），开头的 `~/` 会被排到末尾（显示成 `Documents/…/terminal-cli/~`）；文本前加一个 U+200E（LRM）即可。浏览器端 `.files-path` 同理。
+- 验证：`test/file-transfer.test.js`（单元 + 两台真 web-server 串成中继 + 桌面 bridge 两跳）；手动 e2e `test/manual/remote-files-e2e.js`（真 Electron，17 项）、`test/manual/webapp-files-e2e.js`（headless Chrome 手机尺寸，含分享链接，16 项）。**坑：开发 checkout 里 node-pty 的 `prebuilds/darwin-*/spawn-helper` 可能没有可执行位**，终端 attach 报 `posix_spawnp failed`（桌面和 web 端都会）；webapp e2e 遇到时会把「引用到终端」一步标成 skipped，不算失败。
+
 ### 验证手段（本次沙箱）
 - 桌面：`tmux -L applesk -f /dev/null new-session -d -s keepalive` 起干净 socket（`-f /dev/null` 防 continuum 把真实会话恢复进来），再 `TMUX_DESK_SOCKET=applesk TMUX_DESK_PREFERENCES_FILE=<临时> npx electron . --remote-debugging-port=9223`，用 CDP `Runtime.evaluate` 点按钮 + `Page.captureScreenshot`（配 `SHOT_BG` 底色覆盖）截明暗两套。
 - 手机端：沙箱 web server（`TMUX_DESK_WEB_TOKEN=... TMUX_DESK_WEB_PORT=8899 node src/server/index.js`）+ `Google Chrome --headless=new --window-size=390,844 --screenshot`。**注意 `--force-device-scale-factor=2` 会把 CSS 视口砍半**，截出来的溢出是假象，别照着改布局。

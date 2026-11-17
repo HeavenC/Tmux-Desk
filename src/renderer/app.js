@@ -47,7 +47,9 @@ const state = {
   view: { kind: 'all' },
   refreshing: false,
   commandIndex: 0,
-  files: { open: false, root: null },
+  // key = source + session + dir the panel shows; transfers = live/finished
+  // cross-device transfer rows (see startTransfer).
+  files: { open: false, root: null, key: null, uploadDir: null, transfers: [] },
   source: { kind: 'local', id: 'local' },
   // Tags / favorites / tab order of the remote host being viewed (see viewPrefs).
   remotePrefs: emptyViewPrefs(),
@@ -95,6 +97,7 @@ function cacheElements() {
     'sessionTagsModal', 'sessionTagsForm', 'sessionTagsMessage', 'sessionTagsList',
     'tagDeleteModal', 'tagDeleteMessage', 'confirmTagDeleteButton',
     'filesToggleButton', 'fileBrowser', 'fbTree', 'fbPath', 'fbRevealButton', 'fbRefreshButton', 'fbCollapseButton',
+    'fbHost', 'fbUploadButton', 'fbUploadInput', 'fbTransfers', 'fbDrop', 'fbDropText',
     'sidebarResizer', 'tagRailResizer', 'tagRailToggleButton', 'settingsScroll', 'keepAwakeToggle', 'autoShareToggle',
     'tmuxSettingsGroups', 'tmuxResetButton', 'tmuxAdvancedConfig', 'tmuxAdvancedError', 'tmuxAdvancedApplyButton',
     'snapshotHealthButton', 'snapshotModal', 'snapshotSummary', 'snapshotIssues', 'snapshotPaths',
@@ -123,6 +126,7 @@ function installIcons() {
   refs.filesToggleButton.innerHTML = icon('sidebar', 17);
   refs.mobileAccessButton.innerHTML = railButtonContent('phone', t('rail.share'), 18);
   refs.snapshotHealthButton.innerHTML = icon('alert', 17);
+  refs.fbUploadButton.innerHTML = icon('upload', 15);
   refs.fbRevealButton.innerHTML = icon('folder', 15);
   refs.fbRefreshButton.innerHTML = icon('refresh', 15);
   refs.fbCollapseButton.innerHTML = icon('close', 15);
@@ -2279,7 +2283,34 @@ async function openTerminalUrl(url) {
 async function openTerminalFileReference(reference) {
   const target = resolveTerminalFileReference(reference, activeSessionDir());
   if (!target) throw new Error(t('file.resolveFailed'));
+  // A remote session's path names a file on THAT host; opening it here means
+  // fetching it first.
+  if (fileContext().remote) {
+    await downloadRemoteEntry({ name: target.split('/').pop(), path: target, size: 0 }, 'open');
+    return;
+  }
   await api.openFile(target);
+}
+
+/* ── File panel ─────────────────────────────────────────────────────────────
+   Shows the directory of the session being viewed, on the machine that RUNS it.
+   A local session's is this filesystem (IPC). A remote takeover's is the other
+   host's: the listing comes from that host's file API, and files cross devices
+   through the main process — downloads stream into ~/Downloads, uploads come
+   from a drop or the picker — with progress at the bottom of the panel. */
+
+function fileContext() {
+  const connection = activeConnection();
+  if (connection) {
+    return { remote: true, connection, sessionId: state.selectedSessionId, key: `${connection.id}|${state.selectedSessionId}` };
+  }
+  return { remote: false, key: 'local' };
+}
+
+function listPanelDir(dir) {
+  const context = fileContext();
+  if (!context.remote) return api.listFiles(dir);
+  return sessionApi().listSessionFiles({ sessionId: context.sessionId, path: dir });
 }
 
 function setFileBrowserOpen(open) {
@@ -2294,32 +2325,72 @@ function toggleFileBrowser() { setFileBrowserOpen(!state.files.open); }
 function syncFileBrowser(force = false) {
   if (!state.files.open) return;
   const dir = activeSessionDir();
-  if (!force && dir === state.files.root) return;
+  // Keyed on the source too: a remote host often has the very same path as this
+  // machine (same user, same repo layout), and switching sources must not keep
+  // showing the local listing under the remote's name.
+  const key = `${fileContext().key}|${dir || ''}`;
+  if (!force && key === state.files.key) return;
+  state.files.key = key;
   state.files.root = dir;
   loadFileTree(dir);
 }
 
-async function loadFileTree(dir) {
-  refs.fbPath.textContent = shortenPath(dir) || t('file.noDir');
+function paintFileHeader() {
+  const context = fileContext();
+  const host = context.remote ? (context.connection.label || context.connection.base) : '';
+  refs.fbHost.textContent = host;
+  refs.fbHost.title = context.remote ? t('file.remoteHostTitle', { host }) : '';
+  refs.fbHost.classList.toggle('hidden', !context.remote);
+  // Revealing in Finder only means something for a directory on this disk.
+  refs.fbRevealButton.classList.toggle('hidden', context.remote);
+  const uploadLabel = t(context.remote ? 'file.uploadHere' : 'file.copyHere');
+  refs.fbUploadButton.title = uploadLabel;
+  refs.fbUploadButton.setAttribute('aria-label', uploadLabel);
+}
+
+async function loadFileTree(dir, { reopen = [] } = {}) {
+  paintFileHeader();
+  // The label is right-to-left so a long path truncates at its start; a leading
+  // LRM keeps the "~/" there in place instead of it being laid out at the end.
+  refs.fbPath.textContent = dir ? `‎${shortenPath(dir)}` : t('file.noDir');
   refs.fbPath.title = dir || '';
   const loading = document.createElement('div');
   loading.className = 'fb-loading';
   loading.textContent = dir ? t('file.loading') : t('file.selectSessionHint');
-  refs.fbTree.replaceChildren(loading);
+  if (!reopen.length) refs.fbTree.replaceChildren(loading);
   if (!dir) return;
+  const key = state.files.key;
   try {
-    const listing = await api.listFiles(dir);
-    if (state.files.root !== dir) return;
+    const listing = await listPanelDir(dir);
+    if (state.files.key !== key) return;
     refs.fbTree.replaceChildren();
     renderFileEntries(refs.fbTree, listing.entries, 0);
+    // Restore what was expanded, parents first (document order), so a refresh
+    // after a transfer doesn't collapse the folder the user is working in.
+    for (const openPath of reopen) {
+      const node = findFileNode(openPath);
+      if (node && !node.classList.contains('open')) await expandDir(node);
+      if (state.files.key !== key) return;
+    }
   } catch (error) {
-    if (state.files.root !== dir) return;
+    if (state.files.key !== key) return;
     const failed = document.createElement('div');
     failed.className = 'fb-empty';
     failed.textContent = friendlyError(error);
     refs.fbTree.replaceChildren(failed);
   }
 }
+
+function reloadFileTree() {
+  const reopen = [...refs.fbTree.querySelectorAll('.fb-node.open')].map((node) => node.dataset.path);
+  loadFileTree(state.files.root, { reopen });
+}
+
+function findFileNode(filePath) {
+  return [...refs.fbTree.querySelectorAll('.fb-node')].find((node) => node.dataset.path === filePath) || null;
+}
+
+const fileNodeEntries = new WeakMap();
 
 function renderFileEntries(mount, entries, depth) {
   if (!entries.length) {
@@ -2336,10 +2407,14 @@ function renderFileEntries(mount, entries, depth) {
 function createFileRow(entry, depth) {
   const node = document.createElement('div');
   node.className = 'fb-node';
+  node.dataset.path = entry.path;
+  node.dataset.depth = String(depth);
+  if (entry.isDir) node.dataset.dir = '1';
+  fileNodeEntries.set(node, entry);
   const row = document.createElement('button');
   row.className = `fb-row ${entry.hidden ? 'dim' : ''}`;
   row.style.paddingLeft = `${8 + depth * 14}px`;
-  row.title = entry.name;
+  row.title = entry.isDir ? entry.name : `${entry.name} · ${formatBytes(entry.size)}`;
   const chevron = document.createElement('span');
   chevron.className = `fb-chevron ${entry.isDir ? '' : 'spacer'}`;
   if (entry.isDir) chevron.innerHTML = icon('chevron', 12);
@@ -2350,15 +2425,22 @@ function createFileRow(entry, depth) {
   name.className = 'fb-name';
   name.textContent = entry.name;
   row.append(chevron, iconBox, name);
-  row.addEventListener('click', () => { if (entry.isDir) toggleDir(node, entry, depth); else openEntry(entry); });
+  row.addEventListener('click', () => { if (entry.isDir) toggleDir(node); else openEntry(entry); });
   row.addEventListener('contextmenu', (event) => { event.preventDefault(); openFileMenu(entry, event.clientX, event.clientY); });
   node.append(row);
   return node;
 }
 
-async function toggleDir(node, entry, depth) {
+function toggleDir(node) {
   const existing = node.querySelector(':scope > .fb-children');
   if (existing) { existing.remove(); node.classList.remove('open'); return; }
+  expandDir(node);
+}
+
+async function expandDir(node) {
+  const entry = fileNodeEntries.get(node);
+  if (!entry) return;
+  const depth = Number(node.dataset.depth) || 0;
   const children = document.createElement('div');
   children.className = 'fb-children';
   const loading = document.createElement('div');
@@ -2369,7 +2451,7 @@ async function toggleDir(node, entry, depth) {
   node.append(children);
   node.classList.add('open');
   try {
-    const listing = await api.listFiles(entry.path);
+    const listing = await listPanelDir(entry.path);
     if (!node.isConnected || !node.classList.contains('open')) return;
     children.replaceChildren();
     renderFileEntries(children, listing.entries, depth + 1);
@@ -2383,31 +2465,353 @@ async function toggleDir(node, entry, depth) {
 }
 
 async function openEntry(entry) {
+  if (fileContext().remote) { downloadRemoteEntry(entry, 'open'); return; }
   try { await api.openFile(entry.path); }
   catch (error) { toast(friendlyError(error), 'error'); }
 }
 
+function referenceInTerminal(filePath) {
+  if (!state.selectedSessionId || !terminalView) { toast(t('terminal.dropNoSession'), 'error'); return; }
+  terminalView.focus();
+  terminalView.sendInput(pathReference(filePath));
+}
+
+function pickFilesFor(dir) {
+  state.files.uploadDir = dir;
+  refs.fbUploadInput.click();
+}
+
 function openFileMenu(entry, x, y) {
   closeFloatingMenus();
-  refs.contextMenu.replaceChildren(
-    menuButton({ iconName: entry.isDir ? 'folder' : 'terminal', title: entry.isDir ? t('file.openInFinder') : t('action.open'), action: () => { closeFloatingMenus(); openEntry(entry); } }),
-    menuButton({ iconName: 'external', title: t('file.openWith'), action: async () => {
-      closeFloatingMenus();
-      try { const result = await api.openFileWith(entry.path); if (result && result.app) toast(t('file.openedWith', { app: result.app })); }
-      catch (error) { toast(friendlyError(error), 'error'); }
-    } }),
-    menuButton({ iconName: 'folder', title: t('action.revealInFinder'), action: async () => {
-      closeFloatingMenus();
-      try { await api.revealFile(entry.path); } catch (error) { toast(friendlyError(error), 'error'); }
-    } }),
+  const remote = fileContext().remote;
+  const run = (fn) => () => { closeFloatingMenus(); fn(); };
+  const items = [];
+  if (remote && entry.isDir) {
+    items.push(menuButton({ iconName: 'upload', title: t('file.uploadInto'), action: run(() => pickFilesFor(entry.path)) }));
+  } else if (remote) {
+    items.push(
+      menuButton({ iconName: 'download', title: t('file.download'), action: run(() => downloadRemoteEntry(entry, 'download')) }),
+      menuButton({ iconName: 'external', title: t('file.downloadOpen'), action: run(() => downloadRemoteEntry(entry, 'open')) }),
+      menuButton({ iconName: 'folder', title: t('file.saveAs'), action: run(() => downloadRemoteEntry(entry, 'save-as')) }),
+    );
+  } else {
+    items.push(
+      menuButton({ iconName: entry.isDir ? 'folder' : 'terminal', title: entry.isDir ? t('file.openInFinder') : t('action.open'), action: run(() => openEntry(entry)) }),
+      menuButton({ iconName: 'external', title: t('file.openWith'), action: run(async () => {
+        try { const result = await api.openFileWith(entry.path); if (result && result.app) toast(t('file.openedWith', { app: result.app })); }
+        catch (error) { toast(friendlyError(error), 'error'); }
+      }) }),
+      menuButton({ iconName: 'folder', title: t('action.revealInFinder'), action: run(async () => {
+        try { await api.revealFile(entry.path); } catch (error) { toast(friendlyError(error), 'error'); }
+      }) }),
+    );
+    if (entry.isDir) items.push(menuButton({ iconName: 'upload', title: t('file.copyInto'), action: run(() => pickFilesFor(entry.path)) }));
+  }
+  items.push(
     separator(),
-    menuButton({ iconName: 'copy', title: t('action.copyPath'), action: async () => {
-      closeFloatingMenus();
+    menuButton({ iconName: 'at', title: t('file.reference'), action: run(() => referenceInTerminal(entry.path)) }),
+    menuButton({ iconName: 'copy', title: t('action.copyPath'), action: run(async () => {
       await navigator.clipboard.writeText(entry.path);
       toast(t('toast.pathCopied'));
-    } }),
+    }) }),
   );
+  refs.contextMenu.replaceChildren(...items);
   placePopoverAt(refs.contextMenu, x, y);
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
+  return `${value >= 100 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
+function baseName(filePath) {
+  const trimmed = String(filePath || '').replace(/\/+$/, '');
+  return trimmed.slice(trimmed.lastIndexOf('/') + 1) || trimmed || '/';
+}
+
+/* Transfers. The bytes move in the main process; the renderer only keeps a row
+   per transfer, fed by its progress events. Rows update in place — rebuilding
+   them on every tick would swallow a click on the cancel button mid-press. */
+
+let transferSeq = 0;
+
+function startTransfer({ direction, name, total, pending = false }) {
+  transferSeq += 1;
+  const transfer = {
+    id: `t${Date.now().toString(36)}${transferSeq.toString(36)}`,
+    direction,
+    name,
+    total: total || 0,
+    loaded: 0,
+    // A save-as download waits on the save dialog first; it only shows up once
+    // bytes are actually moving (or never, if the dialog is cancelled).
+    status: pending ? 'pending' : 'running',
+    path: null,
+    resultName: null,
+    error: null,
+  };
+  state.files.transfers.push(transfer);
+  renderTransfers();
+  return transfer;
+}
+
+function removeTransfer(transfer) {
+  state.files.transfers = state.files.transfers.filter((item) => item !== transfer);
+  renderTransfers();
+}
+
+function finishTransfer(transfer, { status, path: filePath = null, name = null, error = null }) {
+  Object.assign(transfer, { status, path: filePath, resultName: name, error });
+  if (status === 'done' && transfer.total) transfer.loaded = transfer.total;
+  renderTransfers();
+  if (status === 'failed' && error) toast(error, 'error');
+  // Successes and cancels clear themselves; a failure stays until dismissed so
+  // the reason is still there when the user looks.
+  if (status === 'done' || status === 'canceled') {
+    setTimeout(() => { if (transfer.status === status) removeTransfer(transfer); }, status === 'done' ? 12000 : 3000);
+  }
+}
+
+function onTransferProgress({ id, loaded, total } = {}) {
+  const transfer = state.files.transfers.find((item) => item.id === id);
+  if (!transfer || (transfer.status !== 'running' && transfer.status !== 'pending')) return;
+  transfer.loaded = loaded || 0;
+  if (total) transfer.total = total;
+  if (transfer.status === 'pending') {
+    transfer.status = 'running';
+    renderTransfers();
+    return;
+  }
+  paintTransfer(transfer);
+}
+
+function transferRow(transfer) {
+  if (transfer.el) return transfer.el;
+  const row = document.createElement('div');
+  row.className = 'fb-transfer';
+  row.dataset.direction = transfer.direction;
+  const iconBox = document.createElement('span');
+  iconBox.className = 'fb-transfer-icon';
+  iconBox.innerHTML = icon(transfer.direction === 'down' ? 'download' : 'upload', 14);
+  const body = document.createElement('div');
+  body.className = 'fb-transfer-body';
+  const name = document.createElement('div');
+  name.className = 'fb-transfer-name';
+  name.textContent = transfer.name;
+  const bar = document.createElement('div');
+  bar.className = 'fb-transfer-bar';
+  const fill = document.createElement('span');
+  bar.append(fill);
+  const meta = document.createElement('div');
+  meta.className = 'fb-transfer-meta';
+  body.append(name, bar, meta);
+  const action = document.createElement('button');
+  action.className = 'icon-button fb-transfer-action';
+  action.addEventListener('click', (event) => { event.stopPropagation(); onTransferAction(transfer); });
+  row.addEventListener('click', () => {
+    if (transfer.status === 'done' && transfer.direction === 'down' && transfer.path) {
+      localApi.revealFile(transfer.path).catch((error) => toast(friendlyError(error), 'error'));
+    }
+  });
+  row.append(iconBox, body, action);
+  transfer.el = row;
+  transfer.parts = { name, fill, meta, action };
+  return row;
+}
+
+function paintTransfer(transfer) {
+  const row = transferRow(transfer);
+  const { name, fill, meta, action } = transfer.parts;
+  row.dataset.status = transfer.status;
+  const percent = transfer.total ? Math.min(100, Math.round((transfer.loaded / transfer.total) * 100)) : 0;
+  fill.style.width = `${percent}%`;
+  name.textContent = transfer.resultName || transfer.name;
+  name.title = transfer.path || transfer.name;
+  if (transfer.status === 'running') {
+    meta.textContent = transfer.total
+      ? `${formatBytes(transfer.loaded)} / ${formatBytes(transfer.total)} · ${percent}%`
+      : formatBytes(transfer.loaded);
+  } else if (transfer.status === 'done') {
+    meta.textContent = transfer.direction === 'down'
+      ? t('file.transferSaved', { path: shortenPath(transfer.path) })
+      : t('file.transferUploaded', { size: formatBytes(transfer.total) });
+  } else if (transfer.status === 'canceled') {
+    meta.textContent = t('file.transferCanceled');
+  } else {
+    meta.textContent = transfer.error || t('error.unknown');
+  }
+  const reveal = transfer.status === 'done' && transfer.direction === 'down';
+  const label = transfer.status === 'running'
+    ? t('file.transferCancel')
+    : (reveal ? t('action.revealInFinder') : t('file.transferDismiss'));
+  action.innerHTML = icon(reveal ? 'folder' : 'close', 13);
+  action.title = label;
+  action.setAttribute('aria-label', label);
+}
+
+function renderTransfers() {
+  const visible = state.files.transfers.filter((transfer) => transfer.status !== 'pending');
+  refs.fbTransfers.classList.toggle('hidden', !visible.length);
+  refs.fbTransfers.replaceChildren(...visible.map((transfer) => {
+    paintTransfer(transfer);
+    return transfer.el;
+  }));
+}
+
+function onTransferAction(transfer) {
+  if (transfer.status === 'running') {
+    localApi.cancelTransfer(transfer.id).catch(() => {});
+    return;
+  }
+  if (transfer.status === 'done' && transfer.direction === 'down' && transfer.path) {
+    localApi.revealFile(transfer.path).catch((error) => toast(friendlyError(error), 'error'));
+    return;
+  }
+  removeTransfer(transfer);
+}
+
+function isCancelError(message) {
+  return /已取消|cancel/i.test(message || '');
+}
+
+async function downloadRemoteEntry(entry, mode = 'download') {
+  const context = fileContext();
+  if (!context.remote || !context.sessionId) return;
+  const transfer = startTransfer({ direction: 'down', name: entry.name, total: entry.size, pending: mode === 'save-as' });
+  try {
+    const result = await localApi.downloadRemoteFile({
+      connectionId: context.connection.id,
+      session: context.sessionId,
+      path: entry.path,
+      mode,
+      transferId: transfer.id,
+    });
+    if (result.canceled) { removeTransfer(transfer); return; }
+    transfer.total = result.size || transfer.total;
+    finishTransfer(transfer, { status: 'done', path: result.path, name: result.name });
+    if (!state.files.open && mode !== 'open') toast(t('file.downloadedToast', { path: shortenPath(result.path) }));
+  } catch (error) {
+    const message = friendlyError(error);
+    finishTransfer(transfer, { status: isCancelError(message) ? 'canceled' : 'failed', error: message });
+  }
+}
+
+/* Put files into a folder of the viewed session. Dropped or picked files are on
+   THIS machine, so a local session just copies them; a remote one uploads them
+   to its host, one after another (each file is its own transfer row). */
+async function uploadFilesTo(files, dir) {
+  if (!files.length) return;
+  if (!dir || !state.selectedSessionId) { toast(t('terminal.dropNoSession'), 'error'); return; }
+  const context = fileContext();
+  const panelKey = state.files.key;
+  const sources = files.map((file) => (localApi.getFilePath ? localApi.getFilePath(file) : ''));
+  if (sources.some((source) => !source)) { toast(t('terminal.dropNoPath'), 'error'); return; }
+  const refresh = () => { if (state.files.open && state.files.key === panelKey) reloadFileTree(); };
+  if (!context.remote) {
+    try {
+      const copied = await localApi.copyFilesInto({ sources, dir });
+      toast(t('file.copiedInto', { n: copied.length, dir: baseName(dir) }));
+    } catch (error) {
+      toast(friendlyError(error), 'error');
+    }
+    refresh();
+    return;
+  }
+  let uploaded = 0;
+  for (const [index, file] of files.entries()) {
+    const transfer = startTransfer({ direction: 'up', name: file.name, total: file.size });
+    try {
+      const result = await localApi.uploadRemoteFile({
+        connectionId: context.connection.id,
+        session: context.sessionId,
+        dir,
+        source: sources[index],
+        transferId: transfer.id,
+      });
+      finishTransfer(transfer, { status: 'done', path: result.path, name: result.name });
+      uploaded += 1;
+    } catch (error) {
+      const message = friendlyError(error);
+      finishTransfer(transfer, { status: isCancelError(message) ? 'canceled' : 'failed', error: message });
+    }
+  }
+  if (uploaded) {
+    refresh();
+    if (!state.files.open) toast(t('file.uploadedToast', { n: uploaded, host: context.connection.label || context.connection.base }));
+  }
+}
+
+// The folder a drop lands in: the directory row under the pointer, the folder
+// that contains a file row under it, or (null) the panel's root.
+function dropDirNode(element) {
+  let node = element?.closest?.('.fb-node') || null;
+  while (node && !node.dataset.dir) node = node.parentElement?.closest('.fb-node') || null;
+  return node;
+}
+
+function setupFileBrowserDrop() {
+  const panel = refs.fileBrowser;
+  if (!panel) return;
+  let depth = 0;
+  let target = null;
+  const setTarget = (node) => {
+    if (target === node) return;
+    target?.classList.remove('drop-target');
+    target = node;
+    target?.classList.add('drop-target');
+  };
+  const reset = () => { depth = 0; setTarget(null); refs.fbDrop.classList.add('hidden'); };
+  const describe = (node) => {
+    const dir = node ? node.dataset.path : state.files.root;
+    const context = fileContext();
+    return context.remote
+      ? t('file.dropUpload', { host: context.connection.label || context.connection.base, dir: baseName(dir) })
+      : t('file.dropCopy', { dir: baseName(dir) });
+  };
+
+  panel.addEventListener('dragenter', (event) => {
+    if (!dragCarriesFiles(event)) return;
+    event.preventDefault();
+    depth += 1;
+    if (state.files.root) refs.fbDrop.classList.remove('hidden');
+  });
+  panel.addEventListener('dragover', (event) => {
+    if (!dragCarriesFiles(event)) return;
+    event.preventDefault();
+    if (!state.files.root) { event.dataTransfer.dropEffect = 'none'; return; }
+    event.dataTransfer.dropEffect = 'copy';
+    const node = dropDirNode(event.target);
+    setTarget(node);
+    refs.fbDropText.textContent = describe(node);
+  });
+  panel.addEventListener('dragleave', () => {
+    depth = Math.max(0, depth - 1);
+    if (!depth) reset();
+  });
+  panel.addEventListener('drop', (event) => {
+    if (!dragCarriesFiles(event)) return;
+    event.preventDefault();
+    const node = dropDirNode(event.target);
+    const dir = node ? node.dataset.path : state.files.root;
+    reset();
+    uploadFilesTo(Array.from(event.dataTransfer.files || []), dir);
+  });
+  window.addEventListener('dragend', reset);
+  window.addEventListener('blur', reset);
+
+  refs.fbUploadInput.addEventListener('change', () => {
+    const files = Array.from(refs.fbUploadInput.files || []);
+    // Clear first: picking the same file twice otherwise fires no change event.
+    refs.fbUploadInput.value = '';
+    const dir = state.files.uploadDir || state.files.root;
+    state.files.uploadDir = null;
+    uploadFilesTo(files, dir);
+  });
+  if (localApi.onTransferProgress) localApi.onTransferProgress(onTransferProgress);
 }
 
 async function clearSessionSelection() {
@@ -3614,6 +4018,7 @@ async function toggleRemoteReshare(connection) {
 function bindEvents() {
   setupPaneMouse();
   setupTerminalFileDrop();
+  setupFileBrowserDrop();
   setupGlobalSearch();
   refs.refreshButton.addEventListener('click', () => refreshSessions({ notify: true }));
   refs.emptyRefreshButton.addEventListener('click', () => refreshSessions({ initial: !state.systemStatus.installed, notify: true }));
@@ -3707,7 +4112,11 @@ function bindEvents() {
   bindTagRailResizer();
   bindSidebarResizer();
   refs.fbCollapseButton.addEventListener('click', () => setFileBrowserOpen(false));
-  refs.fbRefreshButton.addEventListener('click', () => syncFileBrowser(true));
+  refs.fbRefreshButton.addEventListener('click', () => { if (state.files.root) reloadFileTree(); else syncFileBrowser(true); });
+  refs.fbUploadButton.addEventListener('click', () => {
+    if (!state.files.root) { toast(t('terminal.dropNoSession'), 'error'); return; }
+    pickFilesFor(state.files.root);
+  });
   refs.fbRevealButton.addEventListener('click', async () => {
     if (!state.files.root) return;
     try { await api.revealFile(state.files.root); } catch (error) { toast(friendlyError(error), 'error'); }

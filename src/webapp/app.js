@@ -118,6 +118,12 @@ const state = {
   // bar overrides the local one for display/sending, and is read-only here.
   remoteQuickKeys: null,
   panelOpen: false,
+  // Session files sheet. path/parent come from the host, which confines them to
+  // the session's own pane directories; token drops answers from stale loads.
+  files: {
+    sessionId: null, path: null, parent: null, entries: [], error: null,
+    loading: false, selected: null, token: 0, uploadDir: null, transfers: [],
+  },
 };
 
 const el = (id) => document.getElementById(id);
@@ -246,6 +252,10 @@ function relocalize() {
     setListState({ loading: false, error: null, sessions: currentListSessions() });
   }
   renderQuickKeys();
+  if (!el('files-modal').hidden) {
+    renderFilesList();
+    renderFileTransfers();
+  }
   if (!el('quickedit-modal').hidden) {
     renderQuickPresets();
     renderQuickComboBuilder({ rebuild: true });
@@ -1110,6 +1120,7 @@ function backToList() {
   hideDisconnectBanner();
   setCtrlActive(false);
   state.remoteQuickKeys = null;
+  closeFilesSheet();
   showView('list');
   loadSessions();
 }
@@ -2015,6 +2026,488 @@ function setupFilePicker() {
   });
 }
 
+// ---- Session files: browse / download / upload ----------------------------
+/* The files live on the machine that RUNS the session (for a relayed session
+   that is the upstream host — this server only passes the bytes through), and
+   only under that session's pane directories. A download is a plain link the
+   browser's own download manager takes over; an upload streams the raw file
+   (XHR, for progress) into the folder being viewed. */
+
+const SHOW_HIDDEN_KEY = 'tmux-desk-web-files-hidden';
+const FOLDER_SVG = '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H10l2 2h6.5A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-10Z"/></svg>';
+const FILE_SVG = '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M6 2h7l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Z"/><path d="M13 2v5h5"/></svg>';
+
+function showHiddenFiles() {
+  try { return localStorage.getItem(SHOW_HIDDEN_KEY) === '1'; } catch { return false; }
+}
+
+function setShowHiddenFiles(value) {
+  try { localStorage.setItem(SHOW_HIDDEN_KEY, value ? '1' : '0'); } catch { /* private mode */ }
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
+  return `${value >= 100 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
+function displayPath(value) {
+  return String(value || '').replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, '~');
+}
+
+function baseName(value) {
+  const trimmed = String(value || '').replace(/\/+$/, '');
+  return trimmed.slice(trimmed.lastIndexOf('/') + 1) || '/';
+}
+
+function filesErrorMessage(error) {
+  const message = error?.message || '';
+  // A host that predates the file endpoints answers the generic 404.
+  return /未知接口/.test(message) ? t('files.unsupported') : (message || t('error.requestFailed'));
+}
+
+function openFilesSheet() {
+  if (!state.currentSession) return;
+  el('files-modal').hidden = false;
+  const sameSession = state.files.sessionId === state.currentSession.id && state.files.path;
+  // Reopening returns to the folder the user was in, if it still exists.
+  loadFilesDir(sameSession ? state.files.path : null, { fallbackToRoot: Boolean(sameSession) });
+}
+
+function closeFilesSheet() {
+  el('files-modal').hidden = true;
+  el('files-drop').hidden = true;
+  state.files.selected = null;
+}
+
+async function loadFilesDir(dir, { fallbackToRoot = false } = {}) {
+  const session = state.currentSession;
+  if (!session) return;
+  const files = state.files;
+  files.token += 1;
+  const token = files.token;
+  if (files.sessionId !== session.id) {
+    Object.assign(files, { sessionId: session.id, path: null, parent: null, entries: [] });
+  }
+  files.loading = true;
+  files.error = null;
+  files.selected = null;
+  renderFilesList();
+  try {
+    const params = { session: session.id };
+    if (dir) params.path = dir;
+    const body = await fetchJson(apiUrl('/api/files/list', params));
+    if (token !== files.token) return;
+    Object.assign(files, {
+      path: body.path,
+      parent: body.parent || null,
+      entries: Array.isArray(body.entries) ? body.entries : [],
+      loading: false,
+    });
+  } catch (error) {
+    if (token !== files.token) return;
+    if (dir && fallbackToRoot) {
+      loadFilesDir(null);
+      return;
+    }
+    files.loading = false;
+    files.error = filesErrorMessage(error);
+  }
+  renderFilesList();
+  el('files-list').scrollTop = 0;
+}
+
+function fileMeta(entry) {
+  const parts = [];
+  if (!entry.isDir) parts.push(formatBytes(entry.size));
+  if (entry.mtime) {
+    const date = new Date(entry.mtime);
+    parts.push(date.toLocaleString(getLocale() === 'en' ? 'en-US' : 'zh-CN', {
+      month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    }));
+  }
+  return parts.join(' · ');
+}
+
+function fileActionButton(label, handler, primary = false) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `btn btn-sm ${primary ? 'primary' : 'secondary'}`;
+  button.textContent = label;
+  button.addEventListener('click', (event) => { event.stopPropagation(); handler(); });
+  return button;
+}
+
+function createFileRowEl(entry) {
+  const row = document.createElement('div');
+  row.className = `file-row${entry.isDir ? ' dir' : ''}${entry.hidden ? ' dim' : ''}`;
+  row.setAttribute('role', 'listitem');
+  if (entry.isDir) row.dataset.dir = entry.path;
+  const main = document.createElement('button');
+  main.type = 'button';
+  main.className = 'file-row-main';
+  const iconBox = document.createElement('span');
+  iconBox.className = 'file-row-icon';
+  iconBox.innerHTML = entry.isDir ? FOLDER_SVG : FILE_SVG;
+  const text = document.createElement('span');
+  text.className = 'file-row-text';
+  const name = document.createElement('span');
+  name.className = 'file-row-name';
+  name.textContent = entry.name;
+  const meta = document.createElement('span');
+  meta.className = 'file-row-meta';
+  meta.textContent = fileMeta(entry);
+  text.append(name, meta);
+  main.append(iconBox, text);
+  if (entry.isDir) {
+    const chevron = document.createElement('span');
+    chevron.className = 'file-row-chevron';
+    chevron.textContent = '›';
+    chevron.setAttribute('aria-hidden', 'true');
+    main.append(chevron);
+  }
+  main.addEventListener('click', () => {
+    if (entry.isDir) { loadFilesDir(entry.path); return; }
+    state.files.selected = state.files.selected === entry.path ? null : entry.path;
+    renderFilesList();
+  });
+  row.append(main);
+  if (!entry.isDir && state.files.selected === entry.path) {
+    row.classList.add('selected');
+    const actions = document.createElement('div');
+    actions.className = 'file-row-actions';
+    actions.append(
+      fileActionButton(t('files.download'), () => downloadSessionFile(entry), true),
+      fileActionButton(t('files.reference'), () => referenceSessionFile(entry)),
+      fileActionButton(t('files.copyPath'), () => copySessionPath(entry)),
+    );
+    row.append(actions);
+  }
+  return row;
+}
+
+function filesMessage(text, { retry = false } = {}) {
+  const box = document.createElement('div');
+  box.className = 'files-message';
+  const line = document.createElement('p');
+  line.textContent = text;
+  box.append(line);
+  if (retry) {
+    const button = fileActionButton(t('common.retry'), () => loadFilesDir(state.files.path));
+    box.append(button);
+  }
+  return box;
+}
+
+function renderFilesList() {
+  const files = state.files;
+  const list = el('files-list');
+  const pathLabel = el('files-path');
+  // RTL so a long path truncates at its start; the LRM keeps "~/" in front.
+  pathLabel.textContent = files.path ? `‎${displayPath(files.path)}` : '';
+  pathLabel.title = files.path || '';
+  const rows = [];
+  if (files.parent) {
+    const up = document.createElement('div');
+    up.className = 'file-row dir up';
+    up.dataset.dir = files.parent;
+    const main = document.createElement('button');
+    main.type = 'button';
+    main.className = 'file-row-main';
+    main.innerHTML = '<span class="file-row-icon file-row-up" aria-hidden="true">‹</span>';
+    const text = document.createElement('span');
+    text.className = 'file-row-text';
+    const name = document.createElement('span');
+    name.className = 'file-row-name';
+    name.textContent = t('files.up');
+    const meta = document.createElement('span');
+    meta.className = 'file-row-meta';
+    meta.textContent = baseName(files.parent);
+    text.append(name, meta);
+    main.append(text);
+    main.addEventListener('click', () => loadFilesDir(files.parent));
+    up.append(main);
+    rows.push(up);
+  }
+  if (files.loading && !files.entries.length) {
+    rows.push(filesMessage(t('common.loading')));
+  } else if (files.error) {
+    rows.push(filesMessage(files.error, { retry: Boolean(files.path) }));
+  } else {
+    const showHidden = showHiddenFiles();
+    const visible = files.entries.filter((entry) => showHidden || !entry.hidden);
+    const hiddenCount = files.entries.length - files.entries.filter((entry) => !entry.hidden).length;
+    for (const entry of visible) rows.push(createFileRowEl(entry));
+    if (!files.entries.length) rows.push(filesMessage(t('files.empty')));
+    else if (!visible.length) rows.push(filesMessage(t('files.onlyHidden')));
+    if (hiddenCount) {
+      const toggle = fileActionButton(
+        showHidden ? t('files.hideHidden') : t('files.showHidden', { n: hiddenCount }),
+        () => { setShowHiddenFiles(!showHidden); renderFilesList(); },
+      );
+      toggle.classList.add('files-hidden-toggle');
+      rows.push(toggle);
+    }
+  }
+  list.classList.toggle('loading', files.loading);
+  list.replaceChildren(...rows);
+}
+
+async function downloadSessionFile(entry) {
+  if (!state.currentSession) return;
+  const url = apiUrl('/api/files/download', { session: state.currentSession.id, path: entry.path });
+  try {
+    // Check first: a download link that hits an error would make the browser
+    // save the error body under the file's name.
+    const head = await fetch(url, { method: 'HEAD' });
+    if (!head.ok) {
+      const response = await fetch(url);
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.error || t('error.requestFailed'));
+    }
+  } catch (error) {
+    showToast(t('files.downloadFailed') + filesErrorMessage(error));
+    return;
+  }
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = entry.name;
+  link.rel = 'noopener';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  showToast(t('files.downloadStarted', { name: entry.name }));
+}
+
+function referenceSessionFile(entry) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    showToast(t('reconnect.disconnected'));
+    return;
+  }
+  closeFilesSheet();
+  sendPathReference(entry.path);
+  showToast(t('toast.filePathSent'));
+}
+
+async function copySessionPath(entry) {
+  try {
+    await navigator.clipboard.writeText(entry.path);
+    showToast(t('toast.copied'));
+  } catch {
+    // No clipboard API over plain http (not a secure context): fall back to the
+    // legacy copy command on a throwaway textarea.
+    const area = document.createElement('textarea');
+    area.value = entry.path;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.append(area);
+    area.select();
+    let copied = false;
+    try { copied = document.execCommand('copy'); } catch { /* unsupported */ }
+    area.remove();
+    showToast(copied ? t('toast.copied') : entry.path);
+  }
+}
+
+/* Upload transfers: one row each, updated in place while the XHR reports
+   progress; uploads run one after another into the folder they were aimed at. */
+
+function renderFileTransfers() {
+  const box = el('files-transfers');
+  const transfers = state.files.transfers;
+  box.hidden = !transfers.length;
+  box.replaceChildren(...transfers.map((transfer) => {
+    if (!transfer.el) {
+      const row = document.createElement('div');
+      row.className = 'file-transfer';
+      const body = document.createElement('div');
+      body.className = 'file-transfer-body';
+      const name = document.createElement('div');
+      name.className = 'file-transfer-name';
+      const bar = document.createElement('div');
+      bar.className = 'file-transfer-bar';
+      const fill = document.createElement('span');
+      bar.append(fill);
+      const meta = document.createElement('div');
+      meta.className = 'file-transfer-meta';
+      body.append(name, bar, meta);
+      const action = document.createElement('button');
+      action.type = 'button';
+      action.className = 'file-transfer-action';
+      action.textContent = '✕';
+      action.addEventListener('click', () => {
+        if (transfer.status === 'running') transfer.xhr?.abort();
+        else removeFileTransfer(transfer);
+      });
+      row.append(body, action);
+      transfer.el = row;
+      transfer.parts = { name, fill, meta, action };
+    }
+    paintFileTransfer(transfer);
+    return transfer.el;
+  }));
+}
+
+function paintFileTransfer(transfer) {
+  const { name, fill, meta, action } = transfer.parts;
+  transfer.el.dataset.status = transfer.status;
+  const percent = transfer.total ? Math.min(100, Math.round((transfer.loaded / transfer.total) * 100)) : 0;
+  name.textContent = transfer.resultName || transfer.name;
+  fill.style.width = `${percent}%`;
+  if (transfer.status === 'running') {
+    meta.textContent = `${formatBytes(transfer.loaded)} / ${formatBytes(transfer.total)} · ${percent}%`;
+  } else if (transfer.status === 'done') {
+    meta.textContent = t('files.uploadedTo', { dir: baseName(transfer.dir) });
+  } else if (transfer.status === 'canceled') {
+    meta.textContent = t('files.canceled');
+  } else {
+    meta.textContent = transfer.error || t('error.requestFailed');
+  }
+  const label = transfer.status === 'running' ? t('files.cancel') : t('common.close');
+  action.setAttribute('aria-label', label);
+  action.title = label;
+}
+
+function removeFileTransfer(transfer) {
+  state.files.transfers = state.files.transfers.filter((item) => item !== transfer);
+  renderFileTransfers();
+}
+
+function uploadOneFile(transfer, file, dir, sessionId) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    transfer.xhr = xhr;
+    xhr.open('POST', apiUrl('/api/files/upload', { session: sessionId, dir, name: file.name }));
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (event) => {
+      transfer.loaded = event.loaded;
+      if (event.lengthComputable) transfer.total = event.total;
+      if (transfer.el) paintFileTransfer(transfer);
+    };
+    xhr.onload = () => {
+      let body = null;
+      try { body = JSON.parse(xhr.responseText); } catch { /* non-JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300 && body && body.ok) resolve(body);
+      else reject(new Error((body && body.error) || t('error.requestFailed')));
+    };
+    xhr.onerror = () => reject(new Error(t('files.networkError')));
+    xhr.onabort = () => reject(Object.assign(new Error(t('files.canceled')), { canceled: true }));
+    xhr.send(file);
+  });
+}
+
+async function uploadFilesToDir(files, dir) {
+  const picked = files.filter(Boolean);
+  const session = state.currentSession;
+  if (!picked.length || !session || !dir) return;
+  const transfers = picked.map((file) => ({
+    name: file.name, dir, total: file.size, loaded: 0, status: 'queued', file,
+  }));
+  state.files.transfers.push(...transfers);
+  renderFileTransfers();
+  let uploaded = 0;
+  for (const transfer of transfers) {
+    if (transfer.status !== 'queued') continue;
+    transfer.status = 'running';
+    renderFileTransfers();
+    try {
+      const result = await uploadOneFile(transfer, transfer.file, dir, session.id);
+      Object.assign(transfer, { status: 'done', loaded: transfer.total, resultName: result.name });
+      uploaded += 1;
+      setTimeout(() => { if (transfer.status === 'done') removeFileTransfer(transfer); }, 8000);
+    } catch (error) {
+      transfer.status = error.canceled ? 'canceled' : 'failed';
+      transfer.error = filesErrorMessage(error);
+      if (error.canceled) setTimeout(() => removeFileTransfer(transfer), 2500);
+    }
+    transfer.file = null;
+    transfer.xhr = null;
+    renderFileTransfers();
+  }
+  if (!uploaded) return;
+  if (!el('files-modal').hidden && state.files.sessionId === session.id && state.files.path === dir) {
+    loadFilesDir(dir);
+  } else if (!el('files-modal').hidden && state.files.sessionId === session.id) {
+    renderFilesList();
+  }
+  if (el('files-modal').hidden) showToast(t('files.uploadedToast', { n: uploaded }));
+}
+
+function setupFilesSheet() {
+  const modal = el('files-modal');
+  const panel = el('files-panel');
+  const input = el('files-input');
+  if (!modal || !panel || !input) return;
+  bindTap(el('files-btn'), openFilesSheet);
+  el('files-close').addEventListener('click', closeFilesSheet);
+  modal.addEventListener('click', (event) => { if (event.target === modal) closeFilesSheet(); });
+  // A plain click keeps the tap a genuine user gesture, which iOS requires
+  // before it opens the picker.
+  el('files-upload').addEventListener('click', () => {
+    if (!state.files.path) return;
+    state.files.uploadDir = state.files.path;
+    input.click();
+  });
+  input.addEventListener('change', () => {
+    const picked = Array.from(input.files || []);
+    // Clear first: picking the same file twice otherwise fires no change event.
+    input.value = '';
+    uploadFilesToDir(picked, state.files.uploadDir || state.files.path);
+    state.files.uploadDir = null;
+  });
+
+  // Desktop browsers: drop onto the sheet uploads into the folder row under the
+  // pointer, or the folder being viewed. Handled on the whole backdrop, or a
+  // drop beside the panel would make the browser navigate to the file.
+  let depth = 0;
+  let target = null;
+  const drop = el('files-drop');
+  const hasFiles = (event) => Array.from(event.dataTransfer?.types || []).includes('Files');
+  const rowFor = (node) => {
+    const row = node?.closest?.('.file-row[data-dir]');
+    return row && panel.contains(row) ? row : null;
+  };
+  const setTarget = (row) => {
+    if (target === row) return;
+    target?.classList.remove('drop-target');
+    target = row;
+    target?.classList.add('drop-target');
+  };
+  const reset = () => { depth = 0; setTarget(null); drop.hidden = true; };
+  modal.addEventListener('dragenter', (event) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    depth += 1;
+    if (state.files.path) drop.hidden = false;
+  });
+  modal.addEventListener('dragover', (event) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = state.files.path ? 'copy' : 'none';
+    const row = rowFor(event.target);
+    setTarget(row);
+    el('files-drop-text').textContent = t('files.dropHint', { dir: baseName(row ? row.dataset.dir : state.files.path) });
+  });
+  modal.addEventListener('dragleave', () => {
+    depth = Math.max(0, depth - 1);
+    if (!depth) reset();
+  });
+  modal.addEventListener('drop', (event) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    const row = rowFor(event.target);
+    const dir = row ? row.dataset.dir : state.files.path;
+    reset();
+    uploadFilesToDir(Array.from(event.dataTransfer.files || []), dir);
+  });
+  window.addEventListener('dragend', reset);
+  window.addEventListener('blur', reset);
+}
+
 function setupToolbar() {
   bindTap(el('copy-btn'), openCopyOverlay);
   setupFilePicker();
@@ -2026,6 +2519,7 @@ function setupToolbar() {
   bindTap(el('quickedit-open'), openQuickEdit);
   renderQuickKeys();
   setupQuickball();
+  setupFilesSheet();
 }
 
 function sendScrollLine(up, clientX, clientY, rect) {
@@ -2208,6 +2702,7 @@ function setupStaticHandlers() {
     if (!el('session-tags-modal').hidden) closeSessionTagsModal();
     if (!el('copy-modal').hidden) closeCopyOverlay();
     if (!el('quickedit-modal').hidden) closeQuickEdit();
+    if (!el('files-modal').hidden) closeFilesSheet();
   });
 }
 

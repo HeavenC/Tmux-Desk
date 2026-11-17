@@ -60,6 +60,9 @@
         <button id="back-btn" class="icon-btn" data-i18n-aria="common.back" aria-label="返回" type="button">&#x2039;</button>
         <span id="term-title" class="term-title"></span>
         <span class="shared-mode-badge" data-i18n="share.badge" hidden>共享会话</span>
+        <button id="files-btn" class="icon-btn files-btn" data-i18n-aria="files.open" aria-label="会话文件" type="button">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H10l2 2h6.5A2.5 2.5 0 0 1 21 8.5v8A2.5 2.5 0 0 1 18.5 19h-13A2.5 2.5 0 0 1 3 16.5v-10Z"/></svg>
+        </button>
         <button id="theme-btn-term" class="icon-btn theme-btn" data-i18n-aria="theme.toggle" aria-label="切换主题" type="button">&#x263E;</button>
         <select id="window-picker" class="window-picker" data-i18n-aria="term.windowAria" aria-label="tmux 窗口" hidden></select>
       </header>
@@ -153,6 +156,29 @@
           <button id="qk-reset" class="btn secondary qk-editable" data-i18n="quick.resetDefault" type="button">恢复默认</button>
           <button id="quickedit-close" class="btn primary" data-i18n="common.done" type="button">完成</button>
         </footer>
+      </div>
+    </div>
+
+    <!-- Session files: browse the session's working directory on the host that
+         runs it, download files to this device, upload into any folder there. -->
+    <div id="files-modal" class="sheet-backdrop" role="dialog" aria-modal="true" aria-labelledby="files-title" hidden>
+      <div id="files-panel" class="sheet-panel files-panel">
+        <div class="sheet-handle" aria-hidden="true"></div>
+        <header class="files-header">
+          <div class="files-heading">
+            <h2 id="files-title" data-i18n="files.title">文件</h2>
+            <p id="files-path" class="files-path"></p>
+          </div>
+          <button id="files-upload" class="btn primary btn-sm" data-i18n="files.upload" type="button">上传</button>
+          <button id="files-close" class="btn secondary btn-sm" data-i18n="common.close" type="button">关闭</button>
+        </header>
+        <div id="files-list" class="files-list" role="list"></div>
+        <div id="files-transfers" class="files-transfers" aria-live="polite" hidden></div>
+        <div id="files-drop" class="files-drop" hidden>
+          <p id="files-drop-text" class="drop-overlay-card files-drop-card"></p>
+        </div>
+        <!-- No accept filter: iOS offers 照片图库 / 拍照 / 浏览 from here. -->
+        <input id="files-input" class="visually-hidden" type="file" multiple tabindex="-1" aria-hidden="true">
       </div>
     </div>
 

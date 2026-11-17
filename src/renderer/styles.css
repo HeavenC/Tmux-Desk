@@ -1010,6 +1010,7 @@ body.pane-resizing * {
 }
 
 .file-browser {
+  position: relative;
   width: 300px; min-width: 220px;
   display: flex; flex-direction: column;
   background: var(--sidebar);
@@ -1051,6 +1052,61 @@ body.pane-resizing * {
 .fb-children { display: block; }
 .fb-empty, .fb-loading { padding: 8px 14px; font-size: 12px; color: var(--text-tertiary); }
 .file-browser.hidden { display: none; }
+.fb-heading { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* Which machine the listed files are on — only shown for a remote source, where
+   the same-looking path would otherwise read as this Mac's. */
+.fb-host {
+  min-width: 0; max-width: 130px; padding: 1px 7px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  font-size: 11px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Drop target: the folder row under the pointer lights up, and a pill at the
+   bottom says where the files will land. No wash over the tree — it is the
+   thing being aimed at. */
+.fb-node.drop-target > .fb-row {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.fb-drop {
+  position: absolute; inset: 0; z-index: 5;
+  display: flex; align-items: flex-end; justify-content: center;
+  padding-bottom: 16px;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.fb-drop-card {
+  margin: 0; max-width: calc(100% - 28px);
+  padding: 7px 14px; border-radius: var(--r-pill);
+  background: var(--accent); color: #fff;
+  font-size: 12px; font-weight: 500;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  box-shadow: var(--shadow-popover);
+}
+
+.fb-transfers {
+  flex: none; max-height: 40%; overflow: auto;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 6px;
+  border-top: 1px solid var(--border);
+}
+.fb-transfer { display: flex; align-items: center; gap: 8px; padding: 6px 4px 6px 8px; border-radius: 6px; }
+.fb-transfer:hover { background: var(--surface-hover); }
+.fb-transfer[data-status="done"][data-direction="down"] { cursor: pointer; }
+.fb-transfer-icon { display: grid; place-items: center; flex: none; color: var(--accent); }
+.fb-transfer[data-status="failed"] .fb-transfer-icon { color: var(--danger); }
+.fb-transfer[data-status="canceled"] .fb-transfer-icon { color: var(--text-tertiary); }
+.fb-transfer-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.fb-transfer-name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fb-transfer-bar { height: 3px; border-radius: 2px; overflow: hidden; background: var(--fill-secondary); }
+.fb-transfer-bar > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width 120ms linear; }
+.fb-transfer:not([data-status="running"]) .fb-transfer-bar { display: none; }
+.fb-transfer-meta { font-size: 11px; color: var(--text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fb-transfer[data-status="failed"] .fb-transfer-meta { color: var(--danger); white-space: normal; }
+.fb-transfer-action.icon-button { width: 24px; height: 24px; flex: none; }
 
 @media (max-width: 1050px) {
   .file-browser { width: 260px; }

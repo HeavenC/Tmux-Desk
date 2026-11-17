@@ -41,7 +41,8 @@ Any phone browser can drive all of your local tmux sessions; add it to the home 
 - The "All" view's session sidebar is drag-resizable (double-click the divider to reset); Tag / Favorites compact views still collapse it fully
 - **Duplicate session** (like `git checkout -b`): derive a copy from an existing session's windows and directory, leaving the original untouched
 - **Split panes** (`⌘D` vertical / `⌘⇧D` horizontal, `tmux split-window`) and **close/restore split**; each split has an × overlay button in its top-right corner
-- **File browser on the right** (`⌘B` to toggle): browse the file tree of the current session's directory — open with default app, "Open With…" another app, reveal in Finder, copy path
+- **File browser on the right** (`⌘B` to toggle): browse the file tree of the current session's directory — open with default app, "Open With…" another app, reveal in Finder, copy path, reference a path into the terminal as `@path`; drop files from Finder onto a folder to copy them in
+- **Cross-device file transfer**: with a remote host selected, the file browser lists the session directory on **that** machine — click a file to download it into Downloads and open it (right-click to only download / save as), drop local files onto any folder to upload them there; transfers stream with progress and can be cancelled, and work through reshare relays too
 - Hold `⌘` and click a filename or path in terminal output to open it with the system default app, like iTerm; relative, absolute and `file:line:column` forms are supported
 - Pane picker in the workspace header for quick pane focus; `⌘1…9` switches the current session's tmux window
 - Full interactive terminal via xterm.js + node-pty, with color, mouse and full-screen TUI programs
@@ -288,6 +289,7 @@ It prints access URLs per interface (with a random token, persisted at `~/.confi
 - Session list → tap to enter a full-screen terminal (xterm.js), with Esc / Tab / Ctrl (sticky) / ⌃B / arrow assist keys at the bottom
 - The top of the list switches between "All / Favorites / each Tag"; sessions are de-duplicated by name within a Tag, session cards show multiple Tags, and associations can be edited from the bottom sheet
 - The phone page supports an independent light/dark theme (persisted per device), touch scrolling, notch safe areas, orientation and dynamic virtual-keyboard height
+- The folder button in the terminal's top bar opens **Session files**: browse the session's working directories (other panes' included), download files to the phone / computer, or upload into the current folder (desktop browsers can drag files in). Single-session share links get it too, limited to the shared session's directories
 - The phone attaches a **session-group derivative** (`_web_*`) that mirrors the desktop content but keeps its own current window and size; it is cleaned up on disconnect
 - Environment variables: `TMUX_DESK_WEB_PORT`, `TMUX_DESK_WEB_HOST`, `TMUX_DESK_WEB_TOKEN`, `TMUX_DESK_PREFERENCES_FILE`
 
