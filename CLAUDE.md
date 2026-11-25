@@ -372,3 +372,7 @@ e2e 用 `list-clients -F '#{client_termfeatures}'` 回读验证（tmux 会额外
 - 另一个能产出同样「签了名没公证」包的入口是 `npm run package:mac*`：它只调 electron-builder，afterPack 找到 Developer ID 就签上，但不公证。afterPack 现在会打警告（判断依据：只有 `release-mac.sh` 会设 `REQUIRE_DEVELOPER_ID`）。
 - CI 日志要登录才能看，annotations 不用登录（公开 API `check-runs/<job_id>/annotations`）。所以 `release-mac.sh` 在 `GITHUB_ACTIONS` 下会把失败原因写成 `::error::`：显式失败走 `fail()`，其余命令由 ERR trap 带上行号和命令。
 - 排查顺序：`spctl -a -vvv --type execute` → `xcrun stapler validate <dmg>` → `xcrun notarytool history`（看有没有提交过）→ CI annotations。
+
+### Release CI 的两个坑（2026-11-25）
+- **GitHub 会下线旧的 macOS 机型，症状有两种**：`macos-13` 是任务一直排队、没有机器来接，24 小时后被取消，看起来像 `cancelled`，一点报错都没有；`macos-14` 是 1 秒内被拒，annotation 写着 `The configuration 'macos-14-arm64-us-default' is not supported`。现在 arm64 用 `macos-15`，Intel 用 `macos-15-intel`（GitHub 最后一个 Intel 镜像）。**任务是 cancelled 而且没有 `runner_name`，先怀疑机型标签失效。**
+- **`set -o pipefail` 下不要写 `cmd | grep -q`**：`grep -q` 匹配到就退出，`cmd` 还在写就会被 SIGPIPE 打断，整条管道判为失败，于是一个本来通过的检查会随机报失败。`codesign -dv` 在 Developer ID 签名下，匹配行后面还有好几行输出，几乎必中（实测 ad-hoc 签名下 200 次里有 1 次误报）。改成先把输出存进变量再匹配：`[[ "$(cmd 2>&1)" != *pattern* ]]`。
