@@ -376,3 +376,4 @@ e2e 用 `list-clients -F '#{client_termfeatures}'` 回读验证（tmux 会额外
 ### Release CI 的两个坑（2026-11-25）
 - **GitHub 会下线旧的 macOS 机型，症状有两种**：`macos-13` 是任务一直排队、没有机器来接，24 小时后被取消，看起来像 `cancelled`，一点报错都没有；`macos-14` 是 1 秒内被拒，annotation 写着 `The configuration 'macos-14-arm64-us-default' is not supported`。现在 arm64 用 `macos-15`，Intel 用 `macos-15-intel`（GitHub 最后一个 Intel 镜像）。**任务是 cancelled 而且没有 `runner_name`，先怀疑机型标签失效。**
 - **`set -o pipefail` 下不要写 `cmd | grep -q`**：`grep -q` 匹配到就退出，`cmd` 还在写就会被 SIGPIPE 打断，整条管道判为失败，于是一个本来通过的检查会随机报失败。`codesign -dv` 在 Developer ID 签名下，匹配行后面还有好几行输出，几乎必中（实测 ad-hoc 签名下 200 次里有 1 次误报）。改成先把输出存进变量再匹配：`[[ "$(cmd 2>&1)" != *pattern* ]]`。
+- **打 DMG 偶发 `hdiutil: couldn't eject "diskN" - Resource busy`**（dmgbuild 抛 `DMGError: Unable to detach device cleanly`）：刚挂载的镜像正被 Spotlight 索引或 XProtect 扫描。workflow 在打包前加了一步 `mdutil -a -i off` + `pkill XProtect`。遇到时直接在网页上点「Re-run failed jobs」，只重跑失败的那个任务，tag 和已经发出去的包都不用动。

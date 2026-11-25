@@ -114,6 +114,15 @@ jobs:
 
           echo "✓ Keychain ready"
 
+      # hdiutil intermittently fails to detach the freshly built DMG with
+      # "couldn't eject diskN - Resource busy" while Spotlight indexes or
+      # XProtect scans the mounted volume. Neither is needed on a build runner.
+      - name: Quiet volume scanners (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          sudo mdutil -a -i off || true
+          sudo pkill -9 XProtect || true
+
       # ── Build + package + sign + notarize ────────────────────────────────
       - name: Build and release (macOS)
         if: runner.os == 'macOS'
