@@ -365,8 +365,10 @@ e2e 用 `list-clients -F '#{client_termfeatures}'` 回读验证（tmux 会额外
   - libevent 用 release 附件而不是 git 存档：存档里没有 `configure`，CI 上就得多装 autotools。两者的 149 个 `.c/.h` 已逐字节比对一致。
 - 冒烟测试怎么查 terminfo：detach 模式的会话根本不读客户端 TERM 的 terminfo，必须用 `script -q /dev/null tmux new-session 'exit 0'` 真 attach 一次，再 grep `missing or unsuitable terminal`。中文宽度用 `#{w:@probe}` 检查。x64 产物要在装了 Rosetta 的 Apple Silicon Mac 上跑同样的命令才能验证。
 
-### 签了名 ≠ 能发给别人：`package:mac*` 不公证
-- 现象：本地打的 x64 包发给用户，对方打开时被拦，要去「隐私与安全性」里点「仍要打开」。
-- 原因：`npm run package:mac*` 只调 electron-builder。afterPack 在钥匙串里找到 Developer ID 就自动签上，所以看起来像正式包，但**从来不提交公证**。`spctl -a -vvv --type execute <app>` 会给出 `rejected / source=Unnotarized Developer ID`。
-- 要分发一律走 `npm run release:mac[:x64|:universal]`（签名 + 公证 + staple）或者 CI tag。afterPack 现在会在「签了 Developer ID 但这次不会公证」时打警告（判断依据：只有 `release-mac.sh` 会设 `REQUIRE_DEVELOPER_ID`）。
-- 排查三件套：`spctl -a -vvv --type execute`、`xcrun stapler validate <dmg>`、`xcrun notarytool history`（看有没有提交过）。
+### 签了名 ≠ 能发给别人：公证没成功的包长得和正式包一样
+- 现象：发给用户的 x64 包被拦下，对方要去「隐私与安全性」里点「仍要打开」。`spctl -a -vvv --type execute <app>` → `rejected / source=Unnotarized Developer ID`。
+- **根因：Apple Developer 协议更新后没重新同意**。`notarytool submit` 直接返回 `HTTP 403. A required agreement is missing or has expired`。签名照常成功，所以 CI 的两个 macOS 任务都是打完包、签完名之后，在公证这一步失败（GitHub Release 从 7 月底以后就没出过 mac 包）；本地跑 `release-mac.sh` 也一样。修法只能是**账号持有人**登录 developer.apple.com/account 同意新协议。`notarytool history` 不受协议影响，照样能查，所以它能用不代表能提交。
+- 为什么会被误发出去：DMG/ZIP 在提交公证**之前**就已经生成在 `dist/`，公证失败后留在那里，和正式包一模一样。现在 `release-mac.sh` 只要公证结果不是 `status: Accepted`（含 403 和 `Invalid`），就把它们改名成 `*-UNNOTARIZED.*`。
+- 另一个能产出同样「签了名没公证」包的入口是 `npm run package:mac*`：它只调 electron-builder，afterPack 找到 Developer ID 就签上，但不公证。afterPack 现在会打警告（判断依据：只有 `release-mac.sh` 会设 `REQUIRE_DEVELOPER_ID`）。
+- CI 日志要登录才能看，annotations 不用登录（公开 API `check-runs/<job_id>/annotations`）。所以 `release-mac.sh` 在 `GITHUB_ACTIONS` 下会把失败原因写成 `::error::`：显式失败走 `fail()`，其余命令由 ERR trap 带上行号和命令。
+- 排查顺序：`spctl -a -vvv --type execute` → `xcrun stapler validate <dmg>` → `xcrun notarytool history`（看有没有提交过）→ CI annotations。

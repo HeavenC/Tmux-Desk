@@ -13,6 +13,17 @@ cd "$(dirname "$0")/.."
 
 ARCH="${1:-arm64}"
 
+# On GitHub Actions, failures are also emitted as annotations: those show on
+# the run page and through the public API without signing in, unlike the logs.
+fail() {
+  echo "✗ $1" >&2
+  [ -n "${GITHUB_ACTIONS:-}" ] && echo "::error title=release-mac.sh::$1"
+  exit 1
+}
+if [ -n "${GITHUB_ACTIONS:-}" ]; then
+  trap 'echo "::error title=release-mac.sh::line $LINENO failed (exit $?): $BASH_COMMAND"' ERR
+fi
+
 # --- Notarization credentials (App Store Connect API key) --------------------
 export APPLE_API_KEY="${APPLE_API_KEY:-$HOME/.appstoreconnect/private_keys/AuthKey_687H76CDXR.p8}"
 export APPLE_API_KEY_ID="${APPLE_API_KEY_ID:-687H76CDXR}"
@@ -21,14 +32,12 @@ TEAM_ID="${TEAM_ID:-D2U492GTU7}"
 
 # --- Preflight ---------------------------------------------------------------
 if ! security find-identity -v -p codesigning | grep -q "Developer ID Application"; then
-  echo "✗ No 'Developer ID Application' certificate found in the keychain." >&2
-  echo "  Create one (Xcode → Settings → Accounts → Manage Certificates → +," >&2
-  echo "  or the Apple Developer portal) before running a release build." >&2
-  exit 1
+  # Without -v, find-identity also lists identities it rejects, with the reason
+  # (expired, untrusted chain, missing private key, …).
+  fail "No valid 'Developer ID Application' identity in the keychain. All identities: $(security find-identity -p codesigning 2>&1 | tr '\n' ' ')"
 fi
 if [ ! -f "$APPLE_API_KEY" ] && [ "${SKIP_NOTARIZE:-}" != "true" ]; then
-  echo "✗ App Store Connect API key not found at: $APPLE_API_KEY" >&2
-  exit 1
+  fail "App Store Connect API key not found at: $APPLE_API_KEY"
 fi
 
 echo "→ Building Developer ID release for arch=$ARCH, team=$TEAM_ID"
@@ -62,11 +71,10 @@ case "$ARCH" in
 esac
 if [ -n "$APP_OUT_DIR" ]; then
   BUNDLED_TMUX="$APP_OUT_DIR/Tmux Desk.app/Contents/Resources/bin/tmux"
-  [ -x "$BUNDLED_TMUX" ] || { echo "✗ bundled tmux missing: $BUNDLED_TMUX" >&2; exit 1; }
+  [ -x "$BUNDLED_TMUX" ] || fail "bundled tmux missing: $BUNDLED_TMUX"
   codesign --verify --strict "$BUNDLED_TMUX"
   if ! codesign -dv "$BUNDLED_TMUX" 2>&1 | grep -q 'flags=.*runtime'; then
-    echo "✗ bundled tmux is not signed with the hardened runtime" >&2
-    exit 1
+    fail "bundled tmux is not signed with the hardened runtime"
   fi
   echo "✓ bundled tmux: $(lipo -archs "$BUNDLED_TMUX"), signed"
 fi
@@ -112,18 +120,30 @@ SUBMIT_TARGET=""
 [ -f "$DMG" ] && SUBMIT_TARGET="$DMG"
 [ -z "$SUBMIT_TARGET" ] && [ -f "$ZIP" ] && SUBMIT_TARGET="$ZIP"
 if [ -z "$SUBMIT_TARGET" ]; then
-  echo "✗ Neither DMG nor ZIP found to notarize ($DMG / $ZIP)" >&2
-  exit 1
+  fail "Neither DMG nor ZIP found to notarize ($DMG / $ZIP)"
 fi
 
 echo "→ Submitting $(basename "$SUBMIT_TARGET") for notarization (covers DMG+ZIP, same cdhash) …"
-env -u http_proxy -u https_proxy -u all_proxy \
+# The DMG/ZIP already exist at this point and look final. If notarization does
+# not come back Accepted, rename them so nobody ships them: on other Macs an
+# unnotarized build is blocked until the user overrides it in Privacy & Security.
+# (A lapsed Apple Developer agreement fails here with HTTP 403 "A required
+# agreement is missing or has expired" — the account holder must accept it at
+# developer.apple.com/account.)
+NOTARY_OUT="$(mktemp -t tmux-desk-notary)"
+if ! env -u http_proxy -u https_proxy -u all_proxy \
     -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
   xcrun notarytool submit "$SUBMIT_TARGET" \
     --key "$APPLE_API_KEY" \
     --key-id "$APPLE_API_KEY_ID" \
     --issuer "$APPLE_API_ISSUER" \
-    --wait --timeout 30m
+    --wait --timeout 30m 2>&1 | tee "$NOTARY_OUT" \
+  || ! grep -q 'status: Accepted' "$NOTARY_OUT"; then
+  for artifact in "$DMG" "$ZIP"; do
+    [ -f "$artifact" ] && mv -f "$artifact" "${artifact%.*}-UNNOTARIZED.${artifact##*.}"
+  done
+  fail "Notarization did not succeed; artifacts renamed *-UNNOTARIZED. $(grep -m1 -iE 'error|status:' "$NOTARY_OUT" | tr -d '\n')"
+fi
 
 # Staple each artifact. A DMG staples directly; a ZIP cannot be stapled (staple
 # the .app before re-zipping if offline stapling of the ZIP is needed).
