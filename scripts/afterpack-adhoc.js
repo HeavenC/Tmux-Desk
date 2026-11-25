@@ -141,6 +141,21 @@ exports.default = async function afterPack(context) {
     ], { stdio: 'inherit' });
     console.timeEnd('  • codesign');
     console.log(`  • ${appName} signed`);
+    // Only release-mac.sh sets REQUIRE_DEVELOPER_ID, and only when it will go
+    // on to notarize. Anything else (npm run package:mac*) yields a build that
+    // looks official but that Gatekeeper blocks on every other Mac until the
+    // user clicks "Open Anyway" in Privacy & Security.
+    if (!/^(1|true)$/i.test(process.env.REQUIRE_DEVELOPER_ID || '')) {
+      console.warn([
+        '',
+        '  ⚠ This build is Developer ID-signed but will NOT be notarized.',
+        '    Fine on this Mac; on any other Mac Gatekeeper blocks it as',
+        '    "cannot verify it is free of malware". To hand it to someone,',
+        // context.arch is electron-builder's Arch enum: 1 = x64, 3 = arm64, 4 = universal.
+        `    use: npm run release:mac${{ 1: ':x64', 4: ':universal' }[context.arch] || ''}  (signs, notarizes, staples)`,
+        '',
+      ].join('\n'));
+    }
   } else {
     // Ad-hoc signing — no Developer ID certificate available
     console.log(`  • ad-hoc signing ${appName} …`);

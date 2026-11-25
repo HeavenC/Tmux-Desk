@@ -11,6 +11,7 @@ const { PreferencesStore } = require('./preferences-store');
 const { SessionSnapshotService } = require('./session-snapshot');
 const { TerminalManager } = require('./terminal-manager');
 const { TmuxService } = require('./tmux-service');
+const { installBundledTmux } = require('./bundled-tmux');
 const { createTransferBridge } = require('./transfer-bridge');
 const { createWebControl } = require('./web-control');
 
@@ -179,11 +180,18 @@ async function bootstrap() {
   const socketName = typeof process.env.TMUX_DESK_SOCKET === 'string' && process.env.TMUX_DESK_SOCKET.trim()
     ? process.env.TMUX_DESK_SOCKET.trim()
     : null;
-  // Prefer a tmux binary bundled inside the .app (Contents/Resources/bin/tmux)
-  // so the app can ship self-contained; falls back to Homebrew / system tmux.
-  const bundledTmux = app.isPackaged ? path.join(process.resourcesPath, 'bin', 'tmux') : null;
-  const tmuxService = new TmuxService({ tmuxPath: bundledTmux, socketName });
-  const tmuxPath = await tmuxService.resolveTmuxPath();
+  const tmuxService = new TmuxService({ socketName });
+  let tmuxPath = await tmuxService.resolveTmuxPath();
+  // No tmux on this machine: fall back to the one shipped in the .app
+  // (Contents/Resources/bin/tmux, present in builds that bundle it), installed
+  // next to preferences.json so the server never runs from inside the bundle.
+  if (!tmuxPath && app.isPackaged) {
+    tmuxService.fallbackTmuxPath = await installBundledTmux({
+      source: path.join(process.resourcesPath, 'bin', 'tmux'),
+      targetDir: path.join(path.dirname(preferencesFilePath), 'bin'),
+    });
+    tmuxPath = await tmuxService.resolveTmuxPath();
+  }
   // Kick the tmux server awake so config-driven restore plugins (e.g.
   // tmux-continuum's auto-restore after a reboot) run at app launch instead of
   // waiting for the first session command. start-server is a no-op on a running

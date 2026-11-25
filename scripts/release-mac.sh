@@ -33,6 +33,15 @@ fi
 
 echo "→ Building Developer ID release for arch=$ARCH, team=$TEAM_ID"
 
+# --- Bundled tmux ------------------------------------------------------------
+# Intel Macs can no longer count on Homebrew, so the x64 build carries its own
+# tmux (the app only falls back to it when the machine has none). A universal
+# build merges an x64 and an arm64 app, so both slices need one.
+case "$ARCH" in
+  x64)       scripts/build-tmux.sh x64 ;;
+  universal) scripts/build-tmux.sh x64 && scripts/build-tmux.sh arm64 ;;
+esac
+
 # --- Package (signing skipped — afterPack handles it in one deep-sign) --------
 export CSC_IDENTITY_AUTO_DISCOVERY=false
 export APPLE_TEAM_ID="$TEAM_ID"
@@ -43,6 +52,24 @@ if [ "${SKIP_NOTARIZE:-}" != "true" ]; then
   export REQUIRE_DEVELOPER_ID=true
 fi
 npx electron-builder --mac "--$ARCH"
+
+# Catch a missing or unsigned bundled tmux here, not as an "Invalid" verdict
+# after a long notarization wait.
+case "$ARCH" in
+  x64)       APP_OUT_DIR=dist/mac ;;
+  universal) APP_OUT_DIR=dist/mac-universal ;;
+  *)         APP_OUT_DIR= ;;
+esac
+if [ -n "$APP_OUT_DIR" ]; then
+  BUNDLED_TMUX="$APP_OUT_DIR/Tmux Desk.app/Contents/Resources/bin/tmux"
+  [ -x "$BUNDLED_TMUX" ] || { echo "✗ bundled tmux missing: $BUNDLED_TMUX" >&2; exit 1; }
+  codesign --verify --strict "$BUNDLED_TMUX"
+  if ! codesign -dv "$BUNDLED_TMUX" 2>&1 | grep -q 'flags=.*runtime'; then
+    echo "✗ bundled tmux is not signed with the hardened runtime" >&2
+    exit 1
+  fi
+  echo "✓ bundled tmux: $(lipo -archs "$BUNDLED_TMUX"), signed"
+fi
 
 # --- Notarize & staple -------------------------------------------------------
 APP_NAME="Tmux Desk"

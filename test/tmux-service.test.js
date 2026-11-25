@@ -92,6 +92,28 @@ test('resolveTmuxPath finds a MacPorts tmux without relying on PATH', async () =
   assert.equal(await service.resolveTmuxPath(), '/opt/local/bin/tmux');
 });
 
+test('resolveTmuxPath prefers an installed tmux over the bundled fallback', async () => {
+  const service = new TmuxService({
+    fallbackTmuxPath: '/app/bin/tmux',
+    fsImpl: executableFs(['/opt/local/bin/tmux', '/app/bin/tmux']),
+    execFileImpl: async () => {
+      throw new Error('which should not be called');
+    },
+  });
+  assert.equal(await service.resolveTmuxPath(), '/opt/local/bin/tmux');
+});
+
+test('resolveTmuxPath uses the bundled fallback before spawning which', async () => {
+  const service = new TmuxService({
+    fallbackTmuxPath: '/app/bin/tmux',
+    fsImpl: executableFs(['/app/bin/tmux']),
+    execFileImpl: async () => {
+      throw new Error('which should not be called');
+    },
+  });
+  assert.equal(await service.resolveTmuxPath(), '/app/bin/tmux');
+});
+
 test('resolveTmuxPath skips a non-executable configured override', async () => {
   const checks = [];
   const service = new TmuxService({

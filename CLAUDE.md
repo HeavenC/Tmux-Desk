@@ -350,3 +350,23 @@ e2e 用 `list-clients -F '#{client_termfeatures}'` 回读验证（tmux 会额外
 - 带 CDP 起调试实例：`npx electron . --remote-debugging-port=9223`（无单实例锁，可与正式实例并存；**注意它会按 lastSession 自动 attach，可能连到用户正在用的会话——测试前必须先切到专用测试会话**，双客户端 attach 还会把会话 resize 到最小客户端）。
 - **不重启就探查正在运行的正式实例**（fuse `EnableNodeCliInspectArguments` 是开的）：`kill -USR1 <主进程pid>` → 主进程在 `127.0.0.1:9229` 开 Node inspector；通过 `/json/list` 拿 ws 地址，`Runtime.evaluate`（加 `includeCommandLineAPI:true` 才能用 `require`）执行 `require('electron').webContents.fromId(1).executeJavaScript(...)`，就能读 renderer 状态或挂事件记录器。在主进程里 `execFile osascript -l JavaScript`（`TISCopyCurrentKeyboardInputSource`）可以拿到当前输入源（ssh 会话里直接跑拿不到）。查完用 `process._debugEnd()` 关掉端口（`inspector.close()` 关不掉）。
 - IME 可用 CDP `Input.imeSetComposition` + `Input.insertText` 模拟；tmux 侧行为可用 node-pty 模拟客户端隔离验证（repo 依赖里有 node-pty）。
+
+## 打包与发版
+
+### Intel 安装包自带 tmux（2026-11-25）
+- 起因：Homebrew 已把 Intel Mac 降为 Tier 3（不再提供预编译包，2027-09 彻底移除），Intel 用户装不上 tmux，app 一打开就是「未找到 tmux」。
+- `scripts/build-tmux.sh <x64|arm64>` 从源码编出**静态链接**的 tmux 3.7b（libevent / ncurses / utf8proc 都编成 `.a`），产物只依赖 `/usr/lib`，放到 `vendor/bin/<arch>/tmux`（不进 git）。`release-mac.sh x64|universal` 和 `package:mac:x64|universal` 都会先跑它，有构建戳，没变就跳过。`extraResources` 按 `${arch}` 只收 `tmux` 这一个文件。CI 的 Intel 任务是在 Intel 机器上本机编译，大约 1 分钟。
+- **本机装了 tmux 就用本机的，自带的只兜底**：查找顺序是系统候选路径 → 自带 → `which`。自带排在 `which` 前面，是因为每条 tmux 命令都会解析一次路径，只靠自带 tmux 的用户每条命令都会多跑一个 `which` 进程。
+- **自带的 tmux 不在 `.app` 里原地运行**：启动时拷到偏好文件旁的 `bin/tmux`（`src/main/bundled-tmux.js`）。tmux server 会常驻，原地运行的话，从 DMG 里直接打开 app，DMG 就推不出来，强行推出会把会话全带走。更新拷贝时**先写临时文件再 rename**，原地覆盖一个正在执行的二进制可能让在跑的 server 崩掉。
+- 构建上的坑：
+  - tmux configure 里 utf8proc 那段 `PKG_CHECK_MODULES` 没写回退分支，没有 pkg-config 就直接报错；而 Intel CI 机器的 `/usr/local/lib` 里有 Homebrew 的同名动态库，ld 默认会搜这个目录。所以每个库都用 `LIBEVENT_CORE_LIBS` / `LIBTINFOW_LIBS` / `LIBUTF8PROC_LIBS` 直接指向 `.a` 的完整路径，完全绕开 pkg-config。
+  - `--with-TERM=screen-256color`：`tmux-256color` 从 Sonoma 起才进系统 terminfo，pane 里的程序用的是系统 ncurses，旧系统上会报 unknown terminal。这个默认值 configure 本来是在编译机上用 `setupterm` 探测的，交叉编译时会退回成 `screen`。
+  - ncurses 要加 `--disable-mixed-case`：macOS 的 terminfo 目录用十六进制命名（`78/xterm-256color`）。
+  - libevent 用 release 附件而不是 git 存档：存档里没有 `configure`，CI 上就得多装 autotools。两者的 149 个 `.c/.h` 已逐字节比对一致。
+- 冒烟测试怎么查 terminfo：detach 模式的会话根本不读客户端 TERM 的 terminfo，必须用 `script -q /dev/null tmux new-session 'exit 0'` 真 attach 一次，再 grep `missing or unsuitable terminal`。中文宽度用 `#{w:@probe}` 检查。x64 产物要在装了 Rosetta 的 Apple Silicon Mac 上跑同样的命令才能验证。
+
+### 签了名 ≠ 能发给别人：`package:mac*` 不公证
+- 现象：本地打的 x64 包发给用户，对方打开时被拦，要去「隐私与安全性」里点「仍要打开」。
+- 原因：`npm run package:mac*` 只调 electron-builder。afterPack 在钥匙串里找到 Developer ID 就自动签上，所以看起来像正式包，但**从来不提交公证**。`spctl -a -vvv --type execute <app>` 会给出 `rejected / source=Unnotarized Developer ID`。
+- 要分发一律走 `npm run release:mac[:x64|:universal]`（签名 + 公证 + staple）或者 CI tag。afterPack 现在会在「签了 Developer ID 但这次不会公证」时打警告（判断依据：只有 `release-mac.sh` 会设 `REQUIRE_DEVELOPER_ID`）。
+- 排查三件套：`spctl -a -vvv --type execute`、`xcrun stapler validate <dmg>`、`xcrun notarytool history`（看有没有提交过）。

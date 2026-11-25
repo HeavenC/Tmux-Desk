@@ -11,3 +11,8 @@ coverage/
 .Codex/
 docs/superpowers/
 export-plus-*.md
+
+# Bundled tmux: built by scripts/build-tmux.sh, never committed
+.tmux-build/
+vendor/bin/*/tmux
+vendor/bin/*/.tmux-build-stamp

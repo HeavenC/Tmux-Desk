@@ -103,7 +103,7 @@ function validateName(name) {
 }
 
 class TmuxService {
-  constructor({ tmuxPath, execFileImpl, socketName, fsImpl, env, platform } = {}) {
+  constructor({ tmuxPath, fallbackTmuxPath, execFileImpl, socketName, fsImpl, env, platform } = {}) {
     this.platform = platform || process.platform;
     this.isWindows = isWindows(this.platform);
     // Select path semantics by target platform, not the ambient module, so cwd
@@ -112,6 +112,10 @@ class TmuxService {
     // like C:\x is only absolute under win32.
     this.pathLib = this.isWindows ? path.win32 : path.posix;
     this.tmuxPath = tmuxPath || null;
+    // The tmux shipped with the app: used only when the machine has none of
+    // its own, so a user's installed tmux keeps serving both the app and their
+    // other terminals.
+    this.fallbackTmuxPath = fallbackTmuxPath || null;
     this.env = withUtf8Locale(env || process.env);
     // maxBuffer: capture-pane can return a pane's whole scrollback (20k lines is
     // ~1.6 MB of text), and Node's 1 MiB default would turn cross-session search
@@ -127,25 +131,20 @@ class TmuxService {
     // Windows binary to probe. The WSL launcher (buildTmuxInvocation) prefixes it
     // with wsl.exe when a command actually runs.
     if (this.isWindows) {
-      // Ignore this.tmuxPath here: it is meant for the bundled mac binary and
-      // would be a Windows path that means nothing inside WSL.
+      // Ignore tmuxPath/fallbackTmuxPath here: they name host binaries, which
+      // mean nothing inside WSL.
       return wslConfig(this.env).tmux;
     }
-    if (this.tmuxPath) {
-      try {
-        this.fs.accessSync(this.tmuxPath, this.fs.constants.X_OK);
-        return this.tmuxPath;
-      } catch {
-        // Fall through to the standard Homebrew, system, and PATH candidates.
-      }
-    }
-
-    for (const candidate of TMUX_CANDIDATES) {
+    // The bundled fallback goes before `which`: this runs for every tmux
+    // command, and a user relying on it would otherwise pay a `which` process
+    // each time.
+    const candidates = [this.tmuxPath, ...TMUX_CANDIDATES, this.fallbackTmuxPath].filter(Boolean);
+    for (const candidate of candidates) {
       try {
         this.fs.accessSync(candidate, this.fs.constants.X_OK);
         return candidate;
       } catch {
-        // Try the next standard Homebrew or system location.
+        // Try the next location.
       }
     }
 

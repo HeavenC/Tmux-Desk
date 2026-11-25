@@ -15,8 +15,8 @@
     "test": "node --test test/*.test.js",
     "test:integration": "node --test test/integration/*.test.js",
     "package:mac": "npm run build && electron-builder --mac --arm64",
-    "package:mac:x64": "npm run build && electron-builder --mac --x64",
-    "package:mac:universal": "npm run build && electron-builder --mac --universal",
+    "package:mac:x64": "npm run build && scripts/build-tmux.sh x64 && electron-builder --mac --x64",
+    "package:mac:universal": "npm run build && scripts/build-tmux.sh x64 && scripts/build-tmux.sh arm64 && electron-builder --mac --universal",
     "package:win": "npm run build && electron-builder --win nsis --x64",
     "release:mac": "npm run build && scripts/release-mac.sh arm64",
     "release:mac:x64": "npm run build && scripts/release-mac.sh x64",
@@ -55,10 +55,10 @@
     ],
     "extraResources": [
       {
-        "from": "vendor/bin",
+        "from": "vendor/bin/${arch}",
         "to": "bin",
         "filter": [
-          "**/*"
+          "tmux"
         ]
       }
     ],
