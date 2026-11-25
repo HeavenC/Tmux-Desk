@@ -45,7 +45,7 @@ jobs:
       matrix:
         include:
           - name: macOS arm64
-            os: macos-14
+            os: macos-15
             script: release:mac
           - name: macOS x64
             # Intel runner — node-pty's native module is built for the runner's arch.

@@ -31,7 +31,9 @@ export APPLE_API_ISSUER="${APPLE_API_ISSUER:-9010e018-efeb-4531-80f6-40d2e999e38
 TEAM_ID="${TEAM_ID:-D2U492GTU7}"
 
 # --- Preflight ---------------------------------------------------------------
-if ! security find-identity -v -p codesigning | grep -q "Developer ID Application"; then
+# Match against captured output, never `cmd | grep -q`: under pipefail, grep -q
+# exiting at the first match can SIGPIPE the writer and fail the whole check.
+if [[ "$(security find-identity -v -p codesigning)" != *"Developer ID Application"* ]]; then
   # Without -v, find-identity also lists identities it rejects, with the reason
   # (expired, untrusted chain, missing private key, …).
   fail "No valid 'Developer ID Application' identity in the keychain. All identities: $(security find-identity -p codesigning 2>&1 | tr '\n' ' ')"
@@ -73,7 +75,7 @@ if [ -n "$APP_OUT_DIR" ]; then
   BUNDLED_TMUX="$APP_OUT_DIR/Tmux Desk.app/Contents/Resources/bin/tmux"
   [ -x "$BUNDLED_TMUX" ] || fail "bundled tmux missing: $BUNDLED_TMUX"
   codesign --verify --strict "$BUNDLED_TMUX"
-  if ! codesign -dv "$BUNDLED_TMUX" 2>&1 | grep -q 'flags=.*runtime'; then
+  if [[ "$(codesign -dv "$BUNDLED_TMUX" 2>&1)" != *flags=*runtime* ]]; then
     fail "bundled tmux is not signed with the hardened runtime"
   fi
   echo "✓ bundled tmux: $(lipo -archs "$BUNDLED_TMUX"), signed"
