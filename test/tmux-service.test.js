@@ -81,6 +81,17 @@ test('resolveTmuxPath uses the configured override then the exact candidates and
   assert.deepEqual(calls.at(-1), { file: '/usr/bin/which', args: ['tmux'] });
 });
 
+test('resolveTmuxPath finds a MacPorts tmux without relying on PATH', async () => {
+  const service = new TmuxService({
+    fsImpl: executableFs(['/opt/local/bin/tmux']),
+    execFileImpl: async () => {
+      throw new Error('which should not be called');
+    },
+  });
+
+  assert.equal(await service.resolveTmuxPath(), '/opt/local/bin/tmux');
+});
+
 test('resolveTmuxPath skips a non-executable configured override', async () => {
   const checks = [];
   const service = new TmuxService({
@@ -332,7 +343,7 @@ test('listSessions treats only no-server errors as an empty result', async () =>
 
 test('tmux failures normalize to stable error codes and messages', async () => {
   const cases = [
-    [{ code: 'ENOENT', stderr: '' }, 'TMUX_NOT_FOUND', '未找到 tmux，请先运行 brew install tmux'],
+    [{ code: 'ENOENT', stderr: '' }, 'TMUX_NOT_FOUND', '未找到 tmux，请先运行 brew install tmux（Intel Mac 可用 MacPorts：sudo port install tmux）'],
     [{ stderr: 'failed to connect to server' }, 'NO_SERVER', 'tmux 服务尚未启动'],
     [{ stderr: 'duplicate session: demo' }, 'SESSION_EXISTS', '已存在同名 tmux 会话'],
     [{ stderr: 'permission denied\n' }, 'COMMAND_FAILED', 'tmux 操作失败：permission denied'],

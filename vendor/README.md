@@ -4,7 +4,7 @@ Tmux Desk 是 tmux 的图形前端，运行时**依赖本机的 tmux**（它通�
 并用 node-pty attach 到会话）。默认情况下应用按以下顺序查找 tmux：
 
 1. `Contents/Resources/bin/tmux`（本目录打包进 `.app` 后的位置）—— **如果存在就优先用它**
-2. `/opt/homebrew/bin/tmux`、`/usr/local/bin/tmux`、`/usr/bin/tmux`
+2. `/opt/homebrew/bin/tmux`、`/usr/local/bin/tmux`、`/opt/local/bin/tmux`（MacPorts）、`/usr/bin/tmux`
 3. `which tmux`（PATH）
 
 所以对于**没装 tmux 的用户**，只要把一个可执行的 tmux 二进制放到 `vendor/bin/tmux`，

@@ -17,6 +17,10 @@ const PANE_TARGET = /^%\d+$/;
 const TMUX_CANDIDATES = [
   '/opt/homebrew/bin/tmux',
   '/usr/local/bin/tmux',
+  // MacPorts. Intel Macs lost first-class Homebrew support, so this is where
+  // their tmux usually lives; a Dock-launched app has no /opt/local/bin on PATH,
+  // so the `which` fallback below would never find it.
+  '/opt/local/bin/tmux',
   '/usr/bin/tmux',
 ];
 
@@ -48,7 +52,7 @@ function errorFromTmux(error) {
   const message = stderr.toLowerCase();
 
   if (error && error.code === 'ENOENT') {
-    return new TmuxError('TMUX_NOT_FOUND', '未找到 tmux，请先运行 brew install tmux');
+    return new TmuxError('TMUX_NOT_FOUND', '未找到 tmux，请先运行 brew install tmux（Intel Mac 可用 MacPorts：sudo port install tmux）');
   }
   if (message.includes('no server running on') || message.includes('failed to connect to server')) {
     return new TmuxError('NO_SERVER', 'tmux 服务尚未启动');
@@ -65,7 +69,7 @@ function errorFromTmux(error) {
 function notFoundMessage(windows) {
   return windows
     ? '未找到 WSL 或其中的 tmux，请安装 WSL 并在其中运行 apt install tmux'
-    : '未找到 tmux，请先运行 brew install tmux';
+    : '未找到 tmux，请先运行 brew install tmux（Intel Mac 可用 MacPorts：sudo port install tmux）';
 }
 
 // On Windows, tell apart "WSL itself is missing" from "tmux is missing inside a
