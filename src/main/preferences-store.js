@@ -36,6 +36,9 @@ const DEFAULT_PREFERENCES = Object.freeze({
   // renderer) so the web-server can read reshare-enabled hosts' tokens to proxy.
   // Excluded from publicPreferences, so tokens never reach web clients.
   remoteConnections: [],
+  // { [connectionId]: { id, name } } — the session last open on each remote
+  // host, so switching back to that host lands on it again.
+  remoteLastSessions: {},
   // The app-managed tmux profile is deliberately complete and deterministic:
   // a user does not need a ~/.tmux.conf to get the same iTerm-like behavior.
   tmuxSettings: DEFAULT_TMUX_SETTINGS,
@@ -125,6 +128,7 @@ function renameInTabOrders(tabOrders, oldValue, newValue) {
 
 function normalizePreferences(value = {}) {
   const tags = normalizeTags(value.tags);
+  const remoteConnections = normalizeRemoteConnections(value.remoteConnections);
   return {
     theme: VALID_THEMES.has(value.theme) ? value.theme : DEFAULT_PREFERENCES.theme,
     favorites: normalizeFavorites(value.favorites),
@@ -147,7 +151,8 @@ function normalizePreferences(value = {}) {
       ? value.autoShare
       : DEFAULT_PREFERENCES.autoShare,
     webQuickKeys: normalizeWebQuickKeys(value.webQuickKeys),
-    remoteConnections: normalizeRemoteConnections(value.remoteConnections),
+    remoteConnections,
+    remoteLastSessions: normalizeRemoteLastSessions(value.remoteLastSessions, remoteConnections),
     tmuxSettings: normalizeTmuxSettings(value.tmuxSettings, value.tmuxDefaults),
     terminalAppearance: normalizeTerminalAppearance(value.terminalAppearance),
     pasteProtection: normalizePasteGuard(value.pasteProtection),
@@ -183,6 +188,27 @@ function normalizeRemoteConnections(value) {
     const label = typeof item.label === 'string' && item.label.trim() ? item.label.trim().slice(0, 60) : base;
     out.push({ id, base, token, label, reshare: item.reshare === true });
     if (out.length >= 50) break;
+  }
+  return out;
+}
+
+function boundedSessionText(value) {
+  return typeof value === 'string' && value && value.length <= 200 && !/[\x00-\x1f\x7f]/.test(value)
+    ? value
+    : null;
+}
+
+// Entries are kept only for hosts that still exist, so removing a connection
+// needs no cleanup of its own.
+function normalizeRemoteLastSessions(value, connections) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const ids = new Set(connections.map((connection) => connection.id));
+  const out = {};
+  for (const [connectionId, entry] of Object.entries(value)) {
+    if (!ids.has(connectionId) || !entry || typeof entry !== 'object') continue;
+    const id = boundedSessionText(entry.id);
+    const name = boundedSessionText(entry.name);
+    if (id && name) out[connectionId] = { id, name };
   }
   return out;
 }

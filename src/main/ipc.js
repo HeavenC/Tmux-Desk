@@ -228,7 +228,7 @@ function validateTabOrders(value) {
 
 function validatePreferencesPatch(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('偏好设置无效');
-  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders', 'keepAwake', 'autoShare', 'tmuxSettings', 'terminalAppearance', 'pasteProtection', 'sessionRestore']);
+  const allowed = new Set(['theme', 'lastSession', 'windowBounds', 'sidebarWidth', 'tagRailExpanded', 'tagRailWidth', 'tabOrders', 'keepAwake', 'autoShare', 'tmuxSettings', 'terminalAppearance', 'pasteProtection', 'sessionRestore', 'remoteLastSessions']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new Error('偏好字段无效');
   }
@@ -276,6 +276,26 @@ function validatePreferencesPatch(value) {
     result.sessionRestore = normalizeSessionRestore(value.sessionRestore);
   }
   if ('tabOrders' in value) result.tabOrders = validateTabOrders(value.tabOrders);
+  if ('remoteLastSessions' in value) result.remoteLastSessions = validateRemoteLastSessions(value.remoteLastSessions);
+  return result;
+}
+
+// Shape only: entries for unknown connection ids are dropped by the store's
+// normalization, which knows the saved connections.
+function validateRemoteLastSessions(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('远程会话记录无效');
+  const entries = Object.entries(value);
+  if (entries.length > 50) throw new Error('远程会话记录无效');
+  const result = {};
+  for (const [connectionId, entry] of entries) {
+    const valid = /^[a-zA-Z0-9-]{1,64}$/.test(connectionId)
+      && entry && typeof entry === 'object'
+      && [entry.id, entry.name].every((text) => (
+        typeof text === 'string' && text && text.length <= 200 && !/[\x00-\x1f\x7f]/.test(text)
+      ));
+    if (!valid) throw new Error('远程会话记录无效');
+    result[connectionId] = { id: entry.id, name: entry.name };
+  }
   return result;
 }
 

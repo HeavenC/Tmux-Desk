@@ -30,7 +30,7 @@ const state = {
   systemStatus: { installed: false, path: null, version: null },
   preferences: {
     theme: 'light', favorites: [], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null, sidebarWidth: null,
-    tagRailExpanded: false, tagRailWidth: null, keepAwake: false, autoShare: false, remoteConnections: [],
+    tagRailExpanded: false, tagRailWidth: null, keepAwake: false, autoShare: false, remoteConnections: [], remoteLastSessions: {},
     tmuxSettings: { ...DEFAULT_TMUX_SETTINGS },
     sessionRestore: { enabled: true, autoRestore: true, repairCwd: true, intervalMinutes: 3 },
   },
@@ -45,7 +45,10 @@ const state = {
   paneSearch: null,
   query: '',
   view: { kind: 'all' },
-  refreshing: false,
+  // Set by a source switch: the first listing that arrives (possibly a later
+  // poll, if the host was unreachable at switch time) reopens the session the
+  // user left on that source.
+  restorePending: false,
   commandIndex: 0,
   // key = source + session + dir the panel shows; transfers = live/finished
   // cross-device transfer rows (see startTransfer).
@@ -71,6 +74,8 @@ let pollTimer = null;
 let lastOfflinePoll = 0;
 let selectionToken = 0;
 let sourceToken = 0;
+// sourceToken of the refresh in flight, if any (see refreshSessions).
+let refreshingToken = null;
 let tagActivationToken = 0;
 let draggedTabName = null;
 
@@ -2843,8 +2848,7 @@ async function setView(view, { tagRailPreviousPositions = null } = {}) {
 
   if (nextView.kind === 'all') {
     if (!selectedSession() && state.sessions.length) {
-      const preferred = state.sessions.find((session) => session.name === state.preferences.lastSession) || state.sessions[0];
-      await selectSession(preferred);
+      await selectSession(rememberedSession(state.sessions) || state.sessions[0]);
     } else {
       terminalView?.focus();
     }
@@ -2869,18 +2873,15 @@ async function selectSession(session) {
   }
   const token = ++selectionToken;
   state.selectedSessionId = session.id;
+  state.restorePending = false;
   state.detail = { windows: [], panes: [] };
   refs.terminalReconnect.classList.add('hidden');
   renderSessionList();
   renderSessionTabs();
   renderWorkspace();
   renderDetail();
+  rememberSelection(session);
   try {
-    // lastSession is a local-machine preference; a remote session name could
-    // collide with a local one, so only persist it for the local source.
-    if (!isRemoteActive()) {
-      state.preferences = await api.savePreferences({ lastSession: session.name });
-    }
     await Promise.all([refreshDetail(), terminalView.attach(session.id)]);
     if (token !== selectionToken) return;
     refs.workspaceStatus.textContent = t('workspace.statusAttached', { windows: session.windows || 0, panes: session.paneCount || 0 });
@@ -2892,10 +2893,48 @@ async function selectSession(session) {
   }
 }
 
+// Which session to land on when a source's list arrives: the one the user was
+// on when they last left that source. Local matches by name (tmux reuses ids
+// after a server restart). A remote host keeps id + name: a host that reshares
+// others can list two sessions with the same name, and the id still finds one
+// that was renamed since.
+function rememberedSession(sessions) {
+  if (!isRemoteActive()) return sessions.find((session) => session.name === state.preferences.lastSession) || null;
+  const saved = state.preferences.remoteLastSessions?.[state.source.id];
+  if (!saved) return null;
+  return sessions.find((session) => session.id === saved.id && session.name === saved.name)
+    || sessions.find((session) => session.name === saved.name)
+    || sessions.find((session) => session.id === saved.id)
+    || null;
+}
+
+// Best effort and off the attach path: a failed write only costs the restore.
+function rememberSelection(session) {
+  let patch;
+  if (!isRemoteActive()) {
+    patch = { lastSession: session.name };
+  } else {
+    const saved = state.preferences.remoteLastSessions?.[state.source.id];
+    if (saved && saved.id === session.id && saved.name === session.name) return;
+    patch = {
+      remoteLastSessions: {
+        ...(state.preferences.remoteLastSessions || {}),
+        [state.source.id]: { id: session.id, name: session.name },
+      },
+    };
+  }
+  api.savePreferences(patch).then((preferences) => { state.preferences = preferences; }, () => {});
+}
+
 async function refreshSessions({ initial = false, notify = false, poll = false } = {}) {
-  if (state.refreshing) return;
-  state.refreshing = true;
+  // One refresh per source at a time. One still waiting on the source the user
+  // just left must not hold up the new source's first listing — an unreachable
+  // host keeps it for the whole request timeout, and the switch's own refresh
+  // would be dropped, leaving nothing selected. Its answer is discarded by the
+  // token checks below anyway.
+  if (refreshingToken === sourceToken) return;
   const token = sourceToken;
+  refreshingToken = token;
   refs.refreshButton.classList.add('spinning');
   try {
     if (isRemoteActive()) {
@@ -2938,6 +2977,7 @@ async function refreshSessions({ initial = false, notify = false, poll = false }
       state.selectedSessionId = null;
       state.detail = { windows: [], panes: [] };
       await terminalView.detach();
+      if (token !== sourceToken) return;
       syncFileBrowser();
       if (!initial) toast(t('toast.sessionClosedExternally'), 'error');
     }
@@ -2956,12 +2996,13 @@ async function refreshSessions({ initial = false, notify = false, poll = false }
       }
     } else if (state.selectedSessionId) {
       await refreshDetail();
-    } else if (initial && sessions.length) {
-      const preferred = sessions.find((session) => session.name === state.preferences.lastSession) || sessions[0];
-      await selectSession(preferred);
+    } else if ((initial || state.restorePending) && sessions.length) {
+      await selectSession(rememberedSession(sessions) || sessions[0]);
     }
     if (notify) toast(t('toast.sessionsRefreshed'));
   } catch (error) {
+    // The source we left failing must not mark the one now shown as offline.
+    if (token !== sourceToken) return;
     if (isRemoteActive()) {
       state.remoteProbes.set(state.source.id, { status: 'offline', error: error?.message, at: Date.now() });
       if (state.sourceStatus !== 'offline') {
@@ -2974,8 +3015,10 @@ async function refreshSessions({ initial = false, notify = false, poll = false }
     // user-initiated refreshes surface the error.
     if (!poll) toast(friendlyError(error), 'error');
   } finally {
-    state.refreshing = false;
-    refs.refreshButton.classList.remove('spinning');
+    if (refreshingToken === token) {
+      refreshingToken = null;
+      refs.refreshButton.classList.remove('spinning');
+    }
   }
 }
 
@@ -3970,6 +4013,7 @@ async function switchSource(source) {
   state.query = '';
   if (refs.sessionSearch) refs.sessionSearch.value = '';
   state.view = { kind: 'all' };
+  state.restorePending = true;
   state.sourceStatus = source.kind === 'remote' ? 'connecting' : 'online';
   terminalView.setApi(sessionApi());
   renderSourceBar();

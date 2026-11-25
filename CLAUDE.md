@@ -333,6 +333,14 @@ e2e 用 `list-clients -F '#{client_termfeatures}'` 回读验证（tmux 会额外
 - `ensureRemoteApi()` 现在会比对 `base`/`token`：连接被改过（IP 变了/换 token）时丢掉旧实例重建，否则会一直对着死地址说话。
 - 回归测试 `test/remote-api.test.js`：用一个 accept 后**永不回包**的 http server 模拟黑洞，断言 request 在自己的 deadline 内 reject、`probe()` 返回 `{ok:false}` 而不是抛。
 
+#### 切换主机后回到上次所在的会话（2026-11-25）
+- 现象：本机 ↔ 远程主机来回切，选中的会话被重置 —— 远程永远落在列表第一个，偶尔切完**什么都没选中**。
+- 原因一：切源后的自动选中只认 `preferences.lastSession`，而它只记**本机**的会话名；到了远程要么找不到（落到第一个），要么撞上一个同名的远程会话。
+- 原因二（"什么都没选中"）：`refreshSessions` 用全局 `state.refreshing` 防并发，切源时若上一个源的刷新还在路上（黑洞主机会挂满 5s 请求超时），**切源自己那次 initial 刷新被直接丢掉**；之后的轮询不是 initial，不会自动选中。
+- 修复：① 新偏好 `remoteLastSessions: {[connectionId]: {id, name}}`（`preferences:save` 白名单，`publicPreferences` 不暴露）；归一化时只保留仍存在的连接 id，**删主机不需要额外清理**。远程按「id+name → name → id」匹配：开了再分享的主机可能列出两个同名会话（本机的和 `r:` 中继的），id 又能找回改过名的会话。本机仍用 `lastSession`（按名字，tmux server 重启后 id 会复用）。② 防并发改成按源：`refreshingToken === sourceToken` 才拦，上一个源的刷新结果本来就会被 token 校验丢弃；它的 catch 也先比 token，免得把新源标成离线。③ `state.restorePending`：切源置位、任何一次选中清零 —— 切过去时主机还连不上、后面某次轮询才连上，也会自动回到上次的会话。
+- 记录选中改成不阻塞 attach（`rememberSelection` 不 await、失败静默）：之前本机的 `savePreferences` 失败会让整次 attach 走进报错分支。
+- 验证：`test/manual/source-session-restore-e2e.js`（真 Electron + 沙箱远程 web server + 一个只 accept 不回包的黑洞端口 + 一个中途才启动的 web server，13 项，含重启后恢复）。A/B：旧 renderer 挂 5 项（回到远程落在 `vm-1`、离开黑洞主机后 3s 仍未选中等）。
+
 ### Tag 导入导出（2026-07）
 设置页 Tag 区「导入/导出」→ `tags:export/import` IPC（`main.js` 的 `tagFileIO` 走 save/open 对话框）。导出 JSON `{type:'tmux-desk-tags',version,tags,sessionTags,favorites}`；导入是**合并式**（`PreferencesStore.importTagConfig`）：同名标签复用现有 id、导入 id 安全重映射、未知 id 丢弃、favorites/分配 union、可重复导入不重复。
 

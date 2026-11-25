@@ -73,6 +73,13 @@ test('preference patches allow only local UI preference fields', () => {
   assert.throws(() => validatePreferencesPatch({ tagRailWidth: 50 }), /Tag 栏宽度/);
   assert.throws(() => validatePreferencesPatch({ tagRailWidth: 1001 }), /Tag 栏宽度/);
   assert.throws(() => validatePreferencesPatch({ keepAwake: 'yes' }), /保持唤醒/);
+  assert.deepEqual(validatePreferencesPatch({ remoteLastSessions: { 'remote-a1': { id: 'r:c1:$2', name: 'api', extra: 1 } } }), {
+    remoteLastSessions: { 'remote-a1': { id: 'r:c1:$2', name: 'api' } },
+  });
+  assert.throws(() => validatePreferencesPatch({ remoteLastSessions: [] }), /远程会话记录/);
+  assert.throws(() => validatePreferencesPatch({ remoteLastSessions: { 'bad id!': { id: '$1', name: 'a' } } }), /远程会话记录/);
+  assert.throws(() => validatePreferencesPatch({ remoteLastSessions: { 'remote-a1': { id: '$1', name: 'a\nb' } } }), /远程会话记录/);
+  assert.throws(() => validatePreferencesPatch({ remoteLastSessions: { 'remote-a1': { id: '$1' } } }), /远程会话记录/);
   assert.deepEqual(
     validatePreferencesPatch({ tmuxSettings: { ...DEFAULT_TMUX_SETTINGS, mouse: false } }),
     { tmuxSettings: { ...DEFAULT_TMUX_SETTINGS, mouse: false } },

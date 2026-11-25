@@ -43,6 +43,7 @@ test('malformed and invalid preferences fall back to normalized defaults', async
     assert.deepEqual(await store.load(), {
       theme: 'light', favorites: ['api'], tags: [], sessionTags: {}, tabOrders: {}, lastSession: null, windowBounds: null,
       sidebarWidth: null, tagRailExpanded: false, tagRailWidth: null, keepAwake: false, autoShare: false, webQuickKeys: [], remoteConnections: [],
+      remoteLastSessions: {},
       tmuxSettings: { ...DEFAULT_TMUX_SETTINGS },
       terminalAppearance: { ...DEFAULT_TERMINAL_APPEARANCE },
       pasteProtection: { ...DEFAULT_PASTE_GUARD },
@@ -258,6 +259,34 @@ test('pinning holds order above the recency list and supports manual reorder', a
     assert.deepEqual(prefs.tags.map((tag) => tag.name), ['APP', 'PROD', 'DMS', 'K8S']);
     assert.equal(prefs.tags.find((tag) => tag.name === 'PROD').pinned, undefined);
   }, { createId: () => ids.shift() });
+});
+
+test('remote last sessions are kept per saved host and dropped with the host', async () => {
+  await withStore(async (store, filePath) => {
+    let ids = ['a', 'b'];
+    store.createId = () => ids.shift();
+    const { connection: a } = await store.addRemoteConnection({ base: 'http://a:8790', token: 'ta' });
+    const { connection: b } = await store.addRemoteConnection({ base: 'http://b:8790', token: 'tb' });
+    const saved = await store.save({
+      remoteLastSessions: {
+        [a.id]: { id: 'r:x:$3', name: 'api' },
+        [b.id]: { id: '$1', name: 'web' },
+        'remote-gone': { id: '$2', name: 'old' },
+      },
+    });
+    assert.deepEqual(saved.remoteLastSessions, {
+      [a.id]: { id: 'r:x:$3', name: 'api' },
+      [b.id]: { id: '$1', name: 'web' },
+    });
+
+    const removed = await store.removeRemoteConnection(a.id);
+    assert.deepEqual(removed.remoteLastSessions, { [b.id]: { id: '$1', name: 'web' } });
+
+    const raw = JSON.parse(await readFile(filePath, 'utf8'));
+    raw.remoteLastSessions = { [b.id]: { id: '', name: 'web' }, junk: 5 };
+    await writeFile(filePath, JSON.stringify(raw), 'utf8');
+    assert.deepEqual((await store.load()).remoteLastSessions, {});
+  });
 });
 
 test('web quick keys persist and normalize preset and text entries', async () => {
