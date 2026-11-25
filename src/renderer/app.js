@@ -49,6 +49,9 @@ const state = {
   // poll, if the host was unreachable at switch time) reopens the session the
   // user left on that source.
   restorePending: false,
+  // The view (all / favorites / tag) to reapply once a just-switched-to
+  // source's list — and so its tags — has arrived. See switchSource.
+  pendingView: null,
   commandIndex: 0,
   // key = source + session + dir the panel shows; transfers = live/finished
   // cross-device transfer rows (see startTransfer).
@@ -76,6 +79,9 @@ let selectionToken = 0;
 let sourceToken = 0;
 // sourceToken of the refresh in flight, if any (see refreshSessions).
 let refreshingToken = null;
+// The view each source was left in, keyed by sourceKey(). Kept for the app's
+// lifetime only, like the view itself (the app always starts on "all").
+const viewBySource = new Map();
 let tagActivationToken = 0;
 let draggedTabName = null;
 
@@ -2831,15 +2837,25 @@ async function clearSessionSelection() {
   renderDetail();
 }
 
-async function setView(view, { tagRailPreviousPositions = null } = {}) {
-  let nextView = view;
-  if (!nextView || !['all', 'favorites', 'tag'].includes(nextView.kind)) nextView = { kind: 'all' };
-  if (nextView.kind === 'tag' && !viewPrefs().tags.some((tag) => tag.id === nextView.tagId)) {
-    nextView = { kind: 'all' };
-  }
-  state.view = nextView;
-  refs.appShell.classList.toggle('compact-view', nextView.kind !== 'all');
+// A view the current source can show: tags are per source, so a tag id that
+// isn't in viewPrefs() falls back to "all".
+function validView(view) {
+  if (!view || !['all', 'favorites', 'tag'].includes(view.kind)) return { kind: 'all' };
+  if (view.kind === 'tag' && !viewPrefs().tags.some((tag) => tag.id === view.tagId)) return { kind: 'all' };
+  return view;
+}
+
+function assignView(view) {
+  state.view = view;
+  refs.appShell.classList.toggle('compact-view', view.kind !== 'all');
   applySidebarWidth();
+}
+
+async function setView(view, { tagRailPreviousPositions = null } = {}) {
+  const nextView = validView(view);
+  // Picking a view while the source is still loading beats restoring one.
+  state.pendingView = null;
+  assignView(nextView);
   closeFloatingMenus();
   renderTagRail(tagRailPreviousPositions);
   renderSessionList();
@@ -2959,10 +2975,14 @@ async function refreshSessions({ initial = false, notify = false, poll = false }
       state.remotePrefs = remotePrefs;
       // The tag being viewed was deleted (or renamed away) on the remote host.
       if (state.view.kind === 'tag' && !remotePrefs.tags.some((tag) => tag.id === state.view.tagId)) {
-        state.view = { kind: 'all' };
-        refs.appShell.classList.remove('compact-view');
-        applySidebarWidth();
+        assignView({ kind: 'all' });
       }
+    }
+    // Back to the view this source was left in, now that its tags are known
+    // (a tag deleted there in the meantime falls back to "all").
+    if (state.pendingView) {
+      assignView(validView(state.pendingView));
+      state.pendingView = null;
     }
     if (isRemoteActive()) {
       // A successful listing is a stronger reachability signal than the probe;
@@ -2989,7 +3009,8 @@ async function refreshSessions({ initial = false, notify = false, poll = false }
     if (state.view.kind !== 'all') {
       const available = compactSessions();
       if (!selectedSession() || !available.some((session) => session.id === state.selectedSessionId)) {
-        if (available.length) await selectSession(available[0]);
+        const remembered = state.restorePending ? rememberedSession(available) : null;
+        if (available.length) await selectSession(remembered || available[0]);
         else if (state.selectedSessionId) await clearSessionSelection();
       } else {
         await refreshDetail();
@@ -3992,6 +4013,10 @@ function toggleSourcePopover() {
   probeRemoteHosts();
 }
 
+function sourceKey(source) {
+  return `${source.kind}:${source.id}`;
+}
+
 async function switchSource(source) {
   if (source.kind === state.source.kind && source.id === state.source.id) { closeSourcePopover(); return; }
   closeSourcePopover();
@@ -4000,6 +4025,9 @@ async function switchSource(source) {
     if (!connection) return;
     ensureRemoteApi(connection);
   }
+  // Left before its list arrived: keep the view it was going to restore, not
+  // the "all" placeholder shown while loading.
+  viewBySource.set(sourceKey(state.source), state.pendingView || state.view);
   // Tear down the current attachment before repointing the terminal at the new
   // source so no stray data from the old session leaks in.
   selectionToken += 1;
@@ -4012,7 +4040,9 @@ async function switchSource(source) {
   state.sessions = [];
   state.query = '';
   if (refs.sessionSearch) refs.sessionSearch.value = '';
-  state.view = { kind: 'all' };
+  // "all" while the list loads; the source's own view comes back with it.
+  assignView({ kind: 'all' });
+  state.pendingView = viewBySource.get(sourceKey(source)) || null;
   state.restorePending = true;
   state.sourceStatus = source.kind === 'remote' ? 'connecting' : 'online';
   terminalView.setApi(sessionApi());

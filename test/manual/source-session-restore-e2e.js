@@ -1,5 +1,6 @@
-// Switching sources (this machine ↔ remote hosts) lands on the session the user
-// was on when they last left that source, instead of the first one in the list.
+// Switching sources (this machine ↔ remote hosts) lands on the session — and
+// the all / favorites / tag view — the user was in when they last left that
+// source, instead of "all" + the first session in the list.
 //
 // Also covers the two ways a switch used to end up with NOTHING selected:
 //  - leaving a host whose listing is still in flight (an unreachable host holds
@@ -56,14 +57,30 @@ function startWebServer(port, home) {
 }
 
 function driver(cdp) {
-  const selected = () => cdp.evaluate(`document.querySelector('.session-item.active .session-name')?.textContent || null`);
+  // The sidebar list in "all", the tab strip in favorites / tag views.
+  const selected = () => cdp.evaluate(`document.querySelector(
+    '.session-item.active .session-name, .session-tab.active .session-tab-name')?.textContent || null`);
   const listed = () => cdp.evaluate(`document.querySelectorAll('.session-item').length`);
   const clickSession = (name) => cdp.evaluate(`(() => {
-    const row = [...document.querySelectorAll('.session-item')]
-      .find((item) => item.querySelector('.session-name')?.textContent === ${JSON.stringify(name)});
-    row?.querySelector('.session-main').click();
-    return !!row;
+    const target = [...document.querySelectorAll('.session-item .session-main, .session-tab')]
+      .find((item) => item.querySelector('.session-name, .session-tab-name')?.textContent === ${JSON.stringify(name)});
+    target?.click();
+    return !!target;
   })()`);
+  const view = () => cdp.evaluate(`(() => {
+    const tag = document.querySelector('.tag-rail-button.active');
+    const name = tag ? 'tag:' + tag.dataset.tagId : (document.querySelector('[data-view].active')?.dataset.view || null);
+    return { name, compact: document.getElementById('appShell').classList.contains('compact-view') };
+  })()`);
+  const clickTag = (tagId) => poll(() => cdp.evaluate(`(() => {
+    const button = document.querySelector('.tag-rail-button[data-tag-id="${tagId}"]');
+    button?.click();
+    return !!button;
+  })()`));
+  const waitView = (name, options) => poll(async () => {
+    const current = await view();
+    return current.name === name && current.compact === (name !== 'all') ? current : null;
+  }, options);
   const switchTo = async (connectionId) => {
     await cdp.evaluate(`document.getElementById('sourceButton').click()`);
     await wait(250);
@@ -72,7 +89,12 @@ function driver(cdp) {
       : `document.querySelectorAll('.source-row .source-row-main')[0].click()`);
   };
   const waitSelected = (name, options) => poll(async () => ((await selected()) === name ? name : null), options);
-  return { selected, listed, clickSession, switchTo, waitSelected };
+  const waitBoth = async (viewName, session) => {
+    const okView = await waitView(viewName);
+    const okSession = await waitSelected(session);
+    return { ok: !!(okView && okSession), detail: `${JSON.stringify(await view())} ${await selected()}` };
+  };
+  return { selected, listed, clickSession, switchTo, waitSelected, view, waitView, clickTag, waitBoth };
 }
 
 async function main() {
@@ -84,6 +106,10 @@ async function main() {
   for (const name of ['alpha', 'bravo', 'charlie']) local.tmux('new-session', '-d', '-s', name);
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'tmux-desk-srestore-'));
+  fs.writeFileSync(path.join(home, `preferences-${WEB_PORT}.json`), JSON.stringify({
+    tags: [{ id: 'tag-vmwork', name: 'vm-work', color: 'green' }],
+    sessionTags: { 'vm-2': ['tag-vmwork'], 'vm-3': ['tag-vmwork'] },
+  }));
   const server = startWebServer(WEB_PORT, home);
   let lateServer = null;
   const blackholeSockets = [];
@@ -102,6 +128,8 @@ async function main() {
       socket: LOCAL_SOCKET,
       port: CDP_PORT,
       preferences: {
+        tags: [{ id: 'tag-lwork', name: 'local-work', color: 'blue' }],
+        sessionTags: { bravo: ['tag-lwork'], charlie: ['tag-lwork'] },
         remoteConnections: connections,
         // Seeded so the "late" host has something to restore once it answers.
         remoteLastSessions: { late: { id: '$999', name: 'vm-2' } },
@@ -170,6 +198,32 @@ async function main() {
     check('after restart, local opens bravo', await ui.waitSelected('bravo', { tries: 40, every: 250 }), await ui.selected());
     await ui.switchTo('vm');
     check('after restart, the remote still restores vm-3', await ui.waitSelected('vm-3'), await ui.selected());
+
+    // Views are per source too: each host comes back in its own tag view.
+    await ui.clickTag('tag-vmwork');
+    await ui.waitView('tag:tag-vmwork');
+    await ui.clickSession('vm-2');
+    check('remote: tag view vm-work, picked vm-2', await ui.waitSelected('vm-2'), await ui.selected());
+    await ui.switchTo(null);
+    let both = await ui.waitBoth('all', 'bravo');
+    check('local comes back in "all" (the view it was left in)', both.ok, both.detail);
+    await ui.clickTag('tag-lwork');
+    await ui.waitView('tag:tag-lwork');
+    await ui.clickSession('charlie');
+    check('local: tag view local-work, picked charlie', await ui.waitSelected('charlie'), await ui.selected());
+    await ui.switchTo('vm');
+    both = await ui.waitBoth('tag:tag-vmwork', 'vm-2');
+    check('remote comes back in its tag view on vm-2', both.ok, both.detail);
+    await ui.switchTo(null);
+    both = await ui.waitBoth('tag:tag-lwork', 'charlie');
+    check('local comes back in its tag view on charlie', both.ok, both.detail);
+    await ui.switchTo('dead');
+    await wait(600);
+    const loading = await ui.view();
+    check('while a host loads it shows the plain "all" layout', loading.name === 'all' && !loading.compact, JSON.stringify(loading));
+    await ui.switchTo(null);
+    both = await ui.waitBoth('tag:tag-lwork', 'charlie');
+    check('leaving a hung host restores local\'s tag view too', both.ok, both.detail);
   } finally {
     app?.stop();
     server.kill();

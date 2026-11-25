@@ -339,7 +339,9 @@ e2e 用 `list-clients -F '#{client_termfeatures}'` 回读验证（tmux 会额外
 - 原因二（"什么都没选中"）：`refreshSessions` 用全局 `state.refreshing` 防并发，切源时若上一个源的刷新还在路上（黑洞主机会挂满 5s 请求超时），**切源自己那次 initial 刷新被直接丢掉**；之后的轮询不是 initial，不会自动选中。
 - 修复：① 新偏好 `remoteLastSessions: {[connectionId]: {id, name}}`（`preferences:save` 白名单，`publicPreferences` 不暴露）；归一化时只保留仍存在的连接 id，**删主机不需要额外清理**。远程按「id+name → name → id」匹配：开了再分享的主机可能列出两个同名会话（本机的和 `r:` 中继的），id 又能找回改过名的会话。本机仍用 `lastSession`（按名字，tmux server 重启后 id 会复用）。② 防并发改成按源：`refreshingToken === sourceToken` 才拦，上一个源的刷新结果本来就会被 token 校验丢弃；它的 catch 也先比 token，免得把新源标成离线。③ `state.restorePending`：切源置位、任何一次选中清零 —— 切过去时主机还连不上、后面某次轮询才连上，也会自动回到上次的会话。
 - 记录选中改成不阻塞 attach（`rememberSelection` 不 await、失败静默）：之前本机的 `savePreferences` 失败会让整次 attach 走进报错分支。
-- 验证：`test/manual/source-session-restore-e2e.js`（真 Electron + 沙箱远程 web server + 一个只 accept 不回包的黑洞端口 + 一个中途才启动的 web server，13 项，含重启后恢复）。A/B：旧 renderer 挂 5 项（回到远程落在 `vm-1`、离开黑洞主机后 3s 仍未选中等）。
+- **视图（全部 / 收藏 / Tag）也按源记住**：`viewBySource`（键 `kind:id`）只存在内存里，和视图本身一致（app 启动永远是「全部」）。切走时存当前视图，切回来先显示「全部」占位，**等这个源的列表到了再** `validView()` 套回去 —— 远程的 tag 要等 `remotePrefs` 拉回来才能校验，期间被删的 tag 回落「全部」。加载中用户自己点了视图则以用户为准（`setView` 清掉 `pendingView`）；还没加载完就切走，存的是待恢复的视图而不是「全部」占位。Tag 视图下恢复会话时优先取记住的那个（`rememberedSession(compactSessions())`）。
+- 顺手修的真 bug：`switchSource` 以前只写 `state.view = {kind:'all'}`，**没摘 `.compact-view` 类**，从 Tag 视图切源后布局一直停在紧凑模式。现在视图一律走 `assignView()`（状态 + 类 + 侧栏宽度一起改）。
+- 验证：`test/manual/source-session-restore-e2e.js`（真 Electron + 沙箱远程 web server + 一个只 accept 不回包的黑洞端口 + 一个中途才启动的 web server，20 项，含重启后恢复、两边各自的 Tag 视图）。A/B：原始 renderer 挂 5 项（回到远程落在 `vm-1`、离开黑洞主机后 3s 仍未选中等）；只记会话的版本挂视图那 5 项（全回到「全部」且 `compact-view` 残留）。
 
 ### Tag 导入导出（2026-07）
 设置页 Tag 区「导入/导出」→ `tags:export/import` IPC（`main.js` 的 `tagFileIO` 走 save/open 对话框）。导出 JSON `{type:'tmux-desk-tags',version,tags,sessionTags,favorites}`；导入是**合并式**（`PreferencesStore.importTagConfig`）：同名标签复用现有 id、导入 id 安全重映射、未知 id 丢弃、favorites/分配 union、可重复导入不重复。
